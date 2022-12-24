@@ -1,0 +1,6 @@
+(executable
+ (public_name baby_pascal)
+ (name main)
+ (libraries baby_pascal)
+ (flags
+  (:standard -w -33)))
