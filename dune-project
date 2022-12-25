@@ -19,7 +19,7 @@
  (name baby_pascal)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dune ppx_deriving containers)
+ (depends ocaml dune ppx_deriving containers alcotest)
  (tags
   (topics "to describe" your project)))
 

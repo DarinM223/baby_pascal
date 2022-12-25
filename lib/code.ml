@@ -21,9 +21,10 @@ type op =
   | Assign
   | Return
   | Nop
+[@@deriving show]
 
-type addr = Const of int | Name of int | Temp of int | Empty
-type quad = op * addr * addr * addr
+type addr = Const of int | Name of int | Temp of int | Empty [@@deriving show]
+type quad = op * addr * addr * addr [@@deriving show]
 
 type 'a node = {
   mutable value : 'a;
@@ -33,11 +34,11 @@ type 'a node = {
 
 type block = quad array
 
-let fresh =
-  let i = ref (-1) in
-  fun () ->
-    incr i;
-    !i
+let counter = ref (-1)
+
+let fresh () =
+  incr counter;
+  !counter
 
 let sym_table = Hashtbl.create 1000
 
@@ -64,7 +65,7 @@ let op_of_bop = function
   | Ast.Gt -> Gt
   | Ast.Ge -> Ge
 
-let rec normalize stmts =
+let normalize stmts =
   let len = List.length stmts in
   let code = create_with ~capacity:len (Nop, Empty, Empty, Empty) in
   let label_table = Hashtbl.create 100 in
@@ -116,8 +117,7 @@ let rec normalize stmts =
         push code (op_of_bop rel, addr1, addr2, Const t);
         push code (Goto, Const f, Empty, Empty)
     | _ -> failwith "Invalid expression for short circuiting bool operation"
-  in
-  let rec go_stmt next = function
+  and go_stmt next = function
     | Ast.Assign (v, e) ->
         let addr = addr_of_expr e in
         let s = get_sym v in
@@ -187,21 +187,3 @@ type gen_kill_info = {
 }
 
 let gen_kill : block -> gen_kill_info = fun _ -> failwith "fuck"
-
-let ast_example : Ast.stmt list =
-  [
-    Ast.Assign
-      ( "a",
-        Ast.Bop (Ast.Add, Ast.Int 1, Ast.Bop (Ast.Mul, Ast.Int 2, Ast.Int 3)) );
-    Ast.If
-      ( Ast.Bop
-          ( Ast.And,
-            Ast.Bop (Ast.Eq, Ast.Var "a", Ast.Int 1),
-            Ast.Bop (Ast.Lt, Ast.Var "a", Ast.Int 5) ),
-        [ Ast.Return (Some (Ast.Int 50)) ],
-        [ Ast.Return (Some (Ast.Int 60)) ] );
-  ]
-
-let result =
-  let result = normalize ast_example in
-  CCVector.to_array result

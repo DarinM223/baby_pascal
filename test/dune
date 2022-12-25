@@ -1,2 +1,5 @@
-(test
- (name baby_pascal))
+(tests
+ (names test_code)
+ (preprocess
+  (pps ppx_deriving.show))
+ (libraries alcotest baby_pascal))

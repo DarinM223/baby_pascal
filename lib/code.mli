@@ -20,8 +20,18 @@ type op =
   | Return
   | Nop
 
+val pp_op : Format.formatter -> op -> unit
+val show_op : op -> string
+
 type addr = Const of int | Name of int | Temp of int | Empty
+
+val pp_addr : Format.formatter -> addr -> unit
+val show_addr : addr -> string
+
 type quad = op * addr * addr * addr
+
+val pp_quad : Format.formatter -> quad -> unit
+val show_quad : quad -> string
 
 type 'a node = {
   mutable value : 'a;
@@ -31,6 +41,7 @@ type 'a node = {
 
 type block = quad array
 
+val counter : int ref
 val fresh : unit -> int
 val sym_table : (string, int) Hashtbl.t
 val get_sym : string -> int
@@ -49,5 +60,3 @@ type gen_kill_info = {
 }
 
 val gen_kill : block -> gen_kill_info
-val ast_example : Ast.stmt list
-val result : (op * addr * addr * addr) array
