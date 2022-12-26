@@ -21,18 +21,12 @@ type op =
   | Assign
   | Return
   | Nop
-[@@deriving show]
+[@@deriving show, eq]
 
-type addr = Const of int | Name of int | Temp of int | Empty [@@deriving show]
-type quad = op * addr * addr * addr [@@deriving show]
+type addr = Const of int | Name of int | Temp of int | Empty
+[@@deriving show, eq]
 
-type 'a node = {
-  mutable value : 'a;
-  pred : 'a node vector;
-  next : 'a node vector;
-}
-
-type block = quad array
+type quad = op * addr * addr * addr [@@deriving show, eq]
 
 let counter = ref (-1)
 
@@ -169,21 +163,3 @@ let normalize stmts =
     code;
   push code (Nop, Empty, Empty, Empty);
   code
-
-let identifying_leaders : quad vector -> block node = fun _ -> failwith "fuck"
-
-type set = bytes
-
-(*
-  Stores gen/kill sets for the whole block and for each statement
-  in the block (in order to recover the dataflow information
-  of an individual statement).
-*)
-type gen_kill_info = {
-  gen : set array;
-  kill : set array;
-  gen_block : set;
-  kill_block : set;
-}
-
-let gen_kill : block -> gen_kill_info = fun _ -> failwith "fuck"

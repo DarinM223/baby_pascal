@@ -1,6 +1,6 @@
 (library
  (name baby_pascal)
  (preprocess
-  (pps ppx_deriving.show))
- (flags (:standard -w -39-32))
+  (pps ppx_deriving.std))
+ (flags (:standard -w -39))
  (libraries containers))
