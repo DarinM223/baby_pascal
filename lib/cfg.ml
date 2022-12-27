@@ -14,6 +14,8 @@ module Block = struct
   let equal a b =
     CCVector.(to_array a.code = to_array b.code)
     && S.equal a.pred b.pred && S.equal a.succ b.succ
+
+  let entry, exit = (-1, -2)
 end
 
 let blocks_of_code code =
@@ -60,6 +62,10 @@ let blocks_of_code code =
            in
            (i, { code; Block.pred = S.empty; succ = S.empty }))
     |> List.to_seq |> M.of_seq
+    |> M.add Block.entry
+         { Block.code = CCVector.of_array [||]; pred = S.empty; succ = S.empty }
+    |> M.add Block.exit
+         { Block.code = CCVector.of_array [||]; pred = S.empty; succ = S.empty }
   in
   let blocks =
     List.fold_left
@@ -71,7 +77,7 @@ let blocks_of_code code =
         | _ -> add_next_link i end_index blocks)
       blocks ranges
   in
-  blocks
+  blocks |> add_link Block.entry 0 |> add_link (fst (List.hd ranges)) Block.exit
 
 type set = bytes
 

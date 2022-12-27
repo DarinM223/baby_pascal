@@ -83,9 +83,11 @@ let test_figure_8_7 : unit -> unit =
     "same output" result
     Code.
       [
+        { code = of_array [||]; pred = S.of_list [ 12 ]; succ = S.of_list [] };
+        { code = of_array [||]; pred = S.of_list []; succ = S.of_list [ 0 ] };
         {
           code = of_array [| (Assign, Const 1, Empty, Name 1) |];
-          pred = S.of_list [];
+          pred = S.of_list [ -1 ];
           succ = S.of_list [ 1 ];
         };
         {
@@ -133,7 +135,7 @@ let test_figure_8_7 : unit -> unit =
                 (Le, Name 1, Const 10, Const 12);
               |];
           pred = S.of_list [ 11; 12 ];
-          succ = S.of_list [ 12 ];
+          succ = S.of_list [ -2; 12 ];
         };
       ]
 
