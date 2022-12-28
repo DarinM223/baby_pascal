@@ -104,19 +104,6 @@ let equal_gen_kill_info a b =
   && S.equal a.gen_block b.gen_block
   && S.equal a.kill_block b.kill_block
 
-let bfs f graph =
-  let traversed = Hashtbl.create (M.cardinal graph) in
-  let queue = Queue.create () in
-  Queue.push Block.entry queue;
-  while not (Queue.is_empty queue) do
-    let node_index = Queue.take queue in
-    if not (Hashtbl.mem traversed node_index) then (
-      let node = M.find node_index graph in
-      f node_index node;
-      Hashtbl.add traversed node_index ();
-      List.iter (fun next -> Queue.push next queue) (S.elements node.Block.succ))
-  done
-
 (*
   First pass: generate fresh ints for description id for each instruction,
   set gen(j) to the description id, and add the description id to defs(t).
@@ -131,14 +118,25 @@ let gen_kill graph =
       incr i;
       !i
   in
-  let info = ref M.empty in
+  let info =
+    M.fold
+      (fun i node info ->
+        let len = CCVector.length node.Block.code in
+        M.add i
+          {
+            gen = CCVector.init len (fun _ -> S.empty);
+            kill = CCVector.init len (fun _ -> S.empty);
+            gen_block = S.empty;
+            kill_block = S.empty;
+          }
+          info)
+      graph M.empty
+  in
   let defs = Hashtbl.create 100 in
-  bfs
+  M.iter
     (fun i node ->
-      let len = CCVector.length node.code in
-      let gen = CCVector.init len (fun _ -> S.empty) in
-      let kill = CCVector.init len (fun _ -> S.empty) in
-      for j = 0 to CCVector.length node.code - 1 do
+      let gen = (M.find i info).gen in
+      for j = 0 to CCVector.length node.Block.code - 1 do
         match CCVector.get node.code j with
         | _, _, _, (Temp t | Name t) ->
             let def = fresh () in
@@ -147,14 +145,12 @@ let gen_kill graph =
               Hashtbl.replace defs t (S.add def (Hashtbl.find defs t))
             else Hashtbl.add defs t (S.singleton def)
         | _ -> ()
-      done;
-      info :=
-        M.add i { gen; kill; gen_block = S.empty; kill_block = S.empty } !info)
+      done)
     graph;
-  bfs
+  M.iter
     (fun i node ->
-      let block_info = M.find i !info in
-      for j = 0 to CCVector.length node.code - 1 do
+      let block_info = M.find i info in
+      for j = 0 to CCVector.length node.Block.code - 1 do
         match CCVector.get node.code j with
         | _, _, _, (Temp t | Name t) ->
             let gen = CCVector.get block_info.gen j in
@@ -166,4 +162,4 @@ let gen_kill graph =
         | _ -> ()
       done)
     graph;
-  !info
+  info
