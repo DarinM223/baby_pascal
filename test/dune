@@ -1,5 +1,5 @@
 (tests
- (names test_code)
+ (names test_code test_graph)
  (preprocess
   (pps ppx_deriving.std))
  (libraries alcotest baby_pascal))

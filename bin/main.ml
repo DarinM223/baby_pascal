@@ -1,3 +1,1 @@
-open Baby_pascal.Ast
-
-let () = foo ()
+let () = print_endline "Hello world"

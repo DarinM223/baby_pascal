@@ -73,7 +73,7 @@ let normalize stmts =
   let rec addr_of_expr = function
     | Ast.Int i -> Const i
     | Ast.Bool b -> if b then Const 1 else Const 0
-    | Ast.Var v -> Temp (get_sym v)
+    | Ast.Var v -> Name (get_sym v)
     | Ast.Uop (uop, e) ->
         let addr = addr_of_expr e in
         let tmp = Temp (fresh ()) in
@@ -115,7 +115,7 @@ let normalize stmts =
     | Ast.Assign (v, e) ->
         let addr = addr_of_expr e in
         let s = get_sym v in
-        push code (Assign, addr, Empty, Temp s)
+        push code (Assign, addr, Empty, Name s)
     | Ast.Return e ->
         let addr =
           match Option.map addr_of_expr e with

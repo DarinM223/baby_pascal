@@ -81,16 +81,89 @@ let blocks_of_code code =
 
 type set = bytes
 
-(*
-  Stores gen/kill sets for the whole block and for each statement
-  in the block (in order to recover the dataflow information
-  of an individual statement).
-*)
 type gen_kill_info = {
-  gen : set array;
-  kill : set array;
-  gen_block : set;
-  kill_block : set;
+  gen : S.t CCVector.vector;
+  kill : S.t CCVector.vector;
+  mutable gen_block : S.t;
+  mutable kill_block : S.t;
 }
 
-let gen_kill : Block.t -> gen_kill_info = fun _ -> failwith ""
+let pp_gen_kill_info fmt info =
+  Format.fprintf fmt "{ gen = %s; kill = %s; gen_block = %s; kill_block = %s }"
+    ([%show: int list array]
+       (Array.map S.elements (CCVector.to_array info.gen)))
+    ([%show: int list array]
+       (Array.map S.elements (CCVector.to_array info.kill)))
+    ([%show: int list] (S.elements info.gen_block))
+    ([%show: int list] (S.elements info.kill_block))
+
+let equal_gen_kill_info a b =
+  CCVector.(
+    List.equal S.equal (to_list a.gen) (to_list b.gen)
+    && List.equal S.equal (to_list a.kill) (to_list b.kill))
+  && S.equal a.gen_block b.gen_block
+  && S.equal a.kill_block b.kill_block
+
+let bfs f graph =
+  let traversed = Hashtbl.create (M.cardinal graph) in
+  let queue = Queue.create () in
+  Queue.push Block.entry queue;
+  while not (Queue.is_empty queue) do
+    let node_index = Queue.take queue in
+    if not (Hashtbl.mem traversed node_index) then (
+      let node = M.find node_index graph in
+      f node_index node;
+      Hashtbl.add traversed node_index ();
+      List.iter (fun next -> Queue.push next queue) (S.elements node.Block.succ))
+  done
+
+(*
+  First pass: generate fresh ints for description id for each instruction,
+  set gen(j) to the description id, and add the description id to defs(t).
+
+  Second pass: for each instruction calculate kill using the defs(t) and gen(j).
+  Also accumulate the gen_block and kill_block for the whole block.
+*)
+let gen_kill graph =
+  let fresh =
+    let i = ref (-1) in
+    fun () ->
+      incr i;
+      !i
+  in
+  let info = ref M.empty in
+  let defs = Hashtbl.create 100 in
+  bfs
+    (fun i node ->
+      let len = CCVector.length node.code in
+      let gen = CCVector.init len (fun _ -> S.empty) in
+      let kill = CCVector.init len (fun _ -> S.empty) in
+      for j = 0 to CCVector.length node.code - 1 do
+        match CCVector.get node.code j with
+        | _, _, _, (Temp t | Name t) ->
+            let def = fresh () in
+            CCVector.set gen j (S.singleton def);
+            if Hashtbl.mem defs t then
+              Hashtbl.replace defs t (S.add def (Hashtbl.find defs t))
+            else Hashtbl.add defs t (S.singleton def)
+        | _ -> ()
+      done;
+      info :=
+        M.add i { gen; kill; gen_block = S.empty; kill_block = S.empty } !info)
+    graph;
+  bfs
+    (fun i node ->
+      let block_info = M.find i !info in
+      for j = 0 to CCVector.length node.code - 1 do
+        match CCVector.get node.code j with
+        | _, _, _, (Temp t | Name t) ->
+            let gen = CCVector.get block_info.gen j in
+            let kill = S.diff (Hashtbl.find defs t) gen in
+            CCVector.set block_info.kill j kill;
+            block_info.gen_block <-
+              S.(union gen (diff block_info.gen_block kill));
+            block_info.kill_block <- S.union block_info.kill_block kill
+        | _ -> ()
+      done)
+    graph;
+  !info

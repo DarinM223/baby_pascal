@@ -26,11 +26,3 @@ type program = {
   decls : decl list;
   main : stmt list;
 }
-
-let foo () =
-  let open CCVector in
-  let v = create_with ~capacity:100 0 in
-  for i = 0 to 100 do
-    push v i
-  done;
-  iter print_int v

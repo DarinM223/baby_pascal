@@ -32,17 +32,17 @@ let test_example_1 () =
       [|
         (Mul, Const 2, Const 3, Temp 0);
         (Add, Const 1, Temp 0, Temp 1);
-        (Assign, Temp 1, Empty, Temp 2);
-        (Eq, Temp 2, Const 1, Const 5);
+        (Assign, Temp 1, Empty, Name 2);
+        (Eq, Name 2, Const 1, Const 5);
         (Goto, Const 15, Empty, Empty);
-        (Lt, Temp 2, Const 5, Const 7);
+        (Lt, Name 2, Const 5, Const 7);
         (Goto, Const 15, Empty, Empty);
-        (Eq, Temp 2, Const 1, Const 9);
+        (Eq, Name 2, Const 1, Const 9);
         (Goto, Const 16, Empty, Empty);
-        (Lt, Temp 2, Const 5, Const 11);
+        (Lt, Name 2, Const 5, Const 11);
         (Goto, Const 16, Empty, Empty);
-        (Add, Temp 2, Const 1, Temp 3);
-        (Assign, Temp 3, Empty, Temp 2);
+        (Add, Name 2, Const 1, Temp 3);
+        (Assign, Temp 3, Empty, Name 2);
         (Goto, Const 7, Empty, Empty);
         (Goto, Const 16, Empty, Empty);
         (Return, Const 60, Empty, Empty);
