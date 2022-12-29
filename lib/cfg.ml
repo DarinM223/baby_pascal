@@ -79,8 +79,6 @@ let blocks_of_code code =
   in
   blocks |> add_link Block.entry 0 |> add_link (fst (List.hd ranges)) Block.exit
 
-type set = bytes
-
 type gen_kill_info = {
   gen : S.t CCVector.vector;
   kill : S.t CCVector.vector;
@@ -163,3 +161,31 @@ let gen_kill graph =
       done)
     graph;
   info
+
+type live_info = { live_in : S.t; live_out : S.t }
+
+let equal_live_info a b =
+  S.equal a.live_in b.live_in && S.equal a.live_out b.live_out
+
+let liveness gen_kill graph =
+  let rec go info =
+    let info' =
+      M.fold
+        (fun n node info ->
+          let live_in =
+            List.fold_left
+              (fun acc p -> S.union acc (M.find p info).live_out)
+              S.empty
+              (S.elements node.Block.pred)
+          in
+          let live_out =
+            let gen_kill = M.find n gen_kill in
+            S.union gen_kill.gen_block
+              (S.diff (M.find n info).live_in gen_kill.kill_block)
+          in
+          M.add n { live_in; live_out } info)
+        graph info
+    in
+    if not (M.equal equal_live_info info info') then go info' else info'
+  in
+  go (M.map (fun _ -> { live_in = S.empty; live_out = S.empty }) graph)
