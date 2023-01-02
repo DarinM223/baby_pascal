@@ -171,7 +171,7 @@ let liveness gen_kill graph =
   let rec go info =
     let info' =
       M.fold
-        (fun n node info ->
+        (fun n node info' ->
           let live_in =
             List.fold_left
               (fun acc p -> S.union acc (M.find p info).live_out)
@@ -183,8 +183,8 @@ let liveness gen_kill graph =
             S.union gen_kill.gen_block
               (S.diff (M.find n info).live_in gen_kill.kill_block)
           in
-          M.add n { live_in; live_out } info)
-        graph info
+          M.add n { live_in; live_out } info')
+        graph M.empty
     in
     if not (M.equal equal_live_info info info') then go info' else info'
   in
