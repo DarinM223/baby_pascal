@@ -83,19 +83,32 @@ let test_figure_8_7 : unit -> unit =
     "same output" result
     Code.
       [
-        { code = of_array [||]; pred = S.of_list [ 12 ]; succ = S.of_list [] };
-        { code = of_array [||]; pred = S.of_list []; succ = S.of_list [ 0 ] };
         {
+          phis = [];
+          code = of_array [||];
+          pred = S.of_list [ 12 ];
+          succ = S.of_list [];
+        };
+        {
+          phis = [];
+          code = of_array [||];
+          pred = S.of_list [];
+          succ = S.of_list [ 0 ];
+        };
+        {
+          phis = [];
           code = of_array [| (Assign, Const 1, Empty, Name 1) |];
           pred = S.of_list [ -1 ];
           succ = S.of_list [ 1 ];
         };
         {
+          phis = [];
           code = of_array [| (Assign, Const 1, Empty, Name 2) |];
           pred = S.of_list [ 0; 9 ];
           succ = S.of_list [ 2 ];
         };
         {
+          phis = [];
           code =
             of_array
               [|
@@ -111,6 +124,7 @@ let test_figure_8_7 : unit -> unit =
           succ = S.of_list [ 2; 9 ];
         };
         {
+          phis = [];
           code =
             of_array
               [|
@@ -120,11 +134,13 @@ let test_figure_8_7 : unit -> unit =
           succ = S.of_list [ 1; 11 ];
         };
         {
+          phis = [];
           code = of_array [| (Assign, Const 1, Empty, Name 1) |];
           pred = S.of_list [ 9 ];
           succ = S.of_list [ 12 ];
         };
         {
+          phis = [];
           code =
             of_array
               [|

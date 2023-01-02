@@ -54,7 +54,7 @@ let dominators graph s0 =
             if Hashtbl.(find dfnum v <= find dfnum n) then v
             else Hashtbl.find semi (ancestor_with_lowest_semi v)
           in
-          if Hashtbl.find dfnum s' < Hashtbl.find dfnum s then s' else s
+          if Hashtbl.(find dfnum s' < find dfnum s) then s' else s
         with Not_found -> s)
       (M.find n graph).Block.pred s
   in

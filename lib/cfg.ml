@@ -3,18 +3,35 @@ module S = Set.Make (Int)
 module M = Map.Make (Int)
 
 module Block = struct
-  type t = { code : quad CCVector.vector; pred : S.t; succ : S.t }
+  type phi = int * S.t
+
+  let pp_phi fmt (r, s) =
+    Format.fprintf fmt "(%d, S.of_list %s)" r ([%show: int list] (S.elements s))
+
+  let equal_phi (a1, a2) (b1, b2) = a1 = b1 && S.equal a2 b2
+
+  type t = {
+    phis : (int * S.t) list;
+    code : quad CCVector.vector;
+    pred : S.t;
+    succ : S.t;
+  }
 
   let pp fmt block =
-    Format.fprintf fmt "{ code = %s; pred = %s; succ = %s }"
+    Format.fprintf fmt
+      "{ phis = %s; code = CCVector.of_array %s; pred = S.of_list %s; succ = \
+       S.of_list %s }"
+      ([%show: phi list] block.phis)
       ([%show: quad array] (CCVector.to_array block.code))
       ([%show: int list] (S.elements block.pred))
       ([%show: int list] (S.elements block.succ))
 
   let equal a b =
-    CCVector.(to_array a.code = to_array b.code)
+    List.equal equal_phi a.phis b.phis
+    && CCVector.(to_array a.code = to_array b.code)
     && S.equal a.pred b.pred && S.equal a.succ b.succ
 
+  let create code = { phis = []; code; pred = S.empty; succ = S.empty }
   let entry, exit = (-1, -2)
 end
 
@@ -60,12 +77,10 @@ let blocks_of_code code =
            let code =
              CCVector.init (j - i + 1) (fun i' -> CCVector.get code (i + i'))
            in
-           (i, { code; Block.pred = S.empty; succ = S.empty }))
+           (i, Block.create code))
     |> List.to_seq |> M.of_seq
-    |> M.add Block.entry
-         { Block.code = CCVector.of_array [||]; pred = S.empty; succ = S.empty }
-    |> M.add Block.exit
-         { Block.code = CCVector.of_array [||]; pred = S.empty; succ = S.empty }
+    |> M.add Block.entry (Block.create (CCVector.of_array [||]))
+    |> M.add Block.exit (Block.create (CCVector.of_array [||]))
   in
   let blocks =
     List.fold_left
