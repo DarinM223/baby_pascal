@@ -11,7 +11,7 @@ module Block = struct
   let equal_phi (a1, a2) (b1, b2) = a1 = b1 && S.equal a2 b2
 
   type t = {
-    phis : (int * S.t) list;
+    phis : phi list;
     code : quad CCVector.vector;
     pred : S.t;
     succ : S.t;
@@ -79,8 +79,8 @@ let blocks_of_code code =
            in
            (i, Block.create code))
     |> List.to_seq |> M.of_seq
-    |> M.add Block.entry (Block.create (CCVector.of_array [||]))
-    |> M.add Block.exit (Block.create (CCVector.of_array [||]))
+    |> M.add Block.entry (Block.create (CCVector.create ()))
+    |> M.add Block.exit (Block.create (CCVector.create ()))
   in
   let blocks =
     List.fold_left
