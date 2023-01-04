@@ -3,15 +3,12 @@ module S = Set.Make (Int)
 module M = Map.Make (Int)
 
 module Block = struct
-  type phi = int * S.t
+  type phi = int * int list
 
-  let pp_phi fmt (r, s) =
-    Format.fprintf fmt "(%d, S.of_list %s)" r ([%show: int list] (S.elements s))
-
-  let equal_phi (a1, a2) (b1, b2) = a1 = b1 && S.equal a2 b2
+  let pp_phi fmt (r, s) = Format.fprintf fmt "(%d, %s)" r ([%show: int list] s)
 
   type t = {
-    phis : phi list;
+    phis : phi CCVector.vector;
     code : quad CCVector.vector;
     pred : S.t;
     succ : S.t;
@@ -19,19 +16,21 @@ module Block = struct
 
   let pp fmt block =
     Format.fprintf fmt
-      "{ phis = %s; code = CCVector.of_array %s; pred = S.of_list %s; succ = \
-       S.of_list %s }"
-      ([%show: phi list] block.phis)
+      "{ phis = CCVector.of_array %s; code = CCVector.of_array %s; pred = \
+       S.of_list %s; succ = S.of_list %s }"
+      ([%show: phi array] (CCVector.to_array block.phis))
       ([%show: quad array] (CCVector.to_array block.code))
       ([%show: int list] (S.elements block.pred))
       ([%show: int list] (S.elements block.succ))
 
   let equal a b =
-    List.equal equal_phi a.phis b.phis
-    && CCVector.(to_array a.code = to_array b.code)
+    CCVector.(
+      to_array a.phis = to_array b.phis && to_array a.code = to_array b.code)
     && S.equal a.pred b.pred && S.equal a.succ b.succ
 
-  let create code = { phis = []; code; pred = S.empty; succ = S.empty }
+  let create code =
+    { phis = CCVector.create (); code; pred = S.empty; succ = S.empty }
+
   let entry, exit = (-1, -2)
 end
 

@@ -84,31 +84,31 @@ let test_figure_8_7 : unit -> unit =
     Code.
       [
         {
-          phis = [];
+          phis = of_array [||];
           code = of_array [||];
           pred = S.of_list [ 12 ];
           succ = S.of_list [];
         };
         {
-          phis = [];
+          phis = of_array [||];
           code = of_array [||];
           pred = S.of_list [];
           succ = S.of_list [ 0 ];
         };
         {
-          phis = [];
+          phis = of_array [||];
           code = of_array [| (Assign, Const 1, Empty, Name 1) |];
           pred = S.of_list [ -1 ];
           succ = S.of_list [ 1 ];
         };
         {
-          phis = [];
+          phis = of_array [||];
           code = of_array [| (Assign, Const 1, Empty, Name 2) |];
           pred = S.of_list [ 0; 9 ];
           succ = S.of_list [ 2 ];
         };
         {
-          phis = [];
+          phis = of_array [||];
           code =
             of_array
               [|
@@ -124,7 +124,7 @@ let test_figure_8_7 : unit -> unit =
           succ = S.of_list [ 2; 9 ];
         };
         {
-          phis = [];
+          phis = of_array [||];
           code =
             of_array
               [|
@@ -134,13 +134,13 @@ let test_figure_8_7 : unit -> unit =
           succ = S.of_list [ 1; 11 ];
         };
         {
-          phis = [];
+          phis = of_array [||];
           code = of_array [| (Assign, Const 1, Empty, Name 1) |];
           pred = S.of_list [ 9 ];
           succ = S.of_list [ 12 ];
         };
         {
-          phis = [];
+          phis = of_array [||];
           code =
             of_array
               [|

@@ -34,16 +34,19 @@ let fresh () =
   incr counter;
   !counter
 
-let sym_table = Hashtbl.create 1000
+let string_to_sym = Hashtbl.create 1000
+let sym_to_string = Hashtbl.create 1000
 
-let get_sym sym =
-  match Hashtbl.find_opt sym_table sym with
+let get_sym name =
+  match Hashtbl.find_opt string_to_sym name with
   | Some i -> i
   | None ->
       let tmp = fresh () in
-      Hashtbl.add sym_table sym tmp;
+      Hashtbl.add string_to_sym name tmp;
+      Hashtbl.add sym_to_string tmp name;
       tmp
 
+let get_name = Hashtbl.find sym_to_string
 let op_of_uop = function Ast.Not -> Not
 
 let op_of_bop = function
@@ -89,8 +92,7 @@ let normalize stmts =
   and go_call f es tmp =
     let addrs = List.map addr_of_expr es in
     List.iter (fun addr -> push code (Param, addr, Empty, Empty)) addrs;
-    push code
-      (Call, Name (Hashtbl.find sym_table f), Const (List.length es), tmp);
+    push code (Call, Name (get_sym f), Const (List.length es), tmp);
     tmp
   and short_circuit t f = function
     | Ast.Uop (Ast.Not, e) -> short_circuit f t e
