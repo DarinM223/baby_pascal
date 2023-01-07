@@ -145,36 +145,38 @@ let gen_kill graph =
       graph M.empty
   in
   let defs = Hashtbl.create 100 in
+  let instr_of_def = Hashtbl.create 100 in
   M.iter
     (fun i node ->
       let gen = (M.find i info).gen in
-      for j = 0 to CCVector.length node.Block.code - 1 do
-        match CCVector.get node.code j with
-        | _, _, _, (Temp t | Name t) ->
-            let def = fresh () in
-            CCVector.set gen j (S.singleton def);
-            if Hashtbl.mem defs t then
-              Hashtbl.replace defs t (S.add def (Hashtbl.find defs t))
-            else Hashtbl.add defs t (S.singleton def)
-        | _ -> ()
-      done)
+      CCVector.iteri
+        (fun j -> function
+          | (_, _, _, (Temp t | Name t)) as instr ->
+              let def = fresh () in
+              Hashtbl.add instr_of_def def instr;
+              CCVector.set gen j (S.singleton def);
+              if Hashtbl.mem defs t then
+                Hashtbl.replace defs t (S.add def (Hashtbl.find defs t))
+              else Hashtbl.add defs t (S.singleton def)
+          | _ -> ())
+        node.Block.code)
     graph;
   M.iter
     (fun i node ->
       let block_info = M.find i info in
-      for j = 0 to CCVector.length node.Block.code - 1 do
-        match CCVector.get node.code j with
-        | _, _, _, (Temp t | Name t) ->
-            let gen = CCVector.get block_info.gen j in
-            let kill = S.diff (Hashtbl.find defs t) gen in
-            CCVector.set block_info.kill j kill;
-            block_info.gen_block <-
-              S.(union gen (diff block_info.gen_block kill));
-            block_info.kill_block <- S.union block_info.kill_block kill
-        | _ -> ()
-      done)
+      CCVector.iteri
+        (fun j -> function
+          | _, _, _, (Temp t | Name t) ->
+              let gen = CCVector.get block_info.gen j in
+              let kill = S.diff (Hashtbl.find defs t) gen in
+              CCVector.set block_info.kill j kill;
+              block_info.gen_block <-
+                S.(union gen (diff block_info.gen_block kill));
+              block_info.kill_block <- S.union block_info.kill_block kill
+          | _ -> ())
+        node.Block.code)
     graph;
-  info
+  (info, Hashtbl.find instr_of_def)
 
 type live_info = { live_in : S.t; live_out : S.t }
 

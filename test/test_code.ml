@@ -10,7 +10,7 @@ module BlockList = struct
 end
 
 let test_example_1 () =
-  Code.counter := -1;
+  Code.reset ();
   let expr =
     Ast.
       [

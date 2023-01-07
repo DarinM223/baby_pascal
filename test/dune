@@ -1,5 +1,7 @@
 (tests
- (names test_code test_graph test_dom)
+ (names test_code test_graph test_dom test_ssa)
+ (flags
+  (:standard -w -8))
  (preprocess
   (pps ppx_deriving.std))
  (libraries alcotest baby_pascal))

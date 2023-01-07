@@ -1,18 +1,19 @@
 open Cfg
 open Code
 
+let calc_a_orig gen_kill instr_of_def n =
+  (M.find n gen_kill).gen_block
+  |> S.filter_map (fun def ->
+         match instr_of_def def with _, _, _, Name t -> Some t | _ -> None)
+  |> S.to_seq |> List.of_seq
+
 let insert_phis df a_orig v g =
   let defsites = Hashtbl.create (S.cardinal v) in
-  M.iter
-    (fun n _ ->
-      List.iter
-        (fun a -> Hashtbl.(replace defsites a (S.add n (find defsites a))))
-        (a_orig n))
-    g;
+  M.iter (fun n _ -> List.iter (fun a -> Hashtbl.add defsites a n) (a_orig n)) g;
   let a_phi = Hashtbl.create (S.cardinal v) in
   S.iter
     (fun a ->
-      let w = ref (Hashtbl.find defsites a) in
+      let w = ref (S.of_list (Hashtbl.find_all defsites a)) in
       while not (S.is_empty !w) do
         let n = S.min_elt !w in
         w := S.remove n !w;
@@ -38,7 +39,7 @@ let find_index a l =
 let replace_in_list index new_elem =
   let[@tail_mod_cons] rec go i = function
     | x :: xs -> if i = index then new_elem :: xs else x :: go (i + 1) xs
-    | [] -> []
+    | [] -> raise Not_found
   in
   go 0
 

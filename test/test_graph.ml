@@ -14,8 +14,8 @@ end
 
 let test_figure_9_13 () =
   let open Cfg in
+  let a, i, j, m, n, u1, u2, u3 = (1, 2, 3, 4, 5, 6, 7, 8) in
   let example =
-    let a, i, j, m, n, u1, u2, u3 = (1, 2, 3, 4, 5, 6, 7, 8) in
     blocks_of_code
       (CCVector.of_array
          Code.
@@ -39,8 +39,9 @@ let test_figure_9_13 () =
       kill_block = S.of_list kill_block;
     }
   in
+  let sets, _ = gen_kill example in
   (check (module GenKillInfo))
-    "same gen/kill sets" (gen_kill example)
+    "same gen/kill sets" sets
     (M.of_seq
     @@ List.to_seq
          [

@@ -47,6 +47,12 @@ let get_sym name =
       tmp
 
 let get_name = Hashtbl.find sym_to_string
+
+let reset () =
+  counter := -1;
+  Hashtbl.clear string_to_sym;
+  Hashtbl.clear sym_to_string
+
 let op_of_uop = function Ast.Not -> Not
 
 let op_of_bop = function
