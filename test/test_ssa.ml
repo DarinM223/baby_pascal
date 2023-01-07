@@ -212,6 +212,132 @@ let test_figure_19_3 () =
     ]
     (graph |> M.bindings |> List.map snd)
 
+let test_figure_19_4 () =
+  reset ();
+  let ast =
+    Baby_pascal.Ast.
+      [
+        Assign ("i", Int 1);
+        Assign ("j", Int 1);
+        Assign ("k", Int 0);
+        While
+          ( Bop (Lt, Var "k", Int 100),
+            [
+              If
+                ( Bop (Lt, Var "j", Int 20),
+                  [
+                    Assign ("j", Var "i");
+                    Assign ("k", Bop (Add, Var "k", Int 1));
+                  ],
+                  [
+                    Assign ("j", Var "k");
+                    Assign ("k", Bop (Add, Var "k", Int 2));
+                  ] );
+            ] );
+        Return (Some (Var "j"));
+      ]
+  in
+  let graph = ast |> normalize |> blocks_of_code in
+  let gen_kill_map, instr_of_def = gen_kill graph in
+  let v = sym_to_string |> Hashtbl.to_seq_keys |> S.of_seq in
+  let a_orig = calc_a_orig gen_kill_map instr_of_def in
+  let idom = dominators graph Block.entry in
+  let dom_tree = dom_tree_of_idom graph idom in
+  let df = dominator_frontier graph dom_tree idom in
+  insert_phis df a_orig v graph;
+  rename v graph;
+  let [ i1; j1; j2; j3; j4; k1; k2; k3; k4 ] =
+    List.map get_sym [ "i1"; "j1"; "j2"; "j3"; "j4"; "k1"; "k2"; "k3"; "k4" ]
+  in
+  (check (module BlockList))
+    "check ssa graph"
+    [
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [||];
+        pred = S.of_list [ 15 ];
+        succ = S.of_list [];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [||];
+        pred = S.of_list [];
+        succ = S.of_list [ 0 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code =
+          CCVector.of_array
+            [|
+              (Assign, Const 1, Empty, Name i1);
+              (Assign, Const 1, Empty, Name j1);
+              (Assign, Const 0, Empty, Name k1);
+            |];
+        pred = S.of_list [ -1 ];
+        succ = S.of_list [ 3 ];
+      };
+      {
+        phis =
+          CCVector.of_array [| (j2, [ j1; j4; j3 ]); (k2, [ k1; k4; k3 ]) |];
+        code = CCVector.of_array [| (Lt, Name k2, Const 100, Const 5) |];
+        pred = S.of_list [ 0; 7; 11 ];
+        succ = S.of_list [ 4; 5 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [| (Goto, Const 15, Empty, Empty) |];
+        pred = S.of_list [ 3 ];
+        succ = S.of_list [ 15 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [| (Lt, Name j2, Const 20, Const 7) |];
+        pred = S.of_list [ 3 ];
+        succ = S.of_list [ 6; 7 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [| (Goto, Const 11, Empty, Empty) |];
+        pred = S.of_list [ 5 ];
+        succ = S.of_list [ 11 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code =
+          CCVector.of_array
+            [|
+              (Assign, Name i1, Empty, Name j4);
+              (Add, Name k2, Const 1, Temp 3);
+              (Assign, Temp 3, Empty, Name k4);
+              (Goto, Const 3, Empty, Empty);
+            |];
+        pred = S.of_list [ 5 ];
+        succ = S.of_list [ 3 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code =
+          CCVector.of_array
+            [|
+              (Assign, Name k2, Empty, Name j3);
+              (Add, Name k2, Const 2, Temp 4);
+              (Assign, Temp 4, Empty, Name k3);
+              (Goto, Const 3, Empty, Empty);
+            |];
+        pred = S.of_list [ 6 ];
+        succ = S.of_list [ 3 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code =
+          CCVector.of_array
+            [| (Return, Name j2, Empty, Empty); (Nop, Empty, Empty, Empty) |];
+        pred = S.of_list [ 4 ];
+        succ = S.of_list [ -2 ];
+      };
+    ]
+    (graph |> M.bindings |> List.map snd)
+
 let _ =
   run "SSA conversion tests"
     [
@@ -219,5 +345,6 @@ let _ =
         [
           test_case "Figure 19.2" `Quick test_figure_19_2;
           test_case "Figure 19.3" `Quick test_figure_19_3;
+          test_case "Figure 19.4" `Quick test_figure_19_4;
         ] );
     ]
