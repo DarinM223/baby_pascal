@@ -1,5 +1,6 @@
 open Alcotest
 open Baby_pascal
+open Baby_pascal.Utils
 
 module QuadArray = struct
   type t = Code.quad array [@@deriving show, eq]
@@ -10,7 +11,9 @@ module BlockList = struct
 end
 
 let test_example_1 () =
-  Code.reset ();
+  let module Fresh = Fresh.Make () in
+  let module Sym = Sym.Make (Fresh) in
+  let module Code = Code.Make (Fresh) (Sym) in
   let expr =
     Ast.
       [
@@ -28,26 +31,25 @@ let test_example_1 () =
   let result = expr |> Code.normalize |> CCVector.to_array in
   (check (module QuadArray))
     "same array" result
-    Code.
-      [|
-        (Mul, Const 2, Const 3, Temp 0);
-        (Add, Const 1, Temp 0, Temp 1);
-        (Assign, Temp 1, Empty, Name 2);
-        (Eq, Name 2, Const 1, Const 5);
-        (Goto, Const 15, Empty, Empty);
-        (Lt, Name 2, Const 5, Const 7);
-        (Goto, Const 15, Empty, Empty);
-        (Eq, Name 2, Const 1, Const 9);
-        (Goto, Const 16, Empty, Empty);
-        (Lt, Name 2, Const 5, Const 11);
-        (Goto, Const 16, Empty, Empty);
-        (Add, Name 2, Const 1, Temp 3);
-        (Assign, Temp 3, Empty, Name 2);
-        (Goto, Const 7, Empty, Empty);
-        (Goto, Const 16, Empty, Empty);
-        (Return, Const 60, Empty, Empty);
-        (Nop, Empty, Empty, Empty);
-      |]
+    [|
+      (Mul, Const 2, Const 3, Temp 0);
+      (Add, Const 1, Temp 0, Temp 1);
+      (Assign, Temp 1, Empty, Name 2);
+      (Eq, Name 2, Const 1, Const 5);
+      (Goto, Const 15, Empty, Empty);
+      (Lt, Name 2, Const 5, Const 7);
+      (Goto, Const 15, Empty, Empty);
+      (Eq, Name 2, Const 1, Const 9);
+      (Goto, Const 16, Empty, Empty);
+      (Lt, Name 2, Const 5, Const 11);
+      (Goto, Const 16, Empty, Empty);
+      (Add, Name 2, Const 1, Temp 3);
+      (Assign, Temp 3, Empty, Name 2);
+      (Goto, Const 7, Empty, Empty);
+      (Goto, Const 16, Empty, Empty);
+      (Return, Const 60, Empty, Empty);
+      (Nop, Empty, Empty, Empty);
+    |]
 
 let test_figure_8_7 : unit -> unit =
  fun () ->

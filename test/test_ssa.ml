@@ -1,15 +1,25 @@
 open Alcotest
-open Baby_pascal.Cfg
+open Baby_pascal
 open Baby_pascal.Code
+open Baby_pascal.Cfg
 open Baby_pascal.Dom
 open Baby_pascal.Ssa
+open Baby_pascal.Utils
 
 module BlockList = struct
   type t = Block.t list [@@deriving show, eq]
 end
 
+module Make () = struct
+  module Fresh = Fresh.Make ()
+  module Sym = Sym.Make (Fresh)
+  include Sym
+  include Code.Make (Fresh) (Sym)
+  include Ssa.Make (Sym)
+end
+
 let test_figure_19_2 () =
-  reset ();
+  let open Make () in
   let x, a, b, c = (get_sym "x", get_sym "a", get_sym "b", get_sym "c") in
   let block0 =
     CCVector.of_array
@@ -55,7 +65,7 @@ let test_figure_19_2 () =
          ]
   in
   let gen_kill_map, instr_of_def = gen_kill graph in
-  let v = sym_to_string |> Hashtbl.to_seq_keys |> S.of_seq in
+  let v = S.of_seq (syms ()) in
   let a_orig = calc_a_orig gen_kill_map instr_of_def in
   let idom = dominators graph Block.entry in
   let dom_tree = dom_tree_of_idom graph idom in
@@ -113,7 +123,7 @@ let test_figure_19_2 () =
     (graph |> M.bindings |> List.map snd)
 
 let test_figure_19_3 () =
-  reset ();
+  let open Make () in
   let a, b, c = (get_sym "a", get_sym "b", get_sym "c") in
   let block0 = CCVector.of_array [| (Assign, Const 0, Empty, Name a) |] in
   let block1 =
@@ -157,7 +167,7 @@ let test_figure_19_3 () =
          ]
   in
   let gen_kill_map, instr_of_def = gen_kill graph in
-  let v = sym_to_string |> Hashtbl.to_seq_keys |> S.of_seq in
+  let v = S.of_seq (syms ()) in
   let a_orig = calc_a_orig gen_kill_map instr_of_def in
   let idom = dominators graph Block.entry in
   let dom_tree = dom_tree_of_idom graph idom in
@@ -213,7 +223,7 @@ let test_figure_19_3 () =
     (graph |> M.bindings |> List.map snd)
 
 let test_figure_19_4 () =
-  reset ();
+  let open Make () in
   let ast =
     Baby_pascal.Ast.
       [
@@ -239,7 +249,7 @@ let test_figure_19_4 () =
   in
   let graph = ast |> normalize |> blocks_of_code in
   let gen_kill_map, instr_of_def = gen_kill graph in
-  let v = sym_to_string |> Hashtbl.to_seq_keys |> S.of_seq in
+  let v = S.of_seq (syms ()) in
   let a_orig = calc_a_orig gen_kill_map instr_of_def in
   let idom = dominators graph Block.entry in
   let dom_tree = dom_tree_of_idom graph idom in
