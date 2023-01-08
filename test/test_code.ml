@@ -12,8 +12,7 @@ end
 
 let test_example_1 () =
   let module Fresh = Fresh.Make () in
-  let module Sym = Sym.Make (Fresh) in
-  let module Code = Code.Make (Fresh) (Sym) in
+  let module Code = Code.Make (Fresh) (Sym.Make (Fresh)) in
   let expr =
     Ast.
       [
@@ -51,8 +50,7 @@ let test_example_1 () =
       (Nop, Empty, Empty, Empty);
     |]
 
-let test_figure_8_7 : unit -> unit =
- fun () ->
+let test_figure_8_7 () =
   let example =
     Code.
       [|

@@ -1,6 +1,5 @@
 open Cfg
 open Code
-open Utils
 
 let calc_a_orig gen_kill instr_of_def n =
   (M.find n gen_kill).gen_block
@@ -44,9 +43,7 @@ let replace_in_list index new_elem =
   in
   go 0
 
-module Make (Sym : Sym) = struct
-  open Sym
-
+module Make (Sym : Utils.Sym) = struct
   let rename v g =
     let count = Hashtbl.create (S.cardinal v) in
     let stack = Hashtbl.create (S.cardinal v) in
@@ -55,7 +52,7 @@ module Make (Sym : Sym) = struct
         Hashtbl.add count a 0;
         Hashtbl.add stack a 0)
       v;
-    let replace a i = get_sym (get_name a ^ string_of_int i) in
+    let replace a i = Sym.(get_sym (get_name a ^ string_of_int i)) in
     let replace_def defs a =
       defs := S.add a !defs;
       let i = Hashtbl.find count a + 1 in

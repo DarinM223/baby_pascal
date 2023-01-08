@@ -1,21 +1,19 @@
 open Alcotest
-open Baby_pascal
 open Baby_pascal.Code
 open Baby_pascal.Cfg
 open Baby_pascal.Dom
 open Baby_pascal.Ssa
-open Baby_pascal.Utils
 
 module BlockList = struct
   type t = Block.t list [@@deriving show, eq]
 end
 
 module Make () = struct
-  module Fresh = Fresh.Make ()
-  module Sym = Sym.Make (Fresh)
+  module Fresh = Baby_pascal.Utils.Fresh.Make ()
+  module Sym = Baby_pascal.Utils.Sym.Make (Fresh)
   include Sym
-  include Code.Make (Fresh) (Sym)
-  include Ssa.Make (Sym)
+  include Baby_pascal.Code.Make (Fresh) (Sym)
+  include Baby_pascal.Ssa.Make (Sym)
 end
 
 let test_figure_19_2 () =
