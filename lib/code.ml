@@ -17,7 +17,6 @@ type op =
   | Param
   | Call
   | Assign
-  | Return
   | Nop
 [@@deriving show, eq]
 
@@ -101,13 +100,6 @@ module Make (Fresh : Utils.Fresh) (Sym : Utils.Sym) = struct
           let addr = addr_of_expr e in
           let s = Sym.get_sym v in
           V.push code (Assign, addr, Empty, Name s)
-      | Ast.Return e ->
-          let addr =
-            match Option.map addr_of_expr e with
-            | Some addr -> addr
-            | None -> Empty
-          in
-          V.push code (Return, addr, Empty, Empty)
       | Ast.If (test, thn, []) ->
           let t = new_label () in
           short_circuit t next test;

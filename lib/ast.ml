@@ -12,7 +12,6 @@ type expr =
 
 type stmt =
   | Assign of string * expr
-  | Return of expr option
   | If of expr * stmt list * stmt list
   | While of expr * stmt list
   | Call of string * expr list

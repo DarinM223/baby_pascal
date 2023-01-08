@@ -133,7 +133,7 @@ let test_figure_19_3 () =
         (Lt, Name a, Const 10, Const 1);
       |]
   in
-  let block2 = CCVector.of_array [| (Return, Name c, Empty, Empty) |] in
+  let block2 = CCVector.of_array [| (Nop, Empty, Empty, Empty) |] in
   let graph =
     M.of_seq
     @@ List.to_seq
@@ -213,7 +213,7 @@ let test_figure_19_3 () =
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Return, Name c2, Empty, Empty) |];
+        code = CCVector.of_array [| (Nop, Empty, Empty, Empty) |];
         pred = S.of_list [ 1 ];
         succ = S.of_list [ -2 ];
       };
@@ -242,7 +242,7 @@ let test_figure_19_4 () =
                     Assign ("k", Bop (Add, Var "k", Int 2));
                   ] );
             ] );
-        Return (Some (Var "j"));
+        Assign ("result", Var "j");
       ]
   in
   let graph = ast |> normalize |> blocks_of_code in
@@ -339,7 +339,7 @@ let test_figure_19_4 () =
         phis = CCVector.of_array [||];
         code =
           CCVector.of_array
-            [| (Return, Name j2, Empty, Empty); (Nop, Empty, Empty, Empty) |];
+            [| (Assign, Name j2, Empty, Name 11); (Nop, Empty, Empty, Empty) |];
         pred = S.of_list [ 4 ];
         succ = S.of_list [ -2 ];
       };

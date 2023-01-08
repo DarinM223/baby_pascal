@@ -24,7 +24,7 @@ let test_example_1 () =
                 ( Bop (And, Bop (Eq, Var "a", Int 1), Bop (Lt, Var "a", Int 5)),
                   [ Assign ("a", Bop (Add, Var "a", Int 1)) ] );
             ],
-            [ Return (Some (Int 60)) ] );
+            [ Assign ("result", Int 60) ] );
       ]
   in
   let result = expr |> Code.normalize |> CCVector.to_array in
@@ -46,7 +46,7 @@ let test_example_1 () =
       (Assign, Temp 3, Empty, Name 2);
       (Goto, Const 7, Empty, Empty);
       (Goto, Const 16, Empty, Empty);
-      (Return, Const 60, Empty, Empty);
+      (Assign, Const 60, Empty, Name 4);
       (Nop, Empty, Empty, Empty);
     |]
 
