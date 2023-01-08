@@ -9,7 +9,7 @@ module BlockList = struct
 end
 
 let test_figure_19_2 () =
-  let open Baby_pascal.Utils.Sym.Make (Baby_pascal.Utils.Fresh.Make ()) in
+  let open Baby_pascal.Intf.Sym.Make (Baby_pascal.Intf.Fresh.Make ()) in
   let x, a, b, c = (get_sym "x", get_sym "a", get_sym "b", get_sym "c") in
   let block0 =
     CCVector.of_array
@@ -112,7 +112,7 @@ let test_figure_19_2 () =
     (graph |> M.bindings |> List.map snd)
 
 let test_figure_19_3 () =
-  let open Baby_pascal.Utils.Sym.Make (Baby_pascal.Utils.Fresh.Make ()) in
+  let open Baby_pascal.Intf.Sym.Make (Baby_pascal.Intf.Fresh.Make ()) in
   let a, b, c = (get_sym "a", get_sym "b", get_sym "c") in
   let block0 = CCVector.of_array [| (Assign, Const 0, Empty, name a) |] in
   let block1 =
@@ -213,8 +213,8 @@ let test_figure_19_3 () =
     (graph |> M.bindings |> List.map snd)
 
 let test_figure_19_4 () =
-  let module Fresh = Baby_pascal.Utils.Fresh.Make () in
-  let module Sym = Baby_pascal.Utils.Sym.Make (Fresh) in
+  let module Fresh = Baby_pascal.Intf.Fresh.Make () in
+  let module Sym = Baby_pascal.Intf.Sym.Make (Fresh) in
   let open Sym in
   let open Make (Fresh) (Sym) in
   let ast =

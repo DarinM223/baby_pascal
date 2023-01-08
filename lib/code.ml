@@ -42,7 +42,7 @@ let op_of_bop = function
   | Ast.Gt -> Gt
   | Ast.Ge -> Ge
 
-module Make (Fresh : Utils.Fresh) (Sym : Utils.Sym) = struct
+module Make (Fresh : Intf.Fresh) (Sym : Intf.Sym) = struct
   module V = CCVector
 
   let normalize stmts =

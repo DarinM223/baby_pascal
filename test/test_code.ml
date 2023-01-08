@@ -1,7 +1,7 @@
 open Alcotest
 open Baby_pascal.Code
 open Baby_pascal.Cfg
-open Baby_pascal.Utils
+open Baby_pascal.Intf
 
 module QuadArray = struct
   type t = quad array [@@deriving show, eq]
