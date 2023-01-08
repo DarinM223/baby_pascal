@@ -20,8 +20,10 @@ type op =
   | Nop
 [@@deriving show, eq]
 
-type addr = Const of int | Name of int | Temp of int | Empty
+type addr = Const of int | Name of int * int | Temp of int | Empty
 [@@deriving show, eq]
+
+let name sym = Name (sym, -1)
 
 type quad = op * addr * addr * addr [@@deriving show, eq]
 
@@ -57,7 +59,7 @@ module Make (Fresh : Utils.Fresh) (Sym : Utils.Sym) = struct
     let rec addr_of_expr = function
       | Ast.Int i -> Const i
       | Ast.Bool b -> if b then Const 1 else Const 0
-      | Ast.Var v -> Name (Sym.get_sym v)
+      | Ast.Var v -> name (Sym.get_sym v)
       | Ast.Uop (uop, e) ->
           let addr = addr_of_expr e in
           let tmp = Temp (Fresh.fresh ()) in
@@ -73,7 +75,7 @@ module Make (Fresh : Utils.Fresh) (Sym : Utils.Sym) = struct
     and go_call f es tmp =
       let addrs = List.map addr_of_expr es in
       List.iter (fun addr -> V.push code (Param, addr, Empty, Empty)) addrs;
-      V.push code (Call, Name (Sym.get_sym f), Const (List.length es), tmp);
+      V.push code (Call, name (Sym.get_sym f), Const (List.length es), tmp);
       tmp
     and short_circuit t f = function
       | Ast.Uop (Ast.Not, e) -> short_circuit f t e
@@ -99,7 +101,7 @@ module Make (Fresh : Utils.Fresh) (Sym : Utils.Sym) = struct
       | Ast.Assign (v, e) ->
           let addr = addr_of_expr e in
           let s = Sym.get_sym v in
-          V.push code (Assign, addr, Empty, Name s)
+          V.push code (Assign, addr, Empty, name s)
       | Ast.If (test, thn, []) ->
           let t = new_label () in
           short_circuit t next test;

@@ -20,15 +20,15 @@ let test_figure_9_13 () =
       (CCVector.of_array
          Code.
            [|
-             (Sub, Name m, Const 1, Name i);
-             (Assign, Name n, Empty, Name j);
-             (Assign, Name u1, Empty, Name a);
-             (Add, Name i, Const 1, Name i);
-             (Sub, Name j, Const 1, Name j);
-             (Eq, Name j, Const 0, Const 7);
-             (Assign, Name u2, Empty, Name a);
-             (Assign, Name u3, Empty, Name i);
-             (Lt, Name i, Const 5, Const 3);
+             (Sub, name m, Const 1, name i);
+             (Assign, name n, Empty, name j);
+             (Assign, name u1, Empty, name a);
+             (Add, name i, Const 1, name i);
+             (Sub, name j, Const 1, name j);
+             (Eq, name j, Const 0, Const 7);
+             (Assign, name u2, Empty, name a);
+             (Assign, name u3, Empty, name i);
+             (Lt, name i, Const 5, Const 3);
            |])
   in
   let to_info gen kill gen_block kill_block =

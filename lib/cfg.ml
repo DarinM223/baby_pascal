@@ -3,9 +3,7 @@ module S = Set.Make (Int)
 module M = Map.Make (Int)
 
 module Block = struct
-  type phi = int * int list
-
-  let pp_phi fmt (r, s) = Format.fprintf fmt "(%d, %s)" r ([%show: int list] s)
+  type phi = addr * addr list [@@deriving show, eq]
 
   type t = {
     phis : phi CCVector.vector;
@@ -151,7 +149,7 @@ let gen_kill graph =
       let gen = (M.find i info).gen in
       CCVector.iteri
         (fun j -> function
-          | (_, _, _, (Temp t | Name t)) as instr ->
+          | (_, _, _, (Temp t | Name (t, _))) as instr ->
               let def = fresh () in
               Hashtbl.add instr_of_def def instr;
               CCVector.set gen j (S.singleton def);
@@ -166,7 +164,7 @@ let gen_kill graph =
       let block_info = M.find i info in
       CCVector.iteri
         (fun j -> function
-          | _, _, _, (Temp t | Name t) ->
+          | _, _, _, (Temp t | Name (t, _)) ->
               let gen = CCVector.get block_info.gen j in
               let kill = S.diff (Hashtbl.find defs t) gen in
               CCVector.set block_info.kill j kill;

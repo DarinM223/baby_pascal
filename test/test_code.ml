@@ -1,20 +1,21 @@
 open Alcotest
-open Baby_pascal
+open Baby_pascal.Code
+open Baby_pascal.Cfg
 open Baby_pascal.Utils
 
 module QuadArray = struct
-  type t = Code.quad array [@@deriving show, eq]
+  type t = quad array [@@deriving show, eq]
 end
 
 module BlockList = struct
-  type t = Cfg.Block.t list [@@deriving show, eq]
+  type t = Block.t list [@@deriving show, eq]
 end
 
 let test_example_1 () =
   let module Fresh = Fresh.Make () in
-  let module Code = Code.Make (Fresh) (Sym.Make (Fresh)) in
+  let open Make (Fresh) (Sym.Make (Fresh)) in
   let expr =
-    Ast.
+    Baby_pascal.Ast.
       [
         Assign ("a", Bop (Add, Int 1, Bop (Mul, Int 2, Int 3)));
         If
@@ -27,133 +28,129 @@ let test_example_1 () =
             [ Assign ("result", Int 60) ] );
       ]
   in
-  let result = expr |> Code.normalize |> CCVector.to_array in
+  let result = expr |> normalize |> CCVector.to_array in
   (check (module QuadArray))
     "same array" result
     [|
       (Mul, Const 2, Const 3, Temp 0);
       (Add, Const 1, Temp 0, Temp 1);
-      (Assign, Temp 1, Empty, Name 2);
-      (Eq, Name 2, Const 1, Const 5);
+      (Assign, Temp 1, Empty, name 2);
+      (Eq, name 2, Const 1, Const 5);
       (Goto, Const 15, Empty, Empty);
-      (Lt, Name 2, Const 5, Const 7);
+      (Lt, name 2, Const 5, Const 7);
       (Goto, Const 15, Empty, Empty);
-      (Eq, Name 2, Const 1, Const 9);
+      (Eq, name 2, Const 1, Const 9);
       (Goto, Const 16, Empty, Empty);
-      (Lt, Name 2, Const 5, Const 11);
+      (Lt, name 2, Const 5, Const 11);
       (Goto, Const 16, Empty, Empty);
-      (Add, Name 2, Const 1, Temp 3);
-      (Assign, Temp 3, Empty, Name 2);
+      (Add, name 2, Const 1, Temp 3);
+      (Assign, Temp 3, Empty, name 2);
       (Goto, Const 7, Empty, Empty);
       (Goto, Const 16, Empty, Empty);
-      (Assign, Const 60, Empty, Name 4);
+      (Assign, Const 60, Empty, name 4);
       (Nop, Empty, Empty, Empty);
     |]
 
 let test_figure_8_7 () =
   let example =
-    Code.
-      [|
-        (Assign, Const 1, Empty, Name 1);
-        (Assign, Const 1, Empty, Name 2);
-        (Mul, Const 10, Name 1, Temp 1);
-        (Add, Temp 1, Name 2, Temp 2);
-        (Mul, Const 8, Temp 2, Temp 3);
-        (Sub, Temp 3, Const 88, Temp 4);
-        (Assign, Const 0, Empty, Name 3);
-        (Add, Name 2, Const 1, Name 2);
-        (Le, Name 2, Const 10, Const 2);
-        (Add, Name 1, Const 1, Name 1);
-        (Le, Name 1, Const 10, Const 1);
-        (Assign, Const 1, Empty, Name 1);
-        (Sub, Name 1, Const 1, Temp 5);
-        (Mul, Const 88, Temp 5, Temp 6);
-        (Assign, Const 1, Empty, Name 3);
-        (Add, Name 1, Const 1, Name 1);
-        (Le, Name 1, Const 10, Const 12);
-      |]
+    [|
+      (Assign, Const 1, Empty, name 1);
+      (Assign, Const 1, Empty, name 2);
+      (Mul, Const 10, name 1, Temp 1);
+      (Add, Temp 1, name 2, Temp 2);
+      (Mul, Const 8, Temp 2, Temp 3);
+      (Sub, Temp 3, Const 88, Temp 4);
+      (Assign, Const 0, Empty, name 3);
+      (Add, name 2, Const 1, name 2);
+      (Le, name 2, Const 10, Const 2);
+      (Add, name 1, Const 1, name 1);
+      (Le, name 1, Const 10, Const 1);
+      (Assign, Const 1, Empty, name 1);
+      (Sub, name 1, Const 1, Temp 5);
+      (Mul, Const 88, Temp 5, Temp 6);
+      (Assign, Const 1, Empty, name 3);
+      (Add, name 1, Const 1, name 1);
+      (Le, name 1, Const 10, Const 12);
+    |]
   in
+  let module V = CCVector in
   let result =
-    example |> CCVector.of_array |> Cfg.blocks_of_code |> Cfg.M.bindings
-    |> List.map snd
+    example |> V.of_array |> blocks_of_code |> M.bindings |> List.map snd
   in
-  let open CCVector in
-  let module S = Cfg.S in
   (check (module BlockList))
     "same output" result
-    Code.
-      [
-        {
-          phis = of_array [||];
-          code = of_array [||];
-          pred = S.of_list [ 12 ];
-          succ = S.of_list [];
-        };
-        {
-          phis = of_array [||];
-          code = of_array [||];
-          pred = S.of_list [];
-          succ = S.of_list [ 0 ];
-        };
-        {
-          phis = of_array [||];
-          code = of_array [| (Assign, Const 1, Empty, Name 1) |];
-          pred = S.of_list [ -1 ];
-          succ = S.of_list [ 1 ];
-        };
-        {
-          phis = of_array [||];
-          code = of_array [| (Assign, Const 1, Empty, Name 2) |];
-          pred = S.of_list [ 0; 9 ];
-          succ = S.of_list [ 2 ];
-        };
-        {
-          phis = of_array [||];
-          code =
-            of_array
-              [|
-                (Mul, Const 10, Name 1, Temp 1);
-                (Add, Temp 1, Name 2, Temp 2);
-                (Mul, Const 8, Temp 2, Temp 3);
-                (Sub, Temp 3, Const 88, Temp 4);
-                (Assign, Const 0, Empty, Name 3);
-                (Add, Name 2, Const 1, Name 2);
-                (Le, Name 2, Const 10, Const 2);
-              |];
-          pred = S.of_list [ 1; 2 ];
-          succ = S.of_list [ 2; 9 ];
-        };
-        {
-          phis = of_array [||];
-          code =
-            of_array
-              [|
-                (Add, Name 1, Const 1, Name 1); (Le, Name 1, Const 10, Const 1);
-              |];
-          pred = S.of_list [ 2 ];
-          succ = S.of_list [ 1; 11 ];
-        };
-        {
-          phis = of_array [||];
-          code = of_array [| (Assign, Const 1, Empty, Name 1) |];
-          pred = S.of_list [ 9 ];
-          succ = S.of_list [ 12 ];
-        };
-        {
-          phis = of_array [||];
-          code =
-            of_array
-              [|
-                (Sub, Name 1, Const 1, Temp 5);
-                (Mul, Const 88, Temp 5, Temp 6);
-                (Assign, Const 1, Empty, Name 3);
-                (Add, Name 1, Const 1, Name 1);
-                (Le, Name 1, Const 10, Const 12);
-              |];
-          pred = S.of_list [ 11; 12 ];
-          succ = S.of_list [ -2; 12 ];
-        };
-      ]
+    [
+      {
+        phis = V.of_array [||];
+        code = V.of_array [||];
+        pred = S.of_list [ 12 ];
+        succ = S.of_list [];
+      };
+      {
+        phis = V.of_array [||];
+        code = V.of_array [||];
+        pred = S.of_list [];
+        succ = S.of_list [ 0 ];
+      };
+      {
+        phis = V.of_array [||];
+        code = V.of_array [| (Assign, Const 1, Empty, name 1) |];
+        pred = S.of_list [ -1 ];
+        succ = S.of_list [ 1 ];
+      };
+      {
+        phis = V.of_array [||];
+        code = V.of_array [| (Assign, Const 1, Empty, name 2) |];
+        pred = S.of_list [ 0; 9 ];
+        succ = S.of_list [ 2 ];
+      };
+      {
+        phis = V.of_array [||];
+        code =
+          V.of_array
+            [|
+              (Mul, Const 10, name 1, Temp 1);
+              (Add, Temp 1, name 2, Temp 2);
+              (Mul, Const 8, Temp 2, Temp 3);
+              (Sub, Temp 3, Const 88, Temp 4);
+              (Assign, Const 0, Empty, name 3);
+              (Add, name 2, Const 1, name 2);
+              (Le, name 2, Const 10, Const 2);
+            |];
+        pred = S.of_list [ 1; 2 ];
+        succ = S.of_list [ 2; 9 ];
+      };
+      {
+        phis = V.of_array [||];
+        code =
+          V.of_array
+            [|
+              (Add, name 1, Const 1, name 1); (Le, name 1, Const 10, Const 1);
+            |];
+        pred = S.of_list [ 2 ];
+        succ = S.of_list [ 1; 11 ];
+      };
+      {
+        phis = V.of_array [||];
+        code = V.of_array [| (Assign, Const 1, Empty, name 1) |];
+        pred = S.of_list [ 9 ];
+        succ = S.of_list [ 12 ];
+      };
+      {
+        phis = V.of_array [||];
+        code =
+          V.of_array
+            [|
+              (Sub, name 1, Const 1, Temp 5);
+              (Mul, Const 88, Temp 5, Temp 6);
+              (Assign, Const 1, Empty, name 3);
+              (Add, name 1, Const 1, name 1);
+              (Le, name 1, Const 10, Const 12);
+            |];
+        pred = S.of_list [ 11; 12 ];
+        succ = S.of_list [ -2; 12 ];
+      };
+    ]
 
 let _ =
   run "Test three address codegen"

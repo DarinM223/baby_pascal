@@ -8,24 +8,16 @@ module BlockList = struct
   type t = Block.t list [@@deriving show, eq]
 end
 
-module Make () = struct
-  module Fresh = Baby_pascal.Utils.Fresh.Make ()
-  module Sym = Baby_pascal.Utils.Sym.Make (Fresh)
-  include Sym
-  include Baby_pascal.Code.Make (Fresh) (Sym)
-  include Baby_pascal.Ssa.Make (Sym)
-end
-
 let test_figure_19_2 () =
-  let open Make () in
+  let open Baby_pascal.Utils.Sym.Make (Baby_pascal.Utils.Fresh.Make ()) in
   let x, a, b, c = (get_sym "x", get_sym "a", get_sym "b", get_sym "c") in
   let block0 =
     CCVector.of_array
-      [| (Assign, Name x, Empty, Name b); (Assign, Const 0, Empty, Name a) |]
+      [| (Assign, name x, Empty, name b); (Assign, Const 0, Empty, name a) |]
   in
-  let block1 = CCVector.of_array [| (Lt, Name b, Const 4, Const 3) |] in
-  let block2 = CCVector.of_array [| (Assign, Name b, Empty, Name a) |] in
-  let block3 = CCVector.of_array [| (Add, Name a, Name b, Name c) |] in
+  let block1 = CCVector.of_array [| (Lt, name b, Const 4, Const 3) |] in
+  let block2 = CCVector.of_array [| (Assign, name b, Empty, name a) |] in
+  let block3 = CCVector.of_array [| (Add, name a, name b, name c) |] in
   let graph =
     M.of_seq
     @@ List.to_seq
@@ -70,9 +62,6 @@ let test_figure_19_2 () =
   let df = dominator_frontier graph dom_tree idom in
   insert_phis df a_orig v graph;
   rename v graph;
-  let [ x0; a1; a2; a3; b1; c1 ] =
-    List.map get_sym [ "x0"; "a1"; "a2"; "a3"; "b1"; "c1" ]
-  in
   (check (module BlockList))
     "check ssa graph"
     [
@@ -93,27 +82,29 @@ let test_figure_19_2 () =
         code =
           CCVector.of_array
             [|
-              (Assign, Name x0, Empty, Name b1);
-              (Assign, Const 0, Empty, Name a1);
+              (Assign, Name (x, 0), Empty, Name (b, 1));
+              (Assign, Const 0, Empty, Name (a, 1));
             |];
         pred = S.of_list [ -1 ];
         succ = S.of_list [ 1 ];
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Lt, Name b1, Const 4, Const 3) |];
+        code = CCVector.of_array [| (Lt, Name (b, 1), Const 4, Const 3) |];
         pred = S.of_list [ 0 ];
         succ = S.of_list [ 2; 3 ];
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Assign, Name b1, Empty, Name a2) |];
+        code = CCVector.of_array [| (Assign, Name (b, 1), Empty, Name (a, 2)) |];
         pred = S.of_list [ 1 ];
         succ = S.of_list [ 3 ];
       };
       {
-        phis = CCVector.of_array [| (a3, [ a1; a2 ]) |];
-        code = CCVector.of_array [| (Add, Name a3, Name b1, Name c1) |];
+        phis =
+          CCVector.of_array [| (Name (a, 3), [ Name (a, 1); Name (a, 2) ]) |];
+        code =
+          CCVector.of_array [| (Add, Name (a, 3), Name (b, 1), Name (c, 1)) |];
         pred = S.of_list [ 1; 2 ];
         succ = S.of_list [ -2 ];
       };
@@ -121,16 +112,16 @@ let test_figure_19_2 () =
     (graph |> M.bindings |> List.map snd)
 
 let test_figure_19_3 () =
-  let open Make () in
+  let open Baby_pascal.Utils.Sym.Make (Baby_pascal.Utils.Fresh.Make ()) in
   let a, b, c = (get_sym "a", get_sym "b", get_sym "c") in
-  let block0 = CCVector.of_array [| (Assign, Const 0, Empty, Name a) |] in
+  let block0 = CCVector.of_array [| (Assign, Const 0, Empty, name a) |] in
   let block1 =
     CCVector.of_array
       [|
-        (Add, Name a, Const 1, Name b);
-        (Add, Name c, Name b, Name c);
-        (Mul, Name b, Const 2, Name a);
-        (Lt, Name a, Const 10, Const 1);
+        (Add, name a, Const 1, name b);
+        (Add, name c, name b, name c);
+        (Mul, name b, Const 2, name a);
+        (Lt, name a, Const 10, Const 1);
       |]
   in
   let block2 = CCVector.of_array [| (Nop, Empty, Empty, Empty) |] in
@@ -172,9 +163,6 @@ let test_figure_19_3 () =
   let df = dominator_frontier graph dom_tree idom in
   insert_phis df a_orig v graph;
   rename v graph;
-  let [ a1; a2; a3; b0; b1; b2; c0; c1; c2 ] =
-    List.map get_sym [ "a1"; "a2"; "a3"; "b0"; "b1"; "b2"; "c0"; "c1"; "c2" ]
-  in
   (check (module BlockList))
     "check ssa graph"
     [
@@ -192,21 +180,25 @@ let test_figure_19_3 () =
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Assign, Const 0, Empty, Name a1) |];
+        code = CCVector.of_array [| (Assign, Const 0, Empty, Name (a, 1)) |];
         pred = S.of_list [ -1 ];
         succ = S.of_list [ 1 ];
       };
       {
         phis =
           CCVector.of_array
-            [| (c1, [ c0; c2 ]); (b1, [ b0; b2 ]); (a2, [ a1; a3 ]) |];
+            [|
+              (Name (c, 1), [ Name (c, 0); Name (c, 2) ]);
+              (Name (b, 1), [ Name (b, 0); Name (b, 2) ]);
+              (Name (a, 2), [ Name (a, 1); Name (a, 3) ]);
+            |];
         code =
           CCVector.of_array
             [|
-              (Add, Name a2, Const 1, Name b2);
-              (Add, Name c2, Name b2, Name c2);
-              (Mul, Name b2, Const 2, Name a3);
-              (Lt, Name a3, Const 10, Const 1);
+              (Add, Name (a, 2), Const 1, Name (b, 2));
+              (Add, Name (c, 2), Name (b, 2), Name (c, 2));
+              (Mul, Name (b, 2), Const 2, Name (a, 3));
+              (Lt, Name (a, 3), Const 10, Const 1);
             |];
         pred = S.of_list [ 0; 1 ];
         succ = S.of_list [ 1; 2 ];
@@ -221,7 +213,10 @@ let test_figure_19_3 () =
     (graph |> M.bindings |> List.map snd)
 
 let test_figure_19_4 () =
-  let open Make () in
+  let module Fresh = Baby_pascal.Utils.Fresh.Make () in
+  let module Sym = Baby_pascal.Utils.Sym.Make (Fresh) in
+  let open Sym in
+  let open Make (Fresh) (Sym) in
   let ast =
     Baby_pascal.Ast.
       [
@@ -254,8 +249,8 @@ let test_figure_19_4 () =
   let df = dominator_frontier graph dom_tree idom in
   insert_phis df a_orig v graph;
   rename v graph;
-  let [ i1; j1; j2; j3; j4; k1; k2; k3; k4 ] =
-    List.map get_sym [ "i1"; "j1"; "j2"; "j3"; "j4"; "k1"; "k2"; "k3"; "k4" ]
+  let i, j, k, result =
+    (get_sym "i", get_sym "j", get_sym "k", get_sym "result")
   in
   (check (module BlockList))
     "check ssa graph"
@@ -277,17 +272,21 @@ let test_figure_19_4 () =
         code =
           CCVector.of_array
             [|
-              (Assign, Const 1, Empty, Name i1);
-              (Assign, Const 1, Empty, Name j1);
-              (Assign, Const 0, Empty, Name k1);
+              (Assign, Const 1, Empty, Name (i, 1));
+              (Assign, Const 1, Empty, Name (j, 1));
+              (Assign, Const 0, Empty, Name (k, 1));
             |];
         pred = S.of_list [ -1 ];
         succ = S.of_list [ 3 ];
       };
       {
         phis =
-          CCVector.of_array [| (j2, [ j1; j4; j3 ]); (k2, [ k1; k4; k3 ]) |];
-        code = CCVector.of_array [| (Lt, Name k2, Const 100, Const 5) |];
+          CCVector.of_array
+            [|
+              (Name (j, 2), [ Name (j, 1); Name (j, 4); Name (j, 3) ]);
+              (Name (k, 2), [ Name (k, 1); Name (k, 4); Name (k, 3) ]);
+            |];
+        code = CCVector.of_array [| (Lt, Name (k, 2), Const 100, Const 5) |];
         pred = S.of_list [ 0; 7; 11 ];
         succ = S.of_list [ 4; 5 ];
       };
@@ -299,7 +298,7 @@ let test_figure_19_4 () =
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Lt, Name j2, Const 20, Const 7) |];
+        code = CCVector.of_array [| (Lt, Name (j, 2), Const 20, Const 7) |];
         pred = S.of_list [ 3 ];
         succ = S.of_list [ 6; 7 ];
       };
@@ -314,9 +313,9 @@ let test_figure_19_4 () =
         code =
           CCVector.of_array
             [|
-              (Assign, Name i1, Empty, Name j4);
-              (Add, Name k2, Const 1, Temp 3);
-              (Assign, Temp 3, Empty, Name k4);
+              (Assign, Name (i, 1), Empty, Name (j, 4));
+              (Add, Name (k, 2), Const 1, Temp 3);
+              (Assign, Temp 3, Empty, Name (k, 4));
               (Goto, Const 3, Empty, Empty);
             |];
         pred = S.of_list [ 5 ];
@@ -327,9 +326,9 @@ let test_figure_19_4 () =
         code =
           CCVector.of_array
             [|
-              (Assign, Name k2, Empty, Name j3);
-              (Add, Name k2, Const 2, Temp 4);
-              (Assign, Temp 4, Empty, Name k3);
+              (Assign, Name (k, 2), Empty, Name (j, 3));
+              (Add, Name (k, 2), Const 2, Temp 4);
+              (Assign, Temp 4, Empty, Name (k, 3));
               (Goto, Const 3, Empty, Empty);
             |];
         pred = S.of_list [ 6 ];
@@ -339,7 +338,10 @@ let test_figure_19_4 () =
         phis = CCVector.of_array [||];
         code =
           CCVector.of_array
-            [| (Assign, Name j2, Empty, Name 11); (Nop, Empty, Empty, Empty) |];
+            [|
+              (Assign, Name (j, 2), Empty, Name (result, 1));
+              (Nop, Empty, Empty, Empty);
+            |];
         pred = S.of_list [ 4 ];
         succ = S.of_list [ -2 ];
       };
