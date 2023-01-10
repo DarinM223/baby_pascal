@@ -60,7 +60,7 @@ let test_figure_19_2 () =
   let idom = dominators graph Block.entry in
   let dom_tree = dom_tree_of_idom graph idom in
   let df = dominator_frontier graph dom_tree idom in
-  insert_phis df a_orig v graph;
+  insert_phis_minimal df a_orig v graph;
   rename v graph;
   (check (module BlockList))
     "check ssa graph"
@@ -161,7 +161,7 @@ let test_figure_19_3 () =
   let idom = dominators graph Block.entry in
   let dom_tree = dom_tree_of_idom graph idom in
   let df = dominator_frontier graph dom_tree idom in
-  insert_phis df a_orig v graph;
+  insert_phis_minimal df a_orig v graph;
   rename v graph;
   (check (module BlockList))
     "check ssa graph"
@@ -247,7 +247,7 @@ let test_figure_19_4 () =
   let idom = dominators graph Block.entry in
   let dom_tree = dom_tree_of_idom graph idom in
   let df = dominator_frontier graph dom_tree idom in
-  insert_phis df a_orig v graph;
+  insert_phis_minimal df a_orig v graph;
   rename v graph;
   let i, j, k, result =
     (get_sym "i", get_sym "j", get_sym "k", get_sym "result")

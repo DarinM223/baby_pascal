@@ -9,7 +9,7 @@ let calc_a_orig gen_kill instr_of_def n =
          | _ -> None)
   |> S.to_seq |> List.of_seq
 
-let insert_phis df a_orig v g =
+let insert_phis test df a_orig v g =
   let defsites = Hashtbl.create (S.cardinal v) in
   M.iter (fun n _ -> List.iter (fun a -> Hashtbl.add defsites a n) (a_orig n)) g;
   let a_phi = Hashtbl.create (S.cardinal v) in
@@ -22,7 +22,7 @@ let insert_phis df a_orig v g =
         w := S.remove n !w;
         List.iter
           (fun y ->
-            if not (List.mem y (Hashtbl.find_all a_phi a)) then (
+            if (not (List.mem y (Hashtbl.find_all a_phi a))) && test y a then (
               let node = M.find y g in
               let phi = List.init (S.cardinal node.Block.pred) (fun _ -> a') in
               CCVector.push node.phis (a', phi);
@@ -31,6 +31,11 @@ let insert_phis df a_orig v g =
           (df n)
       done)
     v
+
+let insert_phis_minimal = insert_phis (fun _ _ -> true)
+
+let insert_phis_pruned live_map =
+  insert_phis (fun y a -> S.mem a (M.find y live_map).live_in)
 
 let find_index a l =
   let exception Found of int in
