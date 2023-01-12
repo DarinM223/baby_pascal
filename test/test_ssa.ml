@@ -54,13 +54,11 @@ let test_figure_19_2 () =
              } );
          ]
   in
-  let gen_kill_map, instr_of_def = gen_kill graph in
   let v = S.of_seq (syms ()) in
-  let a_orig = calc_a_orig gen_kill_map instr_of_def in
   let idom = dominators graph Block.entry in
   let dom_tree = dom_tree_of_idom graph idom in
   let df = dominator_frontier graph dom_tree idom in
-  insert_phis_minimal df a_orig v graph;
+  insert_phis_minimal df (calc_a_orig graph) v graph;
   rename v graph;
   (check (module BlockList))
     "check ssa graph"
@@ -155,13 +153,11 @@ let test_figure_19_3 () =
              } );
          ]
   in
-  let gen_kill_map, instr_of_def = gen_kill graph in
   let v = S.of_seq (syms ()) in
-  let a_orig = calc_a_orig gen_kill_map instr_of_def in
   let idom = dominators graph Block.entry in
   let dom_tree = dom_tree_of_idom graph idom in
   let df = dominator_frontier graph dom_tree idom in
-  insert_phis_minimal df a_orig v graph;
+  insert_phis_minimal df (calc_a_orig graph) v graph;
   rename v graph;
   (check (module BlockList))
     "check ssa graph"
@@ -241,13 +237,11 @@ let test_figure_19_4 () =
       ]
   in
   let graph = ast |> normalize |> blocks_of_code in
-  let gen_kill_map, instr_of_def = gen_kill graph in
   let v = S.of_seq (syms ()) in
-  let a_orig = calc_a_orig gen_kill_map instr_of_def in
   let idom = dominators graph Block.entry in
   let dom_tree = dom_tree_of_idom graph idom in
   let df = dominator_frontier graph dom_tree idom in
-  insert_phis_minimal df a_orig v graph;
+  insert_phis_minimal df (calc_a_orig graph) v graph;
   rename v graph;
   let i, j, k, result =
     (get_sym "i", get_sym "j", get_sym "k", get_sym "result")
@@ -348,6 +342,121 @@ let test_figure_19_4 () =
     ]
     (graph |> M.bindings |> List.map snd)
 
+let test_pruned () =
+  let module Fresh = Baby_pascal.Intf.Fresh.Make () in
+  let module Sym = Baby_pascal.Intf.Sym.Make (Fresh) in
+  let open Sym in
+  let open Make (Fresh) (Sym) in
+  let ast =
+    Baby_pascal.Ast.
+      [
+        If
+          ( Bop (Lt, Var "i", Int 2),
+            [ Assign ("y", Int 1) ],
+            [ Assign ("y", Var "x") ] );
+        If
+          ( Bop (Lt, Var "i", Int 2),
+            [ Assign ("z", Int 1) ],
+            [ Assign ("z", Var "x") ] );
+        Assign ("result", Var "z");
+      ]
+  in
+  let graph = ast |> normalize |> blocks_of_code in
+  let live = liveness (gen_kill graph) graph in
+  let v = S.of_seq (syms ()) in
+  let idom = dominators graph Block.entry in
+  let dom_tree = dom_tree_of_idom graph idom in
+  let df = dominator_frontier graph dom_tree idom in
+  insert_phis_pruned live df (calc_a_orig graph) v graph;
+  rename v graph;
+  (check (module BlockList))
+    "check ssa graph"
+    [
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [||];
+        pred = S.of_list [ 10 ];
+        succ = S.of_list [];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [||];
+        pred = S.of_list [];
+        succ = S.of_list [ 0 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [| (Lt, Name (0, 0), Const 2, Const 2) |];
+        pred = S.of_list [ -1 ];
+        succ = S.of_list [ 1; 2 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [| (Goto, Const 4, Empty, Empty) |];
+        pred = S.of_list [ 0 ];
+        succ = S.of_list [ 4 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code =
+          CCVector.of_array
+            [|
+              (Assign, Const 1, Empty, Name (1, 2));
+              (Goto, Const 5, Empty, Empty);
+            |];
+        pred = S.of_list [ 0 ];
+        succ = S.of_list [ 5 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [| (Assign, Name (2, 0), Empty, Name (1, 1)) |];
+        pred = S.of_list [ 1 ];
+        succ = S.of_list [ 5 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [| (Lt, Name (0, 0), Const 2, Const 7) |];
+        pred = S.of_list [ 2; 4 ];
+        succ = S.of_list [ 6; 7 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [| (Goto, Const 9, Empty, Empty) |];
+        pred = S.of_list [ 5 ];
+        succ = S.of_list [ 9 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code =
+          CCVector.of_array
+            [|
+              (Assign, Const 1, Empty, Name (3, 3));
+              (Goto, Const 10, Empty, Empty);
+            |];
+        pred = S.of_list [ 5 ];
+        succ = S.of_list [ 10 ];
+      };
+      {
+        phis = CCVector.of_array [||];
+        code = CCVector.of_array [| (Assign, Name (2, 0), Empty, Name (3, 1)) |];
+        pred = S.of_list [ 6 ];
+        succ = S.of_list [ 10 ];
+      };
+      {
+        phis =
+          CCVector.of_array [| (Name (3, 2), [ Name (3, 3); Name (3, 1) ]) |];
+        code =
+          CCVector.of_array
+            [|
+              (Assign, Name (3, 2), Empty, Name (4, 1));
+              (Nop, Empty, Empty, Empty);
+            |];
+        pred = S.of_list [ 7; 9 ];
+        succ = S.of_list [ -2 ];
+      };
+    ]
+    (graph |> M.bindings |> List.map snd)
+
 let _ =
   run "SSA conversion tests"
     [
@@ -356,5 +465,6 @@ let _ =
           test_case "Figure 19.2" `Quick test_figure_19_2;
           test_case "Figure 19.3" `Quick test_figure_19_3;
           test_case "Figure 19.4" `Quick test_figure_19_4;
+          test_case "Pruned" `Quick test_pruned;
         ] );
     ]

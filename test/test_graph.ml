@@ -4,12 +4,7 @@ open Baby_pascal
 module GenKillInfo = struct
   open Cfg
 
-  type t = gen_kill_info M.t
-
-  let pp fmt m =
-    Format.fprintf fmt "%s" ([%show: (int * gen_kill_info) list] (M.bindings m))
-
-  let equal = M.equal equal_gen_kill_info
+  type t = (int * gen_kill_info) list [@@deriving show, eq]
 end
 
 let test_figure_9_13 () =
@@ -31,33 +26,61 @@ let test_figure_9_13 () =
              (Lt, name i, Const 5, Const 3);
            |])
   in
-  let to_info gen kill gen_block kill_block =
-    {
-      gen = CCVector.of_array (Array.map S.of_list gen);
-      kill = CCVector.of_array (Array.map S.of_list kill);
-      gen_block = S.of_list gen_block;
-      kill_block = S.of_list kill_block;
-    }
-  in
-  let sets, _ = gen_kill example in
+  let sets = gen_kill example in
   (check (module GenKillInfo))
-    "same gen/kill sets" sets
-    (M.of_seq
-    @@ List.to_seq
-         [
-           (-2, to_info [||] [||] [] []);
-           (-1, to_info [||] [||] [] []);
-           ( 0,
-             to_info [| [ 0 ]; [ 1 ]; [ 2 ] |]
-               [| [ 3; 6 ]; [ 4 ]; [ 5 ] |]
-               [ 0; 1; 2 ] [ 3; 4; 5; 6 ] );
-           ( 3,
-             to_info [| [ 3 ]; [ 4 ]; [] |]
-               [| [ 0; 6 ]; [ 1 ]; [] |]
-               [ 3; 4 ] [ 0; 1; 6 ] );
-           (6, to_info [| [ 5 ] |] [| [ 2 ] |] [ 5 ] [ 2 ]);
-           (7, to_info [| [ 6 ]; [] |] [| [ 0; 3 ]; [] |] [ 6 ] [ 0; 3 ]);
-         ])
+    "same gen/kill sets" (M.bindings sets)
+    [
+      ( -2,
+        {
+          gen = CCVector.of_array [||];
+          kill = CCVector.of_array [||];
+          gen_block = S.of_list [];
+          kill_block = S.of_list [];
+        } );
+      ( -1,
+        {
+          gen = CCVector.of_array [||];
+          kill = CCVector.of_array [||];
+          gen_block = S.of_list [];
+          kill_block = S.of_list [];
+        } );
+      ( 0,
+        {
+          gen =
+            CCVector.of_array
+              [| S.of_list [ 4 ]; S.of_list [ 5 ]; S.of_list [ 6 ] |];
+          kill =
+            CCVector.of_array
+              [| S.of_list [ 2 ]; S.of_list [ 3 ]; S.of_list [ 1 ] |];
+          gen_block = S.of_list [ 4; 5; 6 ];
+          kill_block = S.of_list [ 1; 2; 3 ];
+        } );
+      ( 3,
+        {
+          gen =
+            CCVector.of_array
+              [| S.of_list [ 2 ]; S.of_list [ 3 ]; S.of_list [ 3 ] |];
+          kill =
+            CCVector.of_array
+              [| S.of_list [ 2 ]; S.of_list [ 3 ]; S.of_list [] |];
+          gen_block = S.of_list [ 2; 3 ];
+          kill_block = S.of_list [ 2; 3 ];
+        } );
+      ( 6,
+        {
+          gen = CCVector.of_array [| S.of_list [ 7 ] |];
+          kill = CCVector.of_array [| S.of_list [ 1 ] |];
+          gen_block = S.of_list [ 7 ];
+          kill_block = S.of_list [ 1 ];
+        } );
+      ( 7,
+        {
+          gen = CCVector.of_array [| S.of_list [ 8 ]; S.of_list [ 2 ] |];
+          kill = CCVector.of_array [| S.of_list [ 2 ]; S.of_list [] |];
+          gen_block = S.of_list [ 2; 8 ];
+          kill_block = S.of_list [ 2 ];
+        } );
+    ]
 
 let _ =
   run "Test control flow graph"

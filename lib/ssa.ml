@@ -1,13 +1,18 @@
 open Cfg
 open Code
 
-let calc_a_orig gen_kill instr_of_def n =
-  (M.find n gen_kill).gen_block
-  |> S.filter_map (fun def ->
-         match instr_of_def def with
-         | _, _, _, Name (t, _) -> Some t
-         | _ -> None)
-  |> S.to_seq |> List.of_seq
+let calc_a_orig g =
+  let a_orig = Hashtbl.create (M.cardinal g) in
+  M.iter
+    (fun n node ->
+      let result =
+        CCVector.fold
+          (fun l -> function _, _, _, Name (t, _) -> t :: l | _ -> l)
+          [] node.Block.code
+      in
+      Hashtbl.add a_orig n result)
+    g;
+  Hashtbl.find a_orig
 
 let insert_phis test df a_orig v g =
   let defsites = Hashtbl.create (S.cardinal v) in

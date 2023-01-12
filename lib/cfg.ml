@@ -1,5 +1,12 @@
 open Code
-module S = Set.Make (Int)
+
+module S = struct
+  include Set.Make (Int)
+
+  let pp fmt s =
+    Format.fprintf fmt "S.of_list %s" ([%show: int list] (elements s))
+end
+
 module M = Map.Make (Int)
 
 module Block = struct
@@ -14,12 +21,11 @@ module Block = struct
 
   let pp fmt block =
     Format.fprintf fmt
-      "{ phis = CCVector.of_array %s; code = CCVector.of_array %s; pred = \
-       S.of_list %s; succ = S.of_list %s }"
+      "{ phis = CCVector.of_array %s; code = CCVector.of_array %s; pred = %a; \
+       succ = %a }"
       ([%show: phi array] (CCVector.to_array block.phis))
       ([%show: quad array] (CCVector.to_array block.code))
-      ([%show: int list] (S.elements block.pred))
-      ([%show: int list] (S.elements block.succ))
+      S.pp block.pred S.pp block.succ
 
   let equal a b =
     CCVector.(
@@ -99,13 +105,12 @@ type gen_kill_info = {
 }
 
 let pp_gen_kill_info fmt info =
-  Format.fprintf fmt "{ gen = %s; kill = %s; gen_block = %s; kill_block = %s }"
-    ([%show: int list array]
-       (Array.map S.elements (CCVector.to_array info.gen)))
-    ([%show: int list array]
-       (Array.map S.elements (CCVector.to_array info.kill)))
-    ([%show: int list] (S.elements info.gen_block))
-    ([%show: int list] (S.elements info.kill_block))
+  Format.fprintf fmt
+    "{ gen = CCVector.of_array %s; kill = CCVector.of_array %s; gen_block = \
+     %a; kill_block = %a }"
+    ([%show: S.t array] (CCVector.to_array info.gen))
+    ([%show: S.t array] (CCVector.to_array info.kill))
+    S.pp info.gen_block S.pp info.kill_block
 
 let equal_gen_kill_info a b =
   CCVector.(
@@ -114,21 +119,8 @@ let equal_gen_kill_info a b =
   && S.equal a.gen_block b.gen_block
   && S.equal a.kill_block b.kill_block
 
-(*
-  First pass: generate fresh ints for description id for each instruction,
-  set gen(j) to the description id, and add the description id to defs(t).
-
-  Second pass: for each instruction calculate kill using the defs(t) and gen(j).
-  Also accumulate the gen_block and kill_block for the whole block.
-*)
 let gen_kill graph =
-  let fresh =
-    let i = ref (-1) in
-    fun () ->
-      incr i;
-      !i
-  in
-  let info =
+  let info_map =
     M.fold
       (fun i node info ->
         let len = CCVector.length node.Block.code in
@@ -142,41 +134,27 @@ let gen_kill graph =
           info)
       graph M.empty
   in
-  let defs = Hashtbl.create 100 in
-  let instr_of_def = Hashtbl.create 100 in
+  let get_name = function Name (n, _) -> Some n | _ -> None in
   M.iter
     (fun i node ->
-      let gen = (M.find i info).gen in
-      CCVector.iteri
-        (fun j -> function
-          | (_, _, _, (Temp t | Name (t, _))) as instr ->
-              let def = fresh () in
-              Hashtbl.add instr_of_def def instr;
-              CCVector.set gen j (S.singleton def);
-              if Hashtbl.mem defs t then
-                Hashtbl.replace defs t (S.add def (Hashtbl.find defs t))
-              else Hashtbl.add defs t (S.singleton def)
-          | _ -> ())
-        node.Block.code)
+      let info = M.find i info_map in
+      for j = CCVector.length node.Block.code - 1 downto 0 do
+        let _, a, b, c = CCVector.get node.code j in
+        let gen = [ a; b ] |> List.filter_map get_name |> S.of_list in
+        let kill = Option.fold ~none:S.empty ~some:S.singleton (get_name c) in
+        CCVector.set info.gen j gen;
+        CCVector.set info.kill j kill;
+        info.gen_block <- S.union info.gen_block gen;
+        info.kill_block <- S.(union kill (diff info.kill_block gen))
+      done)
     graph;
-  M.iter
-    (fun i node ->
-      let block_info = M.find i info in
-      CCVector.iteri
-        (fun j -> function
-          | _, _, _, (Temp t | Name (t, _)) ->
-              let gen = CCVector.get block_info.gen j in
-              let kill = S.diff (Hashtbl.find defs t) gen in
-              CCVector.set block_info.kill j kill;
-              block_info.gen_block <-
-                S.(union gen (diff block_info.gen_block kill));
-              block_info.kill_block <- S.union block_info.kill_block kill
-          | _ -> ())
-        node.Block.code)
-    graph;
-  (info, Hashtbl.find instr_of_def)
+  info_map
 
 type live_info = { live_in : S.t; live_out : S.t }
+
+let pp_live_info fmt info =
+  Format.fprintf fmt "{ live_in = %a; live_out = %a }" S.pp info.live_in S.pp
+    info.live_out
 
 let equal_live_info a b =
   S.equal a.live_in b.live_in && S.equal a.live_out b.live_out
@@ -187,15 +165,15 @@ let liveness gen_kill graph =
       M.fold
         (fun n node info' ->
           let live_in =
-            List.fold_left
-              (fun acc p -> S.union acc (M.find p info).live_out)
-              S.empty
-              (S.elements node.Block.pred)
-          in
-          let live_out =
             let gen_kill = M.find n gen_kill in
             S.union gen_kill.gen_block
-              (S.diff (M.find n info).live_in gen_kill.kill_block)
+              (S.diff (M.find n info).live_out gen_kill.kill_block)
+          in
+          let live_out =
+            List.fold_left
+              (fun acc s -> S.union acc (M.find s info).live_in)
+              S.empty
+              (S.elements node.Block.succ)
           in
           M.add n { live_in; live_out } info')
         graph M.empty
