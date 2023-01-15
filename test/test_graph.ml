@@ -1,12 +1,6 @@
 open Alcotest
 open Baby_pascal
 
-module GenKillInfo = struct
-  open Cfg
-
-  type t = (int * gen_kill_info) list [@@deriving show, eq]
-end
-
 let test_figure_9_13 () =
   let open Cfg in
   let a, i, j, m, n, u1, u2, u3 = (1, 2, 3, 4, 5, 6, 7, 8) in
@@ -27,7 +21,7 @@ let test_figure_9_13 () =
            |])
   in
   let sets = gen_kill example in
-  (check (module GenKillInfo))
+  (check (list (pair int (testable pp_gen_kill_info equal_gen_kill_info))))
     "same gen/kill sets" (M.bindings sets)
     [
       ( -2,

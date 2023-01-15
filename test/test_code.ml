@@ -3,14 +3,6 @@ open Baby_pascal.Code
 open Baby_pascal.Cfg
 open Baby_pascal.Intf
 
-module QuadArray = struct
-  type t = quad array [@@deriving show, eq]
-end
-
-module BlockList = struct
-  type t = Block.t list [@@deriving show, eq]
-end
-
 let test_example_1 () =
   let module Fresh = Fresh.Make () in
   let open Make (Fresh) (Sym.Make (Fresh)) in
@@ -29,7 +21,7 @@ let test_example_1 () =
       ]
   in
   let result = expr |> normalize |> CCVector.to_array in
-  (check (module QuadArray))
+  (check (array (testable pp_quad equal_quad)))
     "same array" result
     [|
       (Mul, Const 2, Const 3, Temp 0);
@@ -77,7 +69,7 @@ let test_figure_8_7 () =
   let result =
     example |> V.of_array |> blocks_of_code |> M.bindings |> List.map snd
   in
-  (check (module BlockList))
+  (check (list (module Block)))
     "same output" result
     [
       {

@@ -4,10 +4,6 @@ open Baby_pascal.Cfg
 open Baby_pascal.Dom
 open Baby_pascal.Ssa
 
-module BlockList = struct
-  type t = Block.t list [@@deriving show, eq]
-end
-
 let test_figure_19_2 () =
   let open Baby_pascal.Intf.Sym.Make (Baby_pascal.Intf.Fresh.Make ()) in
   let x, a, b, c = (get_sym "x", get_sym "a", get_sym "b", get_sym "c") in
@@ -60,7 +56,7 @@ let test_figure_19_2 () =
   let df = dominator_frontier graph dom_tree idom in
   insert_phis_minimal df (calc_a_orig graph) v graph;
   rename v graph;
-  (check (module BlockList))
+  (check (list (module Block)))
     "check ssa graph"
     [
       {
@@ -159,7 +155,7 @@ let test_figure_19_3 () =
   let df = dominator_frontier graph dom_tree idom in
   insert_phis_minimal df (calc_a_orig graph) v graph;
   rename v graph;
-  (check (module BlockList))
+  (check (list (module Block)))
     "check ssa graph"
     [
       {
@@ -246,7 +242,7 @@ let test_figure_19_4 () =
   let i, j, k, result =
     (get_sym "i", get_sym "j", get_sym "k", get_sym "result")
   in
-  (check (module BlockList))
+  (check (list (module Block)))
     "check ssa graph"
     [
       {
@@ -369,7 +365,7 @@ let test_pruned () =
   let df = dominator_frontier graph dom_tree idom in
   insert_phis_pruned live df (calc_a_orig graph) v graph;
   rename v graph;
-  (check (module BlockList))
+  (check (list (module Block)))
     "check ssa graph"
     [
       {

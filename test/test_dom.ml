@@ -2,10 +2,6 @@ open Alcotest
 open Baby_pascal.Cfg
 open Baby_pascal.Dom
 
-module IntList = struct
-  type t = int list [@@deriving show, eq]
-end
-
 let build_graph nodes edges =
   let graph =
     List.fold_left
@@ -75,7 +71,7 @@ let test_figure_18_3 () =
       let description =
         "Next nodes in dominator tree for node " ^ string_of_int n
       in
-      (check (module IntList)) description (List.sort compare next) next')
+      (check (list int)) description (List.sort compare next) next')
     graph
 
 let test_figure_19_5 () =
@@ -108,7 +104,7 @@ let test_figure_19_5 () =
   let idom = dominators graph 1 in
   let dom_tree = dom_tree_of_idom graph idom in
   let df = dominator_frontier graph dom_tree idom in
-  (check (module IntList))
+  (check (list int))
     "Dominance frontier for node 5"
     (List.sort compare (df 5))
     [ 4; 5; 12; 13 ]
