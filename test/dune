@@ -1,5 +1,5 @@
 (tests
- (names test_code test_graph test_dom test_ssa)
+ (names test_code test_graph test_dom test_ssa_construct)
  (flags
   (:standard))
  (preprocess

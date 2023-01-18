@@ -75,24 +75,28 @@ let test_figure_8_7 () =
       {
         phis = V.of_array [||];
         code = V.of_array [||];
+        pcopies = V.of_array [||];
         pred = S.of_list [ 12 ];
         succ = S.of_list [];
       };
       {
         phis = V.of_array [||];
         code = V.of_array [||];
+        pcopies = V.of_array [||];
         pred = S.of_list [];
         succ = S.of_list [ 0 ];
       };
       {
         phis = V.of_array [||];
         code = V.of_array [| (Assign, Const 1, Empty, name 1) |];
+        pcopies = V.of_array [||];
         pred = S.of_list [ -1 ];
         succ = S.of_list [ 1 ];
       };
       {
         phis = V.of_array [||];
         code = V.of_array [| (Assign, Const 1, Empty, name 2) |];
+        pcopies = V.of_array [||];
         pred = S.of_list [ 0; 9 ];
         succ = S.of_list [ 2 ];
       };
@@ -109,6 +113,7 @@ let test_figure_8_7 () =
               (Add, name 2, Const 1, name 2);
               (Le, name 2, Const 10, Const 2);
             |];
+        pcopies = V.of_array [||];
         pred = S.of_list [ 1; 2 ];
         succ = S.of_list [ 2; 9 ];
       };
@@ -119,12 +124,14 @@ let test_figure_8_7 () =
             [|
               (Add, name 1, Const 1, name 1); (Le, name 1, Const 10, Const 1);
             |];
+        pcopies = V.of_array [||];
         pred = S.of_list [ 2 ];
         succ = S.of_list [ 1; 11 ];
       };
       {
         phis = V.of_array [||];
         code = V.of_array [| (Assign, Const 1, Empty, name 1) |];
+        pcopies = V.of_array [||];
         pred = S.of_list [ 9 ];
         succ = S.of_list [ 12 ];
       };
@@ -139,6 +146,7 @@ let test_figure_8_7 () =
               (Add, name 1, Const 1, name 1);
               (Le, name 1, Const 10, Const 12);
             |];
+        pcopies = V.of_array [||];
         pred = S.of_list [ 11; 12 ];
         succ = S.of_list [ -2; 12 ];
       };

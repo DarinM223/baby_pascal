@@ -15,25 +15,35 @@ module Block = struct
   type t = {
     phis : phi CCVector.vector;
     code : quad CCVector.vector;
+    pcopies : (addr * addr) CCVector.vector;
     pred : S.t;
     succ : S.t;
   }
 
   let pp fmt block =
     Format.fprintf fmt
-      "{ phis = CCVector.of_array %s; code = CCVector.of_array %s; pred = %a; \
-       succ = %a }"
+      "{ phis = CCVector.of_array %s; code = CCVector.of_array %s; pcopies = \
+       CCVector.of_array %s; pred = %a; succ = %a }"
       ([%show: phi array] (CCVector.to_array block.phis))
       ([%show: quad array] (CCVector.to_array block.code))
+      ([%show: (addr * addr) array] (CCVector.to_array block.pcopies))
       S.pp block.pred S.pp block.succ
 
   let equal a b =
     CCVector.(
-      to_array a.phis = to_array b.phis && to_array a.code = to_array b.code)
+      to_array a.phis = to_array b.phis
+      && to_array a.code = to_array b.code
+      && to_array a.pcopies = to_array b.pcopies)
     && S.equal a.pred b.pred && S.equal a.succ b.succ
 
   let create code =
-    { phis = CCVector.create (); code; pred = S.empty; succ = S.empty }
+    {
+      phis = CCVector.create ();
+      code;
+      pcopies = CCVector.create ();
+      pred = S.empty;
+      succ = S.empty;
+    }
 
   let entry, exit = (-1, -2)
 end
