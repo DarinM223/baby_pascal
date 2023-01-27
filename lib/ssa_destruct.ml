@@ -68,7 +68,10 @@ module Make (Fresh : Intf.Fresh) = struct
       with Not_found ->
         let i = findi (fun (b, a) -> a <> b) block.pcopies in
         let b, a = CCVector.get block.pcopies i in
-        let a' = Code.Name (Fresh.fresh (), 0) in
+        let a' =
+          match a with Name (a, _) -> Code.Name (a, Fresh.fresh ()) | _ -> a
+        in
+        (* TODO(DarinM223): Moves should be before the terminator jump in a block *)
         CCVector.push block.code (Assign, a, Empty, a');
         CCVector.set block.pcopies i (b, a')
     done
