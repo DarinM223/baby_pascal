@@ -17,15 +17,16 @@ let trees_of_code code =
     | Empty -> Nop
   in
   CCVector.iter
-    (fun quad ->
-      match quad with
-      | Assign, a, Empty, Name (n, i) ->
+    (function
+      | { op = Assign; a; b = Empty; r = Name (n, i) } ->
           CCVector.push stmts (Bop (Assign, Addr (n, i), operand a))
-      | op, a, b, Empty -> CCVector.push stmts (Bop (op, operand a, operand b))
-      | op, a, b, Const i ->
+      | { op; a; b; r = Empty } ->
+          CCVector.push stmts (Bop (op, operand a, operand b))
+      | { op; a; b; r = Const i } ->
           CCVector.push stmts (Cbr (Bop (op, operand a, operand b), i))
-      | op, a, b, Temp t -> Hashtbl.add nodes t (Bop (op, operand a, operand b))
-      | op, a, b, Name (n, i) ->
+      | { op; a; b; r = Temp t } ->
+          Hashtbl.add nodes t (Bop (op, operand a, operand b))
+      | { op; a; b; r = Name (n, i) } ->
           CCVector.push stmts
             (Bop (Assign, Addr (n, i), Bop (op, operand a, operand b))))
     code;
@@ -62,5 +63,6 @@ let example1 =
     (Assign, Const 60, Empty, name 4);
     (Nop, Empty, Empty, Empty);
   |]
+  |> Array.map (fun (op, a, b, r) -> { op; a; b; r })
 
 let result = trees_of_code (CCVector.of_array example1)

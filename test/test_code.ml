@@ -3,6 +3,9 @@ open Baby_pascal.Code
 open Baby_pascal.Cfg
 open Baby_pascal.Intf
 
+let code_of_array arr =
+  arr |> Array.map (fun (op, a, b, r) -> { op; a; b; r }) |> CCVector.of_array
+
 let test_example_1 () =
   let module Fresh = Fresh.Make () in
   let open Make (Fresh) (Sym.Make (Fresh)) in
@@ -23,25 +26,26 @@ let test_example_1 () =
   let result = expr |> normalize |> CCVector.to_array in
   (check (array (testable pp_quad equal_quad)))
     "same array" result
-    [|
-      (Mul, Const 2, Const 3, Temp 0);
-      (Add, Const 1, Temp 0, Temp 1);
-      (Assign, Temp 1, Empty, name 2);
-      (Eq, name 2, Const 1, Const 5);
-      (Goto, Const 15, Empty, Empty);
-      (Lt, name 2, Const 5, Const 7);
-      (Goto, Const 15, Empty, Empty);
-      (Eq, name 2, Const 1, Const 9);
-      (Goto, Const 16, Empty, Empty);
-      (Lt, name 2, Const 5, Const 11);
-      (Goto, Const 16, Empty, Empty);
-      (Add, name 2, Const 1, Temp 3);
-      (Assign, Temp 3, Empty, name 2);
-      (Goto, Const 7, Empty, Empty);
-      (Goto, Const 16, Empty, Empty);
-      (Assign, Const 60, Empty, name 4);
-      (Nop, Empty, Empty, Empty);
-    |]
+    ([|
+       (Mul, Const 2, Const 3, Temp 0);
+       (Add, Const 1, Temp 0, Temp 1);
+       (Assign, Temp 1, Empty, name 2);
+       (Eq, name 2, Const 1, Const 5);
+       (Goto, Const 15, Empty, Empty);
+       (Lt, name 2, Const 5, Const 7);
+       (Goto, Const 15, Empty, Empty);
+       (Eq, name 2, Const 1, Const 9);
+       (Goto, Const 16, Empty, Empty);
+       (Lt, name 2, Const 5, Const 11);
+       (Goto, Const 16, Empty, Empty);
+       (Add, name 2, Const 1, Temp 3);
+       (Assign, Temp 3, Empty, name 2);
+       (Goto, Const 7, Empty, Empty);
+       (Goto, Const 16, Empty, Empty);
+       (Assign, Const 60, Empty, name 4);
+       (Nop, Empty, Empty, Empty);
+     |]
+    |> Array.map (fun (op, a, b, r) -> { op; a; b; r }))
 
 let test_figure_8_7 () =
   let example =
@@ -64,6 +68,7 @@ let test_figure_8_7 () =
       (Add, name 1, Const 1, name 1);
       (Le, name 1, Const 10, Const 12);
     |]
+    |> Array.map (fun (op, a, b, r) -> { op; a; b; r })
   in
   let module V = CCVector in
   let result =
@@ -88,14 +93,14 @@ let test_figure_8_7 () =
       };
       {
         phis = V.of_array [||];
-        code = V.of_array [| (Assign, Const 1, Empty, name 1) |];
+        code = code_of_array [| (Assign, Const 1, Empty, name 1) |];
         pcopies = V.of_array [||];
         pred = S.of_list [ -1 ];
         succ = S.of_list [ 1 ];
       };
       {
         phis = V.of_array [||];
-        code = V.of_array [| (Assign, Const 1, Empty, name 2) |];
+        code = code_of_array [| (Assign, Const 1, Empty, name 2) |];
         pcopies = V.of_array [||];
         pred = S.of_list [ 0; 9 ];
         succ = S.of_list [ 2 ];
@@ -103,7 +108,7 @@ let test_figure_8_7 () =
       {
         phis = V.of_array [||];
         code =
-          V.of_array
+          code_of_array
             [|
               (Mul, Const 10, name 1, Temp 1);
               (Add, Temp 1, name 2, Temp 2);
@@ -120,7 +125,7 @@ let test_figure_8_7 () =
       {
         phis = V.of_array [||];
         code =
-          V.of_array
+          code_of_array
             [|
               (Add, name 1, Const 1, name 1); (Le, name 1, Const 10, Const 1);
             |];
@@ -130,7 +135,7 @@ let test_figure_8_7 () =
       };
       {
         phis = V.of_array [||];
-        code = V.of_array [| (Assign, Const 1, Empty, name 1) |];
+        code = code_of_array [| (Assign, Const 1, Empty, name 1) |];
         pcopies = V.of_array [||];
         pred = S.of_list [ 9 ];
         succ = S.of_list [ 12 ];
@@ -138,7 +143,7 @@ let test_figure_8_7 () =
       {
         phis = V.of_array [||];
         code =
-          V.of_array
+          code_of_array
             [|
               (Sub, name 1, Const 1, Temp 5);
               (Mul, Const 88, Temp 5, Temp 6);

@@ -4,16 +4,22 @@ open Baby_pascal.Cfg
 open Baby_pascal.Dom
 open Baby_pascal.Ssa_construct
 
+let code_of_array arr =
+  arr |> Array.map (fun (op, a, b, r) -> { op; a; b; r }) |> CCVector.of_array
+
+let phis_of_array arr =
+  arr |> Array.map (fun (r, ins) -> { r; Block.ins }) |> CCVector.of_array
+
 let test_figure_19_2 () =
   let open Baby_pascal.Intf.Sym.Make (Baby_pascal.Intf.Fresh.Make ()) in
   let x, a, b, c = (get_sym "x", get_sym "a", get_sym "b", get_sym "c") in
   let block0 =
-    CCVector.of_array
+    code_of_array
       [| (Assign, name x, Empty, name b); (Assign, Const 0, Empty, name a) |]
   in
-  let block1 = CCVector.of_array [| (Lt, name b, Const 4, Const 3) |] in
-  let block2 = CCVector.of_array [| (Assign, name b, Empty, name a) |] in
-  let block3 = CCVector.of_array [| (Add, name a, name b, name c) |] in
+  let block1 = code_of_array [| (Lt, name b, Const 4, Const 3) |] in
+  let block2 = code_of_array [| (Assign, name b, Empty, name a) |] in
+  let block3 = code_of_array [| (Add, name a, name b, name c) |] in
   let graph =
     M.of_seq
     @@ List.to_seq
@@ -76,7 +82,7 @@ let test_figure_19_2 () =
       {
         phis = CCVector.of_array [||];
         code =
-          CCVector.of_array
+          code_of_array
             [|
               (Assign, Name (x, 0), Empty, Name (b, 1));
               (Assign, Const 0, Empty, Name (a, 1));
@@ -87,23 +93,21 @@ let test_figure_19_2 () =
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Lt, Name (b, 1), Const 4, Const 3) |];
+        code = code_of_array [| (Lt, Name (b, 1), Const 4, Const 3) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 0 ];
         succ = S.of_list [ 2; 3 ];
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Assign, Name (b, 1), Empty, Name (a, 2)) |];
+        code = code_of_array [| (Assign, Name (b, 1), Empty, Name (a, 2)) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 1 ];
         succ = S.of_list [ 3 ];
       };
       {
-        phis =
-          CCVector.of_array [| (Name (a, 3), [ Name (a, 1); Name (a, 2) ]) |];
-        code =
-          CCVector.of_array [| (Add, Name (a, 3), Name (b, 1), Name (c, 1)) |];
+        phis = phis_of_array [| (Name (a, 3), [ Name (a, 1); Name (a, 2) ]) |];
+        code = code_of_array [| (Add, Name (a, 3), Name (b, 1), Name (c, 1)) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 1; 2 ];
         succ = S.of_list [ -2 ];
@@ -114,9 +118,9 @@ let test_figure_19_2 () =
 let test_figure_19_3 () =
   let open Baby_pascal.Intf.Sym.Make (Baby_pascal.Intf.Fresh.Make ()) in
   let a, b, c = (get_sym "a", get_sym "b", get_sym "c") in
-  let block0 = CCVector.of_array [| (Assign, Const 0, Empty, name a) |] in
+  let block0 = code_of_array [| (Assign, Const 0, Empty, name a) |] in
   let block1 =
-    CCVector.of_array
+    code_of_array
       [|
         (Add, name a, Const 1, name b);
         (Add, name c, name b, name c);
@@ -124,7 +128,7 @@ let test_figure_19_3 () =
         (Lt, name a, Const 10, Const 1);
       |]
   in
-  let block2 = CCVector.of_array [| (Nop, Empty, Empty, Empty) |] in
+  let block2 = code_of_array [| (Nop, Empty, Empty, Empty) |] in
   let graph =
     M.of_seq
     @@ List.to_seq
@@ -180,21 +184,21 @@ let test_figure_19_3 () =
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Assign, Const 0, Empty, Name (a, 1)) |];
+        code = code_of_array [| (Assign, Const 0, Empty, Name (a, 1)) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ -1 ];
         succ = S.of_list [ 1 ];
       };
       {
         phis =
-          CCVector.of_array
+          phis_of_array
             [|
               (Name (c, 1), [ Name (c, 0); Name (c, 2) ]);
               (Name (b, 1), [ Name (b, 0); Name (b, 2) ]);
               (Name (a, 2), [ Name (a, 1); Name (a, 3) ]);
             |];
         code =
-          CCVector.of_array
+          code_of_array
             [|
               (Add, Name (a, 2), Const 1, Name (b, 2));
               (Add, Name (c, 2), Name (b, 2), Name (c, 2));
@@ -207,7 +211,7 @@ let test_figure_19_3 () =
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Nop, Empty, Empty, Empty) |];
+        code = code_of_array [| (Nop, Empty, Empty, Empty) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 1 ];
         succ = S.of_list [ -2 ];
@@ -273,7 +277,7 @@ let test_figure_19_4 () =
       {
         phis = CCVector.of_array [||];
         code =
-          CCVector.of_array
+          code_of_array
             [|
               (Assign, Const 1, Empty, Name (i, 1));
               (Assign, Const 1, Empty, Name (j, 1));
@@ -285,33 +289,33 @@ let test_figure_19_4 () =
       };
       {
         phis =
-          CCVector.of_array
+          phis_of_array
             [|
               (Name (j, 2), [ Name (j, 1); Name (j, 4); Name (j, 3) ]);
               (Name (k, 2), [ Name (k, 1); Name (k, 4); Name (k, 3) ]);
             |];
-        code = CCVector.of_array [| (Lt, Name (k, 2), Const 100, Const 5) |];
+        code = code_of_array [| (Lt, Name (k, 2), Const 100, Const 5) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 0; 7; 11 ];
         succ = S.of_list [ 4; 5 ];
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Goto, Const 15, Empty, Empty) |];
+        code = code_of_array [| (Goto, Const 15, Empty, Empty) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 3 ];
         succ = S.of_list [ 15 ];
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Lt, Name (j, 2), Const 20, Const 7) |];
+        code = code_of_array [| (Lt, Name (j, 2), Const 20, Const 7) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 3 ];
         succ = S.of_list [ 6; 7 ];
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Goto, Const 11, Empty, Empty) |];
+        code = code_of_array [| (Goto, Const 11, Empty, Empty) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 5 ];
         succ = S.of_list [ 11 ];
@@ -319,7 +323,7 @@ let test_figure_19_4 () =
       {
         phis = CCVector.of_array [||];
         code =
-          CCVector.of_array
+          code_of_array
             [|
               (Assign, Name (i, 1), Empty, Name (j, 4));
               (Add, Name (k, 2), Const 1, Temp 3);
@@ -333,7 +337,7 @@ let test_figure_19_4 () =
       {
         phis = CCVector.of_array [||];
         code =
-          CCVector.of_array
+          code_of_array
             [|
               (Assign, Name (k, 2), Empty, Name (j, 3));
               (Add, Name (k, 2), Const 2, Temp 4);
@@ -347,7 +351,7 @@ let test_figure_19_4 () =
       {
         phis = CCVector.of_array [||];
         code =
-          CCVector.of_array
+          code_of_array
             [|
               (Assign, Name (j, 2), Empty, Name (result, 1));
               (Nop, Empty, Empty, Empty);
@@ -405,14 +409,14 @@ let test_pruned () =
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Lt, Name (0, 0), Const 2, Const 2) |];
+        code = code_of_array [| (Lt, Name (0, 0), Const 2, Const 2) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ -1 ];
         succ = S.of_list [ 1; 2 ];
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Goto, Const 4, Empty, Empty) |];
+        code = code_of_array [| (Goto, Const 4, Empty, Empty) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 0 ];
         succ = S.of_list [ 4 ];
@@ -420,7 +424,7 @@ let test_pruned () =
       {
         phis = CCVector.of_array [||];
         code =
-          CCVector.of_array
+          code_of_array
             [|
               (Assign, Const 1, Empty, Name (1, 2));
               (Goto, Const 5, Empty, Empty);
@@ -431,21 +435,21 @@ let test_pruned () =
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Assign, Name (2, 0), Empty, Name (1, 1)) |];
+        code = code_of_array [| (Assign, Name (2, 0), Empty, Name (1, 1)) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 1 ];
         succ = S.of_list [ 5 ];
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Lt, Name (0, 0), Const 2, Const 7) |];
+        code = code_of_array [| (Lt, Name (0, 0), Const 2, Const 7) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 2; 4 ];
         succ = S.of_list [ 6; 7 ];
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Goto, Const 9, Empty, Empty) |];
+        code = code_of_array [| (Goto, Const 9, Empty, Empty) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 5 ];
         succ = S.of_list [ 9 ];
@@ -453,7 +457,7 @@ let test_pruned () =
       {
         phis = CCVector.of_array [||];
         code =
-          CCVector.of_array
+          code_of_array
             [|
               (Assign, Const 1, Empty, Name (3, 3));
               (Goto, Const 10, Empty, Empty);
@@ -464,16 +468,15 @@ let test_pruned () =
       };
       {
         phis = CCVector.of_array [||];
-        code = CCVector.of_array [| (Assign, Name (2, 0), Empty, Name (3, 1)) |];
+        code = code_of_array [| (Assign, Name (2, 0), Empty, Name (3, 1)) |];
         pcopies = CCVector.of_array [||];
         pred = S.of_list [ 6 ];
         succ = S.of_list [ 10 ];
       };
       {
-        phis =
-          CCVector.of_array [| (Name (3, 2), [ Name (3, 3); Name (3, 1) ]) |];
+        phis = phis_of_array [| (Name (3, 2), [ Name (3, 3); Name (3, 1) ]) |];
         code =
-          CCVector.of_array
+          code_of_array
             [|
               (Assign, Name (3, 2), Empty, Name (4, 1));
               (Nop, Empty, Empty, Empty);

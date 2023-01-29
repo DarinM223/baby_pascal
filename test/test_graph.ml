@@ -1,12 +1,17 @@
 open Alcotest
 open Baby_pascal
 
+let code_of_array arr =
+  arr
+  |> Array.map (fun (op, a, b, r) -> Code.{ op; a; b; r })
+  |> CCVector.of_array
+
 let test_figure_9_13 () =
   let open Cfg in
   let a, i, j, m, n, u1, u2, u3 = (1, 2, 3, 4, 5, 6, 7, 8) in
   let example =
     blocks_of_code
-      (CCVector.of_array
+      (code_of_array
          Code.
            [|
              (Sub, name m, Const 1, name i);

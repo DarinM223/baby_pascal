@@ -25,8 +25,15 @@ type addr = Const of int | Name of int * int | Temp of int | Empty
 
 let name sym = Name (sym, -1)
 
-type quad = op * addr * addr * addr [@@deriving show, eq]
+type quad = {
+  mutable op : op;
+  mutable a : addr;
+  mutable b : addr;
+  mutable r : addr;
+}
+[@@deriving show, eq]
 
+let push_quad v (op, a, b, r) = CCVector.push v { op; a; b; r }
 let op_of_uop = function Ast.Not -> Not
 
 let op_of_bop = function
@@ -43,11 +50,12 @@ let op_of_bop = function
   | Ast.Ge -> Ge
 
 module Make (Fresh : Intf.Fresh) (Sym : Intf.Sym) = struct
-  module V = CCVector
-
   let normalize stmts =
     let len = List.length stmts in
-    let code = V.create_with ~capacity:len (Nop, Empty, Empty, Empty) in
+    let code =
+      CCVector.create_with ~capacity:len
+        { op = Nop; a = Empty; b = Empty; r = Empty }
+    in
     let label_table = Hashtbl.create 100 in
     let new_label =
       let i = ref (-1) in
@@ -55,7 +63,7 @@ module Make (Fresh : Intf.Fresh) (Sym : Intf.Sym) = struct
         incr i;
         !i
     in
-    let label l = Hashtbl.add label_table l (V.length code) in
+    let label l = Hashtbl.add label_table l (CCVector.length code) in
     let rec addr_of_expr = function
       | Ast.Int i -> Const i
       | Ast.Bool b -> if b then Const 1 else Const 0
@@ -63,24 +71,24 @@ module Make (Fresh : Intf.Fresh) (Sym : Intf.Sym) = struct
       | Ast.Uop (uop, e) ->
           let addr = addr_of_expr e in
           let tmp = Temp (Fresh.fresh ()) in
-          V.push code (op_of_uop uop, addr, Empty, tmp);
+          push_quad code (op_of_uop uop, addr, Empty, tmp);
           tmp
       | Ast.Bop (bop, e1, e2) ->
           let addr1 = addr_of_expr e1 in
           let addr2 = addr_of_expr e2 in
           let tmp = Temp (Fresh.fresh ()) in
-          V.push code (op_of_bop bop, addr1, addr2, tmp);
+          push_quad code (op_of_bop bop, addr1, addr2, tmp);
           tmp
       | Ast.Call (f, es) -> go_call f es (Temp (Fresh.fresh ()))
     and go_call f es tmp =
       let addrs = List.map addr_of_expr es in
-      List.iter (fun addr -> V.push code (Param, addr, Empty, Empty)) addrs;
-      V.push code (Call, name (Sym.get_sym f), Const (List.length es), tmp);
+      List.iter (fun addr -> push_quad code (Param, addr, Empty, Empty)) addrs;
+      push_quad code (Call, name (Sym.get_sym f), Const (List.length es), tmp);
       tmp
     and short_circuit t f = function
       | Ast.Uop (Ast.Not, e) -> short_circuit f t e
       | Ast.Bool b ->
-          V.push code (Goto, Const (if b then t else f), Empty, Empty)
+          push_quad code (Goto, Const (if b then t else f), Empty, Empty)
       | Ast.Bop (Ast.And, e1, e2) ->
           let t' = new_label () in
           short_circuit t' f e1;
@@ -94,14 +102,14 @@ module Make (Fresh : Intf.Fresh) (Sym : Intf.Sym) = struct
       | Ast.Bop (rel, e1, e2) ->
           let addr1 = addr_of_expr e1 in
           let addr2 = addr_of_expr e2 in
-          V.push code (op_of_bop rel, addr1, addr2, Const t);
-          V.push code (Goto, Const f, Empty, Empty)
+          push_quad code (op_of_bop rel, addr1, addr2, Const t);
+          push_quad code (Goto, Const f, Empty, Empty)
       | _ -> failwith "Invalid expression for short circuiting bool operation"
     and go_stmt next = function
       | Ast.Assign (v, e) ->
           let addr = addr_of_expr e in
           let s = Sym.get_sym v in
-          V.push code (Assign, addr, Empty, name s)
+          push_quad code (Assign, addr, Empty, name s)
       | Ast.If (test, thn, []) ->
           let t = new_label () in
           short_circuit t next test;
@@ -113,7 +121,7 @@ module Make (Fresh : Intf.Fresh) (Sym : Intf.Sym) = struct
           short_circuit t f test;
           label t;
           List.iter (go_stmt next) thn;
-          V.push code (Goto, Const next, Empty, Empty);
+          push_quad code (Goto, Const next, Empty, Empty);
           label f;
           List.iter (go_stmt next) els
       | Ast.While (test, body) ->
@@ -123,7 +131,7 @@ module Make (Fresh : Intf.Fresh) (Sym : Intf.Sym) = struct
           short_circuit t next test;
           label t;
           List.iter (go_stmt begin_label) body;
-          V.push code (Goto, Const begin_label, Empty, Empty)
+          push_quad code (Goto, Const begin_label, Empty, Empty)
       | Ast.Call (f, es) -> ignore (go_call f es Empty)
     in
     List.iter
@@ -132,14 +140,14 @@ module Make (Fresh : Intf.Fresh) (Sym : Intf.Sym) = struct
         go_stmt next stmt;
         label next)
       stmts;
-    V.map_in_place
+    CCVector.iter
       (function
-        | Goto, Const l, Empty, Empty ->
-            (Goto, Const (Hashtbl.find label_table l), Empty, Empty)
-        | ((Eq | Ne | Gt | Ge | Lt | Le) as op), a, b, Const l ->
-            (op, a, b, Const (Hashtbl.find label_table l))
-        | c -> c)
+        | { op = Goto; a = Const l; _ } as quad ->
+            quad.a <- Const (Hashtbl.find label_table l)
+        | { op = Eq | Ne | Gt | Ge | Lt | Le; r = Const l; _ } as quad ->
+            quad.r <- Const (Hashtbl.find label_table l)
+        | _ -> ())
       code;
-    V.push code (Nop, Empty, Empty, Empty);
+    push_quad code (Nop, Empty, Empty, Empty);
     code
 end

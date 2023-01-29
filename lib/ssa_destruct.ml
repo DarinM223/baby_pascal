@@ -36,7 +36,7 @@ let crit_edge_split graph =
         b.Block.pred |> S.elements |> List.map (fun p -> M.find p graph)
       in
       CCVector.iter
-        (fun (a0, ais) ->
+        (fun { Block.r = a0; ins = ais } ->
           List.iter2
             (fun ai pred -> CCVector.push pred.Block.pcopies (a0, ai))
             ais preds)
@@ -63,7 +63,7 @@ module Make (Fresh : Intf.Fresh) = struct
             block.pcopies
         in
         let b, a = CCVector.get block.pcopies i in
-        CCVector.push block.code (Assign, a, Empty, b);
+        Code.push_quad block.code (Assign, a, Empty, b);
         CCVector.remove_unordered block.pcopies i
       with Not_found ->
         let i = findi (fun (b, a) -> a <> b) block.pcopies in
@@ -72,7 +72,7 @@ module Make (Fresh : Intf.Fresh) = struct
           match a with Name (a, _) -> Code.Name (a, Fresh.fresh ()) | _ -> a
         in
         (* TODO(DarinM223): Moves should be before the terminator jump in a block *)
-        CCVector.push block.code (Assign, a, Empty, a');
+        Code.push_quad block.code (Assign, a, Empty, a');
         CCVector.set block.pcopies i (b, a')
     done
 end

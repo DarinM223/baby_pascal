@@ -10,7 +10,7 @@ end
 module M = Map.Make (Int)
 
 module Block = struct
-  type phi = addr * addr list [@@deriving show, eq]
+  type phi = { mutable r : addr; mutable ins : addr list } [@@deriving show, eq]
 
   type t = {
     phis : phi CCVector.vector;
@@ -53,7 +53,8 @@ let blocks_of_code code =
     let leaders = ref (S.singleton 0) in
     CCVector.iteri
       (fun i -> function
-        | Goto, Const j, _, _ | (Eq | Ne | Lt | Le | Gt | Ge), _, _, Const j ->
+        | { op = Goto; a = Const j; _ }
+        | { op = Eq | Ne | Lt | Le | Gt | Ge; r = Const j; _ } ->
             leaders := !leaders |> S.add j |> S.add (i + 1)
         | _ -> ())
       code;
@@ -99,8 +100,8 @@ let blocks_of_code code =
     List.fold_left
       (fun blocks (i, end_index) ->
         match CCVector.get code end_index with
-        | Goto, Const j, _, _ -> add_link i j blocks
-        | (Eq | Ne | Lt | Le | Gt | Ge), _, _, Const j ->
+        | { op = Goto; a = Const j; _ } -> add_link i j blocks
+        | { op = Eq | Ne | Lt | Le | Gt | Ge; r = Const j; _ } ->
             blocks |> add_link i j |> add_next_link i end_index
         | _ -> add_next_link i end_index blocks)
       blocks ranges
@@ -149,9 +150,9 @@ let gen_kill graph =
     (fun i node ->
       let info = M.find i info_map in
       for j = CCVector.length node.Block.code - 1 downto 0 do
-        let _, a, b, c = CCVector.get node.code j in
+        let { a; b; r; _ } = CCVector.get node.code j in
         let gen = [ a; b ] |> List.filter_map get_name |> S.of_list in
-        let kill = Option.fold ~none:S.empty ~some:S.singleton (get_name c) in
+        let kill = Option.fold ~none:S.empty ~some:S.singleton (get_name r) in
         CCVector.set info.gen j gen;
         CCVector.set info.kill j kill;
         info.gen_block <- S.union info.gen_block gen;
