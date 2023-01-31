@@ -17,6 +17,7 @@ type op =
   | Param
   | Call
   | Assign
+  | Load
   | Nop
 [@@deriving show, eq]
 
