@@ -65,12 +65,12 @@ let rename v g =
       Hashtbl.add stack a 0)
     v;
   let replace_def defs = function
-    | Name (a, _) ->
+    | Addr.Name (a, _) ->
         defs := S.add a !defs;
         let i = Hashtbl.find count a + 1 in
         Hashtbl.replace count a i;
         Hashtbl.add stack a i;
-        Name (a, i)
+        Addr.Name (a, i)
     | r -> r
   in
   let rename_instr defs quad =
@@ -102,7 +102,7 @@ let rename v g =
               match List.nth_opt phi.Block.ins j with
               | Some (Name (a, _)) ->
                   let i = Hashtbl.find stack a in
-                  phi.ins <- replace_in_list j (Name (a, i)) phi.ins
+                  phi.ins <- replace_in_list j (Addr.Name (a, i)) phi.ins
               | _ -> ())
             succ_node.phis)
         node.succ;

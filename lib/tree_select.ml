@@ -11,7 +11,7 @@ let trees_of_code code =
   let stmts = CCVector.create_with ~capacity:(CCVector.length code) Nop in
   let nodes = Hashtbl.create (CCVector.length code) in
   let operand = function
-    | Temp t -> Hashtbl.find nodes t
+    | Addr.Temp t -> Hashtbl.find nodes t
     | Name (a, b) -> Addr (a, b)
     | Const i -> Int i
     | Empty -> Nop

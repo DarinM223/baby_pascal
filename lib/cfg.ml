@@ -10,12 +10,13 @@ end
 module M = Map.Make (Int)
 
 module Block = struct
-  type phi = { mutable r : addr; mutable ins : addr list } [@@deriving show, eq]
+  type phi = { mutable r : Addr.t; mutable ins : Addr.t list }
+  [@@deriving show, eq]
 
   type t = {
     phis : phi CCVector.vector;
     code : quad CCVector.vector;
-    pcopies : (addr * addr) CCVector.vector;
+    pcopies : (Addr.t * Addr.t) CCVector.vector;
     pred : S.t;
     succ : S.t;
   }
@@ -26,7 +27,7 @@ module Block = struct
        CCVector.of_array %s; pred = %a; succ = %a }"
       ([%show: phi array] (CCVector.to_array block.phis))
       ([%show: quad array] (CCVector.to_array block.code))
-      ([%show: (addr * addr) array] (CCVector.to_array block.pcopies))
+      ([%show: (Addr.t * Addr.t) array] (CCVector.to_array block.pcopies))
       S.pp block.pred S.pp block.succ
 
   let equal a b =
@@ -145,7 +146,7 @@ let gen_kill graph =
           info)
       graph M.empty
   in
-  let get_name = function Name (n, _) -> Some n | _ -> None in
+  let get_name = function Addr.Name (n, _) -> Some n | _ -> None in
   M.iter
     (fun i node ->
       let info = M.find i info_map in

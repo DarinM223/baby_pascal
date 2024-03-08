@@ -13,13 +13,13 @@ module Packed (Sym : Baby_pascal.Intf.Sym) = struct
   include Sym
 
   module Addr = struct
-    type t = addr
+    type t = Addr.t
 
     let pp fmt = function
-      | Name (n, i) -> Format.fprintf fmt "%s%d" (get_name n) i
-      | addr -> pp_addr fmt addr
+      | Addr.Name (n, i) -> Format.fprintf fmt "%s%d" (get_name n) i
+      | addr -> Addr.pp fmt addr
 
-    let equal = equal_addr
+    let equal = Addr.equal
   end
 
   module Edge = struct
@@ -195,13 +195,16 @@ let test_figure_5 () =
   let ssa_graph = def_use_chains ssa |> Hashtbl.to_seq |> List.of_seq in
   check string "Check ssa graph"
     ([%show: (Addr.t * Edge.t) list] ssa_graph)
-    "[(s2, f0 <- Code.Assign s2, Code.Empty);\n\
-    \  (s2, (Code.Temp 2) <- Code.Neg s2, Code.Empty); (s3, s2 <- phi(s1,s3));\n\
-    \  (b0, (Code.Temp 1) <- Code.Mul a0, b0);\n\
-    \  (a0, (Code.Temp 1) <- Code.Mul a0, b0); (s1, s2 <- phi(s1,s3));\n\
-    \  ((Code.Temp 2), s3 <- Code.Add (Code.Temp 2), (Code.Temp 1));\n\
-    \  (i0, (Code.Const 1) <- Code.Lt i0, (Code.Const 0));\n\
-    \  ((Code.Temp 1), s3 <- Code.Add (Code.Temp 2), (Code.Temp 1))]"
+    "[(s2, f0 <- Code.Assign s2, Code.Addr.Empty);\n\
+    \  (s2, (Code.Addr.Temp 2) <- Code.Neg s2, Code.Addr.Empty);\n\
+    \  (s3, s2 <- phi(s1,s3)); (b0, (Code.Addr.Temp 1) <- Code.Mul a0, b0);\n\
+    \  (a0, (Code.Addr.Temp 1) <- Code.Mul a0, b0); (s1, s2 <- phi(s1,s3));\n\
+    \  ((Code.Addr.Temp 2), s3 <- Code.Add (Code.Addr.Temp 2), (Code.Addr.Temp \
+     1));\n\
+    \  (i0, (Code.Addr.Const 1) <- Code.Lt i0, (Code.Addr.Const 0));\n\
+    \  ((Code.Addr.Temp 1), s3 <- Code.Add (Code.Addr.Temp 2), (Code.Addr.Temp \
+     1))\n\
+    \  ]"
 
 let _ =
   run "SSA graph tests"

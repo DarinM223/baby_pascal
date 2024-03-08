@@ -21,16 +21,18 @@ type op =
   | Nop
 [@@deriving show, eq]
 
-type addr = Const of int | Name of int * int | Temp of int | Empty
-[@@deriving show, eq]
+module Addr = struct
+  type t = Const of int | Name of int * int | Temp of int | Empty
+  [@@deriving show, eq, ord]
+end
 
-let name sym = Name (sym, -1)
+let name sym = Addr.Name (sym, -1)
 
 type quad = {
   mutable op : op;
-  mutable a : addr;
-  mutable b : addr;
-  mutable r : addr;
+  mutable a : Addr.t;
+  mutable b : Addr.t;
+  mutable r : Addr.t;
 }
 [@@deriving show, eq]
 
@@ -66,21 +68,21 @@ module Make (Fresh : Intf.Fresh) (Sym : Intf.Sym) = struct
     in
     let label l = Hashtbl.add label_table l (CCVector.length code) in
     let rec addr_of_expr = function
-      | Ast.Int i -> Const i
+      | Ast.Int i -> Addr.Const i
       | Ast.Bool b -> if b then Const 1 else Const 0
       | Ast.Var v -> name (Sym.get_sym v)
       | Ast.Uop (uop, e) ->
           let addr = addr_of_expr e in
-          let tmp = Temp (Fresh.fresh ()) in
+          let tmp = Addr.Temp (Fresh.fresh ()) in
           push_quad code (op_of_uop uop, addr, Empty, tmp);
           tmp
       | Ast.Bop (bop, e1, e2) ->
           let addr1 = addr_of_expr e1 in
           let addr2 = addr_of_expr e2 in
-          let tmp = Temp (Fresh.fresh ()) in
+          let tmp = Addr.Temp (Fresh.fresh ()) in
           push_quad code (op_of_bop bop, addr1, addr2, tmp);
           tmp
-      | Ast.Call (f, es) -> go_call f es (Temp (Fresh.fresh ()))
+      | Ast.Call (f, es) -> go_call f es (Addr.Temp (Fresh.fresh ()))
     and go_call f es tmp =
       let addrs = List.map addr_of_expr es in
       List.iter (fun addr -> push_quad code (Param, addr, Empty, Empty)) addrs;

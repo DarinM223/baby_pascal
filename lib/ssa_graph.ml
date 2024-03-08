@@ -47,3 +47,28 @@ let def_use_chains graph =
         node.code)
     graph;
   table
+
+module Worklist = Set.Make (Addr)
+
+(* Get all variables in the program *)
+let variables graph =
+  let vars = ref Worklist.empty in
+  let add_var = function
+    | Addr.(Name _ | Temp _) as addr -> vars := Worklist.add addr !vars
+    | _ -> ()
+  in
+  M.iter
+    (fun _ node ->
+      CCVector.iter
+        (fun phi ->
+          List.iter (fun addr -> add_var addr) phi.Block.ins;
+          add_var phi.r)
+        node.Block.phis;
+      CCVector.iter
+        (fun quad ->
+          add_var quad.a;
+          add_var quad.b;
+          add_var quad.r)
+        node.code)
+    graph;
+  !vars
