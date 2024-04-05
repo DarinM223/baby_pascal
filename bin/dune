@@ -2,5 +2,6 @@
  (public_name baby_pascal)
  (name main)
  (libraries baby_pascal)
+ (modes byte exe)
  (flags
   (:standard -w -33)))

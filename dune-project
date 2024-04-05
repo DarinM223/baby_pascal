@@ -1,4 +1,4 @@
-(lang dune 3.5)
+(lang dune 3.7)
 
 (name baby_pascal)
 
@@ -14,6 +14,8 @@
 (license LICENSE)
 
 (documentation https://url/to/documentation)
+
+(map_workspace_root false)
 
 (package
  (name baby_pascal)
