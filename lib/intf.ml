@@ -31,10 +31,10 @@ module Sym = struct
       match Hashtbl.find_opt string_to_sym name with
       | Some i -> i
       | None ->
-          let tmp = Fresh.fresh () in
-          Hashtbl.add string_to_sym name tmp;
-          Hashtbl.add sym_to_string tmp name;
-          tmp
+        let tmp = Fresh.fresh () in
+        Hashtbl.add string_to_sym name tmp;
+        Hashtbl.add sym_to_string tmp name;
+        tmp
 
     let get_name = Hashtbl.find sym_to_string
 

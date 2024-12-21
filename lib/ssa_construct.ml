@@ -7,7 +7,9 @@ let calc_a_orig g =
     (fun n node ->
       let result =
         CCVector.fold
-          (fun l -> function { r = Name (t, _); _ } -> t :: l | _ -> l)
+          (fun l -> function
+            | { r = Name (t, _); _ } -> t :: l
+            | _ -> l)
           [] node.Block.code
       in
       Hashtbl.add a_orig n result)
@@ -27,12 +29,13 @@ let insert_phis test df a_orig v g =
         w := S.remove n !w;
         List.iter
           (fun y ->
-            if (not (List.mem y (Hashtbl.find_all a_phi a))) && test y a then (
+            if (not (List.mem y (Hashtbl.find_all a_phi a))) && test y a then begin
               let node = M.find y g in
               let phi = List.init (S.cardinal node.Block.pred) (fun _ -> a') in
               CCVector.push node.phis { r = a'; ins = phi };
               Hashtbl.add a_phi a y;
-              if not (List.mem a (a_orig y)) then w := S.add y !w))
+              if not (List.mem a (a_orig y)) then w := S.add y !w
+            end)
           (df n)
       done)
     v
@@ -66,11 +69,11 @@ let rename v g =
     v;
   let replace_def defs = function
     | Addr.Name (a, _) ->
-        defs := S.add a !defs;
-        let i = Hashtbl.find count a + 1 in
-        Hashtbl.replace count a i;
-        Hashtbl.add stack a i;
-        Addr.Name (a, i)
+      defs := S.add a !defs;
+      let i = Hashtbl.find count a + 1 in
+      Hashtbl.replace count a i;
+      Hashtbl.add stack a i;
+      Addr.Name (a, i)
     | r -> r
   in
   let rename_instr defs quad =
@@ -93,19 +96,19 @@ let rename v g =
         (fun phi -> phi.Block.r <- replace_def defs phi.Block.r)
         node.Block.phis;
       CCVector.iter (rename_instr defs) node.code;
-      S.iter
-        (fun y ->
-          let succ_node = M.find y g in
-          let j = succ_node.pred |> S.elements |> find_index n in
-          CCVector.iter
-            (fun phi ->
-              match List.nth_opt phi.Block.ins j with
-              | Some (Name (a, _)) ->
-                  let i = Hashtbl.find stack a in
-                  phi.ins <- replace_in_list j (Addr.Name (a, i)) phi.ins
-              | _ -> ())
-            succ_node.phis)
-        node.succ;
+      let go_successor y =
+        let succ_node = M.find y g in
+        let j = succ_node.pred |> S.elements |> find_index n in
+        let rewrite_phi_operand_for_predecessor phi =
+          match List.nth_opt phi.Block.ins j with
+          | Some (Name (a, _)) ->
+            let i = Hashtbl.find stack a in
+            phi.ins <- replace_in_list j (Addr.Name (a, i)) phi.ins
+          | _ -> ()
+        in
+        CCVector.iter rewrite_phi_operand_for_predecessor succ_node.phis
+      in
+      S.iter go_successor node.succ;
       S.iter rename_block (S.union node.pred node.succ);
       S.iter (Hashtbl.remove stack) !defs)
   in

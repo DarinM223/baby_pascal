@@ -1,8 +1,8 @@
 (tests
  (names test_code test_graph test_dom test_ssa_construct test_ssa_graph)
- (modes (byte exe))
- (flags
-  (:standard))
+ (modes
+  (byte exe))
+ (flags (:standard))
  (preprocess
   (pps ppx_deriving.std))
  (libraries alcotest baby_pascal))

@@ -1,7 +1,10 @@
 open Code
 open Cfg
 
-type edge = Phi of Block.phi | Quad of quad [@@deriving show, eq]
+type edge =
+  | Phi of Block.phi
+  | Quad of quad
+[@@deriving show, eq]
 
 (*
   Builds a demand driven use-def SSA graph from the SSA control-flow graph.
@@ -17,7 +20,7 @@ let use_def_chains graph =
       CCVector.iter
         (function
           | { r = Name _ | Temp _; _ } as quad ->
-              Hashtbl.add table quad.r (Quad quad)
+            Hashtbl.add table quad.r (Quad quad)
           | _ -> ())
         node.code)
     graph;

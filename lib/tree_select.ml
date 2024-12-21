@@ -19,16 +19,16 @@ let trees_of_code code =
   CCVector.iter
     (function
       | { op = Assign; a; b = Empty; r = Name (n, i) } ->
-          CCVector.push stmts (Bop (Assign, Addr (n, i), operand a))
+        CCVector.push stmts (Bop (Assign, Addr (n, i), operand a))
       | { op; a; b; r = Empty } ->
-          CCVector.push stmts (Bop (op, operand a, operand b))
+        CCVector.push stmts (Bop (op, operand a, operand b))
       | { op; a; b; r = Const i } ->
-          CCVector.push stmts (Cbr (Bop (op, operand a, operand b), i))
+        CCVector.push stmts (Cbr (Bop (op, operand a, operand b), i))
       | { op; a; b; r = Temp t } ->
-          Hashtbl.add nodes t (Bop (op, operand a, operand b))
+        Hashtbl.add nodes t (Bop (op, operand a, operand b))
       | { op; a; b; r = Name (n, i) } ->
-          CCVector.push stmts
-            (Bop (Assign, Addr (n, i), Bop (op, operand a, operand b))))
+        CCVector.push stmts
+          (Bop (Assign, Addr (n, i), Bop (op, operand a, operand b))))
     code;
   CCVector.to_array stmts
 

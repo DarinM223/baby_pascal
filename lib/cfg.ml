@@ -10,7 +10,10 @@ end
 module M = Map.Make (Int)
 
 module Block = struct
-  type phi = { mutable r : Addr.t; mutable ins : Addr.t list }
+  type phi = {
+    mutable r : Addr.t;
+    mutable ins : Addr.t list;
+  }
   [@@deriving show, eq]
 
   type t = {
@@ -52,17 +55,18 @@ end
 let blocks_of_code code =
   let identify_leaders code =
     let leaders = ref (S.singleton 0) in
-    CCVector.iteri
-      (fun i -> function
-        | { op = Goto; a = Const j; _ }
-        | { op = Eq | Ne | Lt | Le | Gt | Ge; r = Const j; _ } ->
-            leaders := !leaders |> S.add j |> S.add (i + 1)
-        | _ -> ())
-      code;
+    let go_quad i = function
+      | { op = Goto; a = Const j; _ }
+      | { op = Eq | Ne | Lt | Le | Gt | Ge; r = Const j; _ } ->
+        leaders := !leaders |> S.add j |> S.add (i + 1)
+      | _ -> ()
+    in
+    CCVector.iteri go_quad code;
     !leaders
   in
   let rec make_ranges code i leaders ranges =
-    if i >= CCVector.length code then ranges
+    if i >= CCVector.length code then
+      ranges
     else
       let next =
         match S.min_elt_opt leaders with
@@ -103,7 +107,7 @@ let blocks_of_code code =
         match CCVector.get code end_index with
         | { op = Goto; a = Const j; _ } -> add_link i j blocks
         | { op = Eq | Ne | Lt | Le | Gt | Ge; r = Const j; _ } ->
-            blocks |> add_link i j |> add_next_link i end_index
+          blocks |> add_link i j |> add_next_link i end_index
         | _ -> add_next_link i end_index blocks)
       blocks ranges
   in
@@ -146,23 +150,29 @@ let gen_kill graph =
           info)
       graph M.empty
   in
-  let get_name = function Addr.Name (n, _) -> Some n | _ -> None in
-  M.iter
-    (fun i node ->
-      let info = M.find i info_map in
-      for j = CCVector.length node.Block.code - 1 downto 0 do
-        let { a; b; r; _ } = CCVector.get node.code j in
-        let gen = [ a; b ] |> List.filter_map get_name |> S.of_list in
-        let kill = Option.fold ~none:S.empty ~some:S.singleton (get_name r) in
-        CCVector.set info.gen j gen;
-        CCVector.set info.kill j kill;
-        info.gen_block <- S.union info.gen_block gen;
-        info.kill_block <- S.(union kill (diff info.kill_block gen))
-      done)
-    graph;
+  let get_name = function
+    | Addr.Name (n, _) -> Some n
+    | _ -> None
+  in
+  let calculate_block i node =
+    let info = M.find i info_map in
+    for j = CCVector.length node.Block.code - 1 downto 0 do
+      let { a; b; r; _ } = CCVector.get node.code j in
+      let gen = [ a; b ] |> List.filter_map get_name |> S.of_list in
+      let kill = Option.fold ~none:S.empty ~some:S.singleton (get_name r) in
+      CCVector.set info.gen j gen;
+      CCVector.set info.kill j kill;
+      info.gen_block <- S.union info.gen_block gen;
+      info.kill_block <- S.(union kill (diff info.kill_block gen))
+    done
+  in
+  M.iter calculate_block graph;
   info_map
 
-type live_info = { live_in : S.t; live_out : S.t }
+type live_info = {
+  live_in : S.t;
+  live_out : S.t;
+}
 
 let pp_live_info fmt info =
   Format.fprintf fmt "{ live_in = %a; live_out = %a }" S.pp info.live_in S.pp

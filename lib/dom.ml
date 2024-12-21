@@ -17,7 +17,7 @@ let dominators graph s0 =
   let idom = Hashtbl.create size in
   let vertex = Array.make size s0 in
   let rec dfs p n =
-    if not (Hashtbl.mem dfnum n) then (
+    if not (Hashtbl.mem dfnum n) then begin
       let enn = !nn in
       Hashtbl.add dfnum n enn;
       vertex.(enn) <- n;
@@ -25,7 +25,8 @@ let dominators graph s0 =
       incr nn;
       S.iter
         (fun m -> if not (Hashtbl.mem dfnum m) then dfs (Some n) m)
-        (M.find n graph).Block.succ)
+        (M.find n graph).Block.succ
+    end
   in
   dfs None s0;
   let lastn = !nn - 1 in
@@ -35,10 +36,12 @@ let dominators graph s0 =
       let b = ancestor_with_lowest_semi a in
       Hashtbl.(replace ancestor v (find ancestor a));
       let best_v = Hashtbl.find best v in
-      if Hashtbl.(find dfnum (find semi b) < find dfnum (find semi best_v)) then (
+      if Hashtbl.(find dfnum (find semi b) < find dfnum (find semi best_v)) then begin
         Hashtbl.replace best v b;
-        b)
-      else best_v
+        b
+      end
+      else
+        best_v
     with Not_found -> Hashtbl.find best v
   in
   let link p n =
@@ -51,8 +54,10 @@ let dominators graph s0 =
       (fun v s ->
         try
           let s' =
-            if Hashtbl.(find dfnum v <= find dfnum n) then v
-            else Hashtbl.find semi (ancestor_with_lowest_semi v)
+            if Hashtbl.(find dfnum v <= find dfnum n) then
+              v
+            else
+              Hashtbl.find semi (ancestor_with_lowest_semi v)
           in
           if Hashtbl.(find dfnum s' < find dfnum s) then s' else s
         with Not_found -> s)
@@ -71,8 +76,10 @@ let dominators graph s0 =
     List.iter
       (fun v ->
         let y = ancestor_with_lowest_semi v in
-        if Hashtbl.(find semi y = find semi v) then Hashtbl.add idom v p
-        else Hashtbl.add samedom v y;
+        if Hashtbl.(find semi y = find semi v) then
+          Hashtbl.add idom v p
+        else
+          Hashtbl.add samedom v y;
         Hashtbl.remove bucket p)
       (Hashtbl.find_all bucket p)
   done;
@@ -98,23 +105,21 @@ let dominator_frontier graph dom_tree idom =
     match Hashtbl.find_opt cache n with
     | Some r -> k r
     | None ->
-        let s =
-          List.filter
-            (fun y -> not (idoms idom n y))
-            (S.elements (M.find n graph).Block.succ)
-        in
-        let* r = add_df_ups s n (dom_tree n) in
-        Hashtbl.add cache n r;
-        k r
+      let s =
+        List.filter
+          (fun y -> not (idoms idom n y))
+          (S.elements (M.find n graph).Block.succ)
+      in
+      let* r = add_df_ups s n (dom_tree n) in
+      Hashtbl.add cache n r;
+      k r
   and add_df_ups s n children k =
     match children with
     | [] -> k s
     | c :: cs ->
-        let* dfc = df c in
-        add_df_ups
-          (List.fold_left
-             (fun s w -> if idoms idom n w then s else w :: s)
-             s dfc)
-          n cs k
+      let* dfc = df c in
+      add_df_ups
+        (List.fold_left (fun s w -> if idoms idom n w then s else w :: s) s dfc)
+        n cs k
   in
   fun n -> df n (fun x -> x)
