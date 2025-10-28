@@ -40,8 +40,7 @@ let dominators graph s0 =
         Hashtbl.replace best v b;
         b
       end
-      else
-        best_v
+      else best_v
     with Not_found -> Hashtbl.find best v
   in
   let link p n =
@@ -54,10 +53,8 @@ let dominators graph s0 =
       (fun v s ->
         try
           let s' =
-            if Hashtbl.(find dfnum v <= find dfnum n) then
-              v
-            else
-              Hashtbl.find semi (ancestor_with_lowest_semi v)
+            if Hashtbl.(find dfnum v <= find dfnum n) then v
+            else Hashtbl.find semi (ancestor_with_lowest_semi v)
           in
           if Hashtbl.(find dfnum s' < find dfnum s) then s' else s
         with Not_found -> s)
@@ -76,10 +73,8 @@ let dominators graph s0 =
     List.iter
       (fun v ->
         let y = ancestor_with_lowest_semi v in
-        if Hashtbl.(find semi y = find semi v) then
-          Hashtbl.add idom v p
-        else
-          Hashtbl.add samedom v y;
+        if Hashtbl.(find semi y = find semi v) then Hashtbl.add idom v p
+        else Hashtbl.add samedom v y;
         Hashtbl.remove bucket p)
       (Hashtbl.find_all bucket p)
   done;

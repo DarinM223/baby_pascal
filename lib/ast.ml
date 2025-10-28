@@ -1,6 +1,19 @@
-type typ = TInteger | TBoolean
+type typ =
+  | TInteger
+  | TBoolean
 type uop = Not
-type bop = Add | Sub | Mul | And | Or | Eq | Neq | Lt | Le | Gt | Ge
+type bop =
+  | Add
+  | Sub
+  | Mul
+  | And
+  | Or
+  | Eq
+  | Neq
+  | Lt
+  | Le
+  | Gt
+  | Ge
 
 type expr =
   | Int of int

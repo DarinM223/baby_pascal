@@ -27,13 +27,13 @@ module Packed (Sym : Baby_pascal.Intf.Sym) = struct
 
     let pp fmt = function
       | Phi phi ->
-          let pp_sep fmt () = Format.pp_print_char fmt ',' in
-          Format.fprintf fmt "%a <- phi(%a)" Addr.pp phi.r
-            (Format.pp_print_list ~pp_sep Addr.pp)
-            phi.ins
+        let pp_sep fmt () = Format.pp_print_char fmt ',' in
+        Format.fprintf fmt "%a <- phi(%a)" Addr.pp phi.r
+          (Format.pp_print_list ~pp_sep Addr.pp)
+          phi.ins
       | Quad quad ->
-          Format.fprintf fmt "%a <- %a %a, %a" Addr.pp quad.r pp_op quad.op
-            Addr.pp quad.a Addr.pp quad.b
+        Format.fprintf fmt "%a <- %a %a, %a" Addr.pp quad.r pp_op quad.op
+          Addr.pp quad.a Addr.pp quad.b
 
     let equal = equal_edge
   end

@@ -78,9 +78,10 @@ let rename v g =
   in
   let rename_instr defs quad =
     quad.r <- replace_def defs quad.r;
-    (match quad.a with
+    begin match quad.a with
     | Name (n, _) -> quad.a <- Name (n, Hashtbl.find stack n)
-    | _ -> ());
+    | _ -> ()
+    end;
     match quad.b with
     | Name (n, _) -> quad.b <- Name (n, Hashtbl.find stack n)
     | _ -> ()

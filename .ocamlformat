@@ -1,7 +1,6 @@
 profile=conventional
 type-decl=sparse
 break-cases=toplevel
-if-then-else=fit-or-vertical
 cases-exp-indent=2
 leading-nested-match-parens=true
 module-item-spacing=preserve

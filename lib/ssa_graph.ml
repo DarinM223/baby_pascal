@@ -33,22 +33,23 @@ let use_def_chains graph =
 *)
 let def_use_chains graph =
   let table = Hashtbl.create 1000 in
-  M.iter
-    (fun _ node ->
-      CCVector.iter
-        (fun phi ->
-          List.iter (fun addr -> Hashtbl.add table addr (Phi phi)) phi.ins)
-        node.Block.phis;
-      CCVector.iter
-        (fun quad ->
-          (match quad.a with
-          | Name _ | Temp _ -> Hashtbl.add table quad.a (Quad quad)
-          | _ -> ());
-          match quad.b with
-          | Name _ | Temp _ -> Hashtbl.add table quad.b (Quad quad)
-          | _ -> ())
-        node.code)
-    graph;
+  let go_block _ node =
+    CCVector.iter
+      (fun phi ->
+        List.iter (fun addr -> Hashtbl.add table addr (Phi phi)) phi.ins)
+      node.Block.phis;
+    CCVector.iter
+      (fun quad ->
+        begin match quad.a with
+        | Name _ | Temp _ -> Hashtbl.add table quad.a (Quad quad)
+        | _ -> ()
+        end;
+        match quad.b with
+        | Name _ | Temp _ -> Hashtbl.add table quad.b (Quad quad)
+        | _ -> ())
+      node.code
+  in
+  M.iter go_block graph;
   table
 
 module Worklist = Set.Make (Addr)

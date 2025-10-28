@@ -26,8 +26,7 @@ let crit_edge_split graph =
               let bi = { bi with succ = bi.succ |> S.remove n |> S.add j } in
               let b = Block.{ b with pred = b.pred |> S.remove i |> S.add j } in
               graph |> M.add i bi |> M.add j bi' |> M.add n b
-            else
-              graph)
+            else graph)
           b.pred graph)
       graph graph
   in

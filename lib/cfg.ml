@@ -65,8 +65,7 @@ let blocks_of_code code =
     !leaders
   in
   let rec make_ranges code i leaders ranges =
-    if i >= CCVector.length code then
-      ranges
+    if i >= CCVector.length code then ranges
     else
       let next =
         match S.min_elt_opt leaders with
@@ -93,10 +92,10 @@ let blocks_of_code code =
   let blocks =
     ranges
     |> List.map (fun (i, j) ->
-           let code =
-             CCVector.init (j - i + 1) (fun i' -> CCVector.get code (i + i'))
-           in
-           (i, Block.create code))
+        let code =
+          CCVector.init (j - i + 1) (fun i' -> CCVector.get code (i + i'))
+        in
+        (i, Block.create code))
     |> List.to_seq |> M.of_seq
     |> M.add Block.entry (Block.create (CCVector.create ()))
     |> M.add Block.exit (Block.create (CCVector.create ()))

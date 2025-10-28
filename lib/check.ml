@@ -13,9 +13,10 @@ let rec check_expr venv fenv = function
     typ
   | Call (f, xs) ->
     let xs = List.map (check_expr venv fenv) xs in
-    (match M.find f fenv with
+    begin match M.find f fenv with
     | xs', Some ret when xs = xs' -> ret
-    | _ -> failwith "Different args")
+    | _ -> failwith "Different args"
+    end
 
 let rec check_stmt venv fenv = function
   | Assign (x, e) -> M.add x (check_expr venv fenv e) venv
@@ -32,9 +33,10 @@ let rec check_stmt venv fenv = function
     venv
   | Call (f, xs) ->
     let xs = List.map (check_expr venv fenv) xs in
-    (match M.find f fenv with
+    begin match M.find f fenv with
     | xs', None when xs = xs' -> venv
-    | _ -> failwith "Different args")
+    | _ -> failwith "Different args"
+    end
 
 let insert_header fenv = function
   | Procedure (f, xs, _) -> M.add f (List.map snd xs, None) fenv
