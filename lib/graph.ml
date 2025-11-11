@@ -105,5 +105,55 @@ module Graph = struct
     end
 
     let unfocus (zblock, graph) = Blocks.insert (zip zblock) graph
+
+    open struct
+      let rec ht_to_first head tail =
+        match head with
+        | First f -> (f, tail)
+        | Head (h, m) -> ht_to_first h (Tail (m, tail))
+      let rec ht_to_last head tail =
+        match tail with
+        | Last l -> (head, l)
+        | Tail (m, l) -> ht_to_last (Head (head, m)) l
+
+      let prepare_for_splicing graph ~single ~multi =
+        let (_, entry_tail), graph = entry graph in
+        if IntMap.is_empty graph then
+          match lastt entry_tail with
+          | Exit -> single entry_tail
+          | _ -> failwith "not a single exit block"
+        else
+          let exit_block, graph = exit graph in
+          let exit_head, exit_last = goto_end exit_block in
+          match exit_last with
+          | Exit -> multi ~entry:entry_tail ~exit:exit_head ~rest:graph
+          | _ -> failwith "not a single exit graph"
+    end
+
+    let splice_head head graph =
+      let single tail' =
+        match ht_to_last head tail' with
+        | head, Exit -> (empty, head)
+        | _ -> failwith "spliced graph without exit"
+      in
+      let multi ~entry ~exit ~rest =
+        (Blocks.insert (ht_to_first head entry) rest, exit)
+      in
+      prepare_for_splicing graph ~single ~multi
+
+    let splice_tail graph tail =
+      let single tail' =
+        match ht_to_last (First Entry) tail' with
+        | head, Exit -> begin
+          match ht_to_first head tail with
+          | Entry, tail'' -> (tail'', empty)
+          | _ -> failwith "impossible, head is not an entry"
+        end
+        | _ -> failwith "spliced graph without exit"
+      in
+      let multi ~entry ~exit ~rest =
+        (entry, Blocks.insert (ht_to_first exit tail) rest)
+      in
+      prepare_for_splicing graph ~single ~multi
   end
 end
