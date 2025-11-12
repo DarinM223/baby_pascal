@@ -155,5 +155,25 @@ module Graph = struct
         (entry, Blocks.insert (ht_to_first exit tail) rest)
       in
       prepare_for_splicing graph ~single ~multi
+
+    let splice_head_only head graph =
+      let gentry, graph = entry graph in
+      match gentry with
+      | First Entry, tail -> Blocks.insert (ht_to_first head tail) graph
+      | _ -> failwith "graph to splice doesn't start with entry"
+
+    let remove_entry graph =
+      let gentry, graph = entry graph in
+      match gentry with
+      | First Entry, tail -> (tail, graph)
+      | _ -> failwith "removing nonexistent entry"
+
+    let splice_focus_entry ((head, tail), blocks) graph =
+      let tail, blocks' = splice_tail graph tail in
+      ((head, tail), Blocks.union blocks' blocks)
+
+    let splice_focus_exit ((head, tail), blocks) graph =
+      let blocks', head = splice_head head graph in
+      ((head, tail), Blocks.union blocks' blocks)
   end
 end
