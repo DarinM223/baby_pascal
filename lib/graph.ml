@@ -14,39 +14,51 @@ module type Target = sig
   val goto : label -> instr
   val cbranch : uses:reg list -> cond -> label -> label -> instr
   val return : uses:reg list -> instr
+
+  val pp_reg : Format.formatter -> reg -> unit
+  val pp_instr : Format.formatter -> instr -> unit
 end
 
+module IntSet = Set.Make (Int)
 module IntMap = Map.Make (Int)
 
 module Graph = struct
-  module Make (Target : Target) = struct
+  module Make (Target : Target with type label = int * string) = struct
     module Target = Target
-    type uid = int
+    type uid = int [@@deriving show]
     let entry_uid = 0
 
-    type label = uid * string
-    type regs = Target.reg list
+    type label = uid * string [@@deriving show]
+    type regs = Target.reg list [@@deriving show]
 
-    type local = Local of bool
+    type local = Local of bool [@@deriving show]
+
     type first =
       | Entry
       | Label of label * local
-    type middle = Instruction of Target.instr
+    [@@deriving show]
+
+    type middle = Instruction of Target.instr [@@deriving show]
+
     type last =
       | Exit
       | Branch of Target.instr * label
       | CBranch of Target.instr * label * label
       | Return of Target.instr * regs
+    [@@deriving show]
 
     type head =
       | First of first
       | Head of head * middle
+    [@@deriving show]
+
     type tail =
       | Last of last
       | Tail of middle * tail
+    [@@deriving show]
 
-    type zblock = head * tail
-    type block = first * tail
+    type zblock = head * tail [@@deriving show]
+    type block = first * tail [@@deriving show]
 
     type graph = block IntMap.t
     type zgraph = zblock * graph
@@ -175,5 +187,69 @@ module Graph = struct
     let splice_focus_exit ((head, tail), blocks) graph =
       let blocks', head = splice_head head graph in
       ((head, tail), Blocks.union blocks' blocks)
+
+    let expand expand_middle expand_last graph =
+      let rec expand_tail ((head, tail), blocks) =
+        match tail with
+        | Tail (middle, tail) ->
+          expand_tail
+            (splice_focus_exit ((head, tail), blocks) (expand_middle middle))
+        | Last l -> Blocks.union (splice_head_only head (expand_last l)) blocks
+      in
+      let expand_block block expanded = expand_tail (unzip block, expanded) in
+      IntMap.fold (fun _ -> expand_block) empty graph
+
+    let successors = function
+      | Exit -> []
+      | Branch (_, l) -> [ l ]
+      | CBranch (_, l1, l2) -> [ l1; l2 ]
+      | Return _ -> []
+
+    let reverse_postorder_dfs graph =
+      let entry, blocks = entry graph in
+      let rec vnode block acc visited k =
+        let u = id block in
+        if IntSet.mem u visited then k acc visited
+        else vchildren block (get_children block) acc (IntSet.add u visited) k
+      and get_children block =
+        block |> unzip |> last |> successors
+        |> List.fold_left
+             (fun acc (bid, _) ->
+               try IntMap.find bid blocks :: acc with Not_found -> acc)
+             []
+      and vchildren block children acc visited k =
+        let rec next children acc visited =
+          match children with
+          | [] -> k (block :: acc) visited
+          | child :: children -> vnode child acc visited (next children)
+        in
+        next children acc visited
+      in
+      vnode (zip entry) [] IntSet.empty (fun acc _ -> acc)
+
+    let instruction instr ((head, tail), graph) =
+      ((head, Tail (Instruction instr, tail)), graph)
+
+    let label label ((head, tail), graph) =
+      ( (head, Last (Branch (Target.goto label, label))),
+        Blocks.insert (Label (label, Local false), tail) graph )
+
+    let unreachable = function
+      | Last (Branch _ | Exit) -> ()
+      | _ -> failwith "unreachable code"
+
+    let branch label ((head, tail), graph) =
+      unreachable tail;
+      ((head, Last (Branch (Target.goto label, label))), graph)
+
+    let cbranch uses cond ~ifso ~ifnot ((head, tail), graph) =
+      unreachable tail;
+      ( ( head,
+          Last (CBranch (Target.cbranch ~uses cond ifso ifnot, ifso, ifnot)) ),
+        graph )
+
+    let return ~uses ((head, tail), graph) =
+      unreachable tail;
+      ((head, Last (Return (Target.return ~uses, uses))), graph)
   end
 end
