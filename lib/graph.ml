@@ -1,29 +1,10 @@
-module type Target = sig
-  type label
-  type reg
-  type instr
+include Graph_intf
 
-  type cond =
-    | LT
-    | LE
-    | GT
-    | GE
-    | EQ
-    | NE
-
-  val goto : label -> instr
-  val cbranch : uses:reg list -> cond -> label -> label -> instr
-  val return : uses:reg list -> instr
-
-  val pp_reg : Format.formatter -> reg -> unit
-  val pp_instr : Format.formatter -> instr -> unit
-end
-
-module IntSet = Set.Make (Int)
-module IntMap = Map.Make (Int)
-
-module Graph = struct
-  module Make (Target : Target with type label = int * string) = struct
+module Make : Maker =
+functor
+  (Target : Target with type label = int * string)
+  ->
+  struct
     module Target = Target
     type uid = int [@@deriving show]
     let entry_uid = 0
@@ -62,6 +43,7 @@ module Graph = struct
 
     type graph = block IntMap.t
     type zgraph = zblock * graph
+    type nodes = zgraph -> zgraph
 
     let id = function
       | Entry, _ -> entry_uid
@@ -252,4 +234,3 @@ module Graph = struct
       unreachable tail;
       ((head, Last (Return (Target.return ~uses, uses))), graph)
   end
-end
