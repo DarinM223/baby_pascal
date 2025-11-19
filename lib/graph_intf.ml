@@ -128,10 +128,12 @@ module type S = sig
   val return : uses:regs -> nodes
 end
 
-module type Maker = functor (_ : Target with type label = int * string) -> S
+module type Maker = functor (Target : Target with type label = int * string) ->
+  S with module Target = Target
 
 (* Interface of graph.ml *)
 module type Intf = sig
   module type Target = Target
+  module type S = S
   module Make : Maker
 end
