@@ -28,6 +28,18 @@ module Make (G : Graph.S) = struct
     fact.set G.entry_uid entry_fact;
     iterate 1
 
+  let without_changing_entry (fact : 'a fact) (f : unit -> 'b) : 'b * 'a =
+    let restore =
+      try
+        let old_fact = fact.get G.entry_uid in
+        fun () -> fact.set G.entry_uid old_fact
+      with Not_found -> fun () -> ()
+    in
+    let result = f () in
+    let entry_info = fact.get G.entry_uid in
+    restore ();
+    (result, entry_info)
+
   module Analysis = struct
     type 'a functions = {
       first_in : 'a -> G.first -> 'a;
@@ -36,10 +48,10 @@ module Make (G : Graph.S) = struct
     }
     type 'a t = 'a fact * 'a functions
 
-    let run_analysis (fact, analysis) graph =
+    let run (fact, analysis) graph : int =
       let changed = ref false in
       let set_block_fact block =
-        let head, last = G.goto_end (G.unzip block) in
+        let head, last = G.(goto_end (unzip block)) in
         let rec head_in head out =
           match head with
           | G.Head (h, m) -> head_in h (analysis.middle_in out m)
@@ -69,5 +81,76 @@ module Make (G : Graph.S) = struct
         | l -> pass_fns.last_in l
       in
       (fact, { pass_fns with last_in })
+
+    let rec solve_graph ((fact, _) as pass : 'a t) graph (exit_fact : 'a) : 'a =
+      snd
+      @@ without_changing_entry fact
+      @@ fun () -> general_backward (with_exit pass exit_fact) graph
+
+    and general_backward ((fact, pass_fns) as pass) graph : int =
+      let changed = ref false in
+      let set_block_fact b =
+        let rec head_in head out =
+          match head with
+          | G.Head (h, m) ->
+            head_in h
+              (match pass_fns.middle_in out m with
+              | Dataflow a -> a
+              | Rewrite g -> solve_graph pass g out)
+          | G.First f ->
+            (match pass_fns.first_in out f with
+            | Dataflow a -> a
+            | Rewrite g -> solve_graph pass g out)
+        in
+        let head, last = G.(goto_end (unzip b)) in
+        let block_in =
+          head_in head
+            (match pass_fns.last_in last with
+            | Dataflow a -> a
+            | Rewrite g -> solve_graph pass g fact.init_info)
+        in
+        update fact changed (G.id b) block_in
+      in
+      let blocks = List.rev (G.reverse_postorder_dfs graph) in
+      run fact changed fact.init_info set_block_fact blocks
+
+    let rec solve_and_rewrite pass graph (exit_fact : 'a) : 'a * G.graph =
+      let entry_info = solve_graph pass graph exit_fact in
+      let rewritten_graph = backward_rewrite (with_exit pass exit_fact) graph in
+      (entry_info, rewritten_graph)
+
+    and backward_rewrite ((fact, pass_fns) as pass) graph : G.graph =
+      let rec rewrite_blocks rewritten = function
+        | [] -> rewritten
+        | b :: bs ->
+          let rec propagate head a t rewritten =
+            match head with
+            | G.Head (h, m) -> begin
+              match pass_fns.middle_in a m with
+              | Dataflow a -> propagate h a (G.Tail (m, t)) rewritten
+              | Rewrite g ->
+                let a, g = solve_and_rewrite pass g a in
+                let t, g = G.splice_tail g t in
+                let rewritten = G.Blocks.union g rewritten in
+                propagate h a t rewritten
+            end
+            | G.First f -> begin
+              match pass_fns.first_in a f with
+              | Dataflow _ ->
+                rewrite_blocks (G.Blocks.insert (f, t) rewritten) bs
+              | Rewrite _ -> failwith "rewriting a label in backwards dataflow"
+            end
+          in
+          let head, last = G.(goto_end (unzip b)) in
+          begin match pass_fns.last_in last with
+          | Dataflow a -> propagate head a (G.Last last) rewritten
+          | Rewrite g ->
+            let a, g = solve_and_rewrite pass g fact.init_info in
+            let t, g = G.remove_entry g in
+            let rewritten = G.Blocks.union g rewritten in
+            propagate head a t rewritten
+          end
+      in
+      rewrite_blocks G.empty (List.rev (G.reverse_postorder_dfs graph))
   end
 end
