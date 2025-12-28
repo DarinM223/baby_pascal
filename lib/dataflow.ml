@@ -49,7 +49,7 @@ functor
       restore ();
       (result, entry_info)
 
-    module Analysis = struct
+    module BackwardAnalysis = struct
       type 'a functions = {
         first_in : 'a -> G.first -> 'a;
         middle_in : 'a -> G.middle -> 'a;
@@ -73,7 +73,7 @@ functor
         run fact changed fact.init_info set_block_fact blocks
     end
 
-    module Pass = struct
+    module BackwardPass = struct
       type 'a functions = {
         first_in : 'a -> G.first -> 'a answer;
         middle_in : 'a -> G.middle -> 'a answer;

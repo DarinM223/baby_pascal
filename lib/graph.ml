@@ -48,6 +48,9 @@ functor
     let id = function
       | Entry, _ -> entry_uid
       | Label ((uid, _), _), _ -> uid
+    let block_label = function
+      | Entry, _ -> None
+      | Label (l, _), _ -> Some l
     let empty = IntMap.singleton entry_uid (Entry, Last Exit)
 
     let rec zip = function
@@ -233,4 +236,49 @@ functor
     let return ~uses ((head, tail), graph) =
       unreachable tail;
       ((head, Last (Return (Target.return ~uses, uses))), graph)
+
+    let precalculate_edges graph =
+      let rpo = reverse_postorder_dfs graph in
+      let module Extra = struct
+        type label = Target.label
+        type position = int
+        let size = List.length rpo
+        let label_of_position =
+          let arr = Array.of_list (List.map block_label rpo) in
+          fun pos -> arr.(pos)
+        let position_of_label =
+          let table = IntHashtbl.create size in
+          List.iteri
+            (fun i (first, _) ->
+              let uid =
+                match first with
+                | Entry -> entry_uid
+                | Label ((uid, _), _) -> uid
+              in
+              IntHashtbl.add table uid i)
+            rpo;
+          function
+          | Some (uid, _) -> IntHashtbl.find table uid
+          | None -> IntHashtbl.find table entry_uid
+
+        let successors =
+          let block_succs block =
+            block |> unzip |> last |> successors
+            |> List.map (fun l -> position_of_label (Some l))
+          in
+          let succs = Array.of_list (List.map block_succs rpo) in
+          fun p -> succs.(p)
+
+        let predecessors =
+          let preds =
+            Array.init size @@ fun num ->
+            let result = ref IntSet.empty in
+            for i = 0 to size - 1 do
+              if List.mem num (successors i) then result := IntSet.add i !result
+            done;
+            !result
+          in
+          fun p -> IntSet.to_list preds.(p)
+      end in
+      (module Extra : Extra with type label = Target.label)
   end

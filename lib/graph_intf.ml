@@ -1,5 +1,6 @@
 module IntSet = Set.Make (Int)
 module IntMap = Map.Make (Int)
+module IntHashtbl = Hashtbl.Make (Int)
 
 module type Target = sig
   type label
@@ -20,6 +21,16 @@ module type Target = sig
 
   val pp_reg : Format.formatter -> reg -> unit
   val pp_instr : Format.formatter -> instr -> unit
+end
+
+module type Extra = sig
+  type label
+  type position
+  val size : int
+  val label_of_position : position -> label option
+  val position_of_label : label option -> position
+  val successors : position -> position list
+  val predecessors : position -> position list
 end
 
 module type S = sig
@@ -126,6 +137,9 @@ module type S = sig
     ifnot:Target.label ->
     nodes
   val return : uses:regs -> nodes
+
+  val precalculate_edges :
+    graph -> (module Extra with type label = Target.label)
 end
 
 module type Maker = functor (Target : Target with type label = int * string) ->

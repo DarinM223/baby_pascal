@@ -16,7 +16,7 @@ module type S = sig
   val run :
     'a fact -> bool ref -> 'a -> (G.block -> unit) -> G.block list -> int
 
-  module Analysis : sig
+  module BackwardAnalysis : sig
     type 'a functions = {
       first_in : 'a -> G.first -> 'a;
       middle_in : 'a -> G.middle -> 'a;
@@ -26,7 +26,7 @@ module type S = sig
     val run : 'a fact * 'a functions -> G.graph -> int
   end
 
-  module Pass : sig
+  module BackwardPass : sig
     type 'a functions = {
       first_in : 'a -> G.first -> 'a answer;
       middle_in : 'a -> G.middle -> 'a answer;
