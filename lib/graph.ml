@@ -243,6 +243,9 @@ functor
         type label = Target.label
         type position = int
         type graph = block IntMap.t
+        let pp_label = pp_label
+        let position_of_int p = p
+        let int_of_position p = p
         let size = List.length rpo
         let label_of_position =
           let arr = Array.of_list (List.map block_label rpo) in

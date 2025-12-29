@@ -3,6 +3,8 @@ module type S = sig
   type tree =
     | Leaf of label option
     | Node of label option * tree list
+  val pp_tree : Format.formatter -> tree -> unit
+  val show_tree : tree -> string
 
   val idom : position -> position
   val dominator_tree : tree Lazy.t

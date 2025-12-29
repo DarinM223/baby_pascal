@@ -27,6 +27,9 @@ module type Extra = sig
   type label
   type position
   type graph
+  val pp_label : Format.formatter -> label -> unit
+  val position_of_int : int -> position
+  val int_of_position : position -> int
   val size : int
   val label_of_position : position -> label option
   val position_of_label : label option -> position
@@ -102,6 +105,7 @@ module type S = sig
   end
 
   val id : block -> uid
+  val block_label : block -> label option
   val empty : graph
   val zip : zblock -> block
   val unzip : block -> zblock
