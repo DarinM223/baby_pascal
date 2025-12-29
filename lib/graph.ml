@@ -242,6 +242,7 @@ functor
       let module Extra = struct
         type label = Target.label
         type position = int
+        type graph = block IntMap.t
         let size = List.length rpo
         let label_of_position =
           let arr = Array.of_list (List.map block_label rpo) in
@@ -279,6 +280,10 @@ functor
             !result
           in
           fun p -> IntSet.to_list preds.(p)
+
+        let graph = graph
       end in
-      (module Extra : Extra with type label = Target.label)
+      (module Extra : Extra
+        with type label = Target.label
+         and type graph = graph)
   end

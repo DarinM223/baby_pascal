@@ -26,11 +26,13 @@ end
 module type Extra = sig
   type label
   type position
+  type graph
   val size : int
   val label_of_position : position -> label option
   val position_of_label : label option -> position
   val successors : position -> position list
   val predecessors : position -> position list
+  val graph : graph
 end
 
 module type S = sig
@@ -139,7 +141,8 @@ module type S = sig
   val return : uses:regs -> nodes
 
   val precalculate_edges :
-    graph -> (module Extra with type label = Target.label)
+    graph ->
+    (module Extra with type label = Target.label and type graph = graph)
 end
 
 module type Maker = functor (Target : Target with type label = int * string) ->
@@ -149,5 +152,6 @@ module type Maker = functor (Target : Target with type label = int * string) ->
 module type Intf = sig
   module type Target = Target
   module type S = S
+  module type Extra = Extra
   module Make : Maker
 end
