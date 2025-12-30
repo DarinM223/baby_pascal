@@ -64,5 +64,31 @@ functor
       done;
       doms
     let dominator_tree = failwith ""
-    let dominator_frontier = failwith ""
+    let dominator_frontier =
+      lazy begin
+        let frontier = Array.make size IntSet.empty in
+        let go block_pos =
+          let preds = Extra.predecessors block_pos in
+          let add_to_frontier pos n =
+            let pos = Extra.int_of_position pos in
+            frontier.(pos) <-
+              IntSet.add (Extra.int_of_position n) frontier.(pos)
+          in
+          let go_pred p =
+            let runner = ref p in
+            while !runner <> idom block_pos do
+              add_to_frontier !runner block_pos;
+              runner := idom !runner
+            done
+          in
+          if List.length preds >= 2 then List.iter go_pred preds
+        in
+        IntMap.iter
+          (fun _ block -> go (Extra.position_of_label (G.block_label block)))
+          graph;
+        fun p ->
+          frontier.(Extra.int_of_position p)
+          |> IntSet.to_list
+          |> List.map Extra.position_of_int
+      end
   end
