@@ -63,10 +63,39 @@ functor
         List.iter go_block rpo
       done;
       doms
-    let dominator_tree = failwith ""
+    let dominator_tree =
+      lazy begin
+        let children_mapping = Array.make Extra.size IntSet.empty in
+        let add_children block =
+          let parent = Extra.int_of_position (idom block) in
+          children_mapping.(parent) <-
+            IntSet.add (Extra.int_of_position block) children_mapping.(parent)
+        in
+        let rec build_tree node k =
+          let children =
+            children_mapping.(Extra.int_of_position node)
+            |> IntSet.to_list
+            |> List.map Extra.position_of_int
+            |> List.filter (fun p -> p <> node)
+          in
+          let rec go acc children =
+            match children with
+            | [] -> k (Node (Extra.label_of_position node, acc))
+            | c :: cs -> build_tree c (fun tree -> go (tree :: acc) cs)
+          in
+          match children with
+          | [] -> k (Leaf (Extra.label_of_position node))
+          | _ -> go [] children
+        in
+        IntMap.iter
+          (fun _ block ->
+            block |> G.block_label |> Extra.position_of_label |> add_children)
+          Extra.graph;
+        build_tree (Extra.position_of_label None) (fun t -> t)
+      end
     let dominator_frontier =
       lazy begin
-        let frontier = Array.make size IntSet.empty in
+        let frontier = Array.make Extra.size IntSet.empty in
         let go block_pos =
           let preds = Extra.predecessors block_pos in
           let add_to_frontier pos n =
