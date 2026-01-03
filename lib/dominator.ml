@@ -80,7 +80,7 @@ functor
           in
           let rec go acc children =
             match children with
-            | [] -> k (Node (Extra.label_of_position node, acc))
+            | [] -> k (Node (Extra.label_of_position node, List.rev acc))
             | c :: cs -> build_tree c (fun tree -> go (tree :: acc) cs)
           in
           match children with
