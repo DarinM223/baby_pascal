@@ -32,8 +32,20 @@ module Target = struct
     | EQ
     | NE
 
+  let cond_of_bop = function
+    | Ast.Lt -> LT
+    | Ast.Le -> LE
+    | Ast.Gt -> GT
+    | Ast.Ge -> GE
+    | Ast.Eq -> EQ
+    | Ast.Neq -> NE
+    | _ -> failwith "Invalid binary operator"
+
   let init_info = { uses = NameSet.empty; defs = NameSet.empty }
 
+  let reg_of_operand = function
+    | Reg reg -> reg
+    | _ -> failwith "Operand not register"
   let regset_of_operand = function
     | Const _ | Label _ -> NameSet.empty
     | Reg reg -> NameSet.singleton reg
@@ -75,6 +87,27 @@ module Target = struct
     ( { uses = regset_of_operand src; defs = regset_of_operand dest },
       instr,
       [ dest; src ] )
+  let bop (op : Ast.bop) ~dest ~src1 ~src2 =
+    let instr =
+      match op with
+      | Ast.Add -> "add"
+      | Ast.Sub -> "sub"
+      | Ast.Mul -> "mul"
+      | Ast.And -> "and"
+      | Ast.Or -> "or"
+      | Ast.Eq -> "eq"
+      | Ast.Neq -> "neq"
+      | Ast.Lt -> "lt"
+      | Ast.Le -> "le"
+      | Ast.Gt -> "gt"
+      | Ast.Ge -> "ge"
+    in
+    ( {
+        uses = NameSet.union (regset_of_operand src1) (regset_of_operand src2);
+        defs = regset_of_operand dest;
+      },
+      instr,
+      [ dest; src1; src2 ] )
 end
 
 module Cfg = Graph.Make (Target)
@@ -105,9 +138,33 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
       let* e = go_expr e in
       let tmp = Target.Reg (fresh ()) in
       Fun.compose (Cfg.instruction (Target.uop uop ~src:e ~dest:tmp)) (k tmp)
-    | Ast.Bop (_, _, _) -> failwith ""
+    | Ast.Bop (bop, e1, e2) ->
+      let* e1 = go_expr e1 in
+      let* e2 = go_expr e2 in
+      let tmp = Target.Reg (fresh ()) in
+      Fun.compose
+        (Cfg.instruction (Target.bop bop ~src1:e1 ~src2:e2 ~dest:tmp))
+        (k tmp)
     | Ast.Call (f, es) -> go_call (reg f) es k
-  and short_circuit _t _f = failwith ""
+  and short_circuit t f = function
+    | Ast.Bool b -> Cfg.branch (if b then t else f)
+    | Ast.Uop (Ast.Not, e) -> short_circuit f t e
+    | Ast.Bop (Ast.And, e1, e2) ->
+      let t' = new_label () in
+      fun zgraph ->
+        short_circuit t' f e1 @@ Cfg.label t' @@ short_circuit t f e2 @@ zgraph
+    | Ast.Bop (Ast.Or, e1, e2) ->
+      let f' = new_label () in
+      fun zgraph ->
+        short_circuit t f' e1 @@ Cfg.label f' @@ short_circuit t f e2 @@ zgraph
+    | Ast.Bop (bop, e1, e2) ->
+      let* e1 = go_expr e1 in
+      let* e2 = go_expr e2 in
+      let cond = Target.cond_of_bop bop in
+      Cfg.cbranch
+        Target.[ reg_of_operand e1; reg_of_operand e2 ]
+        cond ~ifso:t ~ifnot:f
+    | _ -> failwith "Invalid expression for short circuiting"
   and go_call f es k =
     let rec go acc = function
       | e :: es ->
