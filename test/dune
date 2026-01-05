@@ -1,5 +1,11 @@
 (tests
- (names test_code test_graph test_dom test_ssa_construct test_ssa_graph)
+ (names
+  test_code
+  test_graph
+  test_dom
+  test_ssa_construct
+  test_ssa_graph
+  test_normalize)
  (modes
   (byte exe))
  (flags (:standard))

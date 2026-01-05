@@ -1,5 +1,8 @@
 module IntSet = Set.Make (Int)
-module IntMap = Map.Make (Int)
+module IntMap = struct
+  include CCMap.Make (Int)
+  let pp pp_v = pp CCInt.pp pp_v
+end
 module IntHashtbl = Hashtbl.Make (Int)
 
 module type Target = sig
@@ -20,7 +23,9 @@ module type Target = sig
   val return : uses:reg list -> instr
 
   val pp_reg : Format.formatter -> reg -> unit
+  val equal_reg : reg -> reg -> bool
   val pp_instr : Format.formatter -> instr -> unit
+  val equal_instr : instr -> instr -> bool
 end
 
 module type Extra = sig
@@ -43,29 +48,35 @@ module type S = sig
   type uid = int
   val pp_uid : Format.formatter -> uid -> unit
   val show_uid : uid -> string
+  val equal_uid : uid -> uid -> bool
   val entry_uid : int
 
   type label = uid * string
   val pp_label : Format.formatter -> label -> unit
   val show_label : label -> string
+  val equal_label : label -> label -> bool
 
   type regs = Target.reg list
   val pp_regs : Format.formatter -> regs -> unit
   val show_regs : regs -> string
+  val equal_regs : regs -> regs -> bool
 
   type local = Local of bool
   val pp_local : Format.formatter -> local -> unit
   val show_local : local -> string
+  val equal_local : local -> local -> bool
 
   type first =
     | Entry
     | Label of label * local
   val pp_first : Format.formatter -> first -> unit
   val show_first : first -> string
+  val equal_first : first -> first -> bool
 
   type middle = Instruction of Target.instr
   val pp_middle : Format.formatter -> middle -> unit
   val show_middle : middle -> string
+  val equal_middle : middle -> middle -> bool
 
   type last =
     | Exit
@@ -74,29 +85,42 @@ module type S = sig
     | Return of Target.instr * regs
   val pp_last : Format.formatter -> last -> unit
   val show_last : last -> string
+  val equal_last : last -> last -> bool
 
   type head =
     | First of first
     | Head of head * middle
   val pp_head : Format.formatter -> head -> unit
   val show_head : head -> string
+  val equal_head : head -> head -> bool
 
   type tail =
     | Last of last
     | Tail of middle * tail
   val pp_tail : Format.formatter -> tail -> unit
   val show_tail : tail -> string
+  val equal_tail : tail -> tail -> bool
 
   type zblock = head * tail
   val pp_zblock : Format.formatter -> zblock -> unit
   val show_zblock : zblock -> string
+  val equal_zblock : zblock -> zblock -> bool
 
   type block = first * tail
   val pp_block : Format.formatter -> block -> unit
   val show_block : block -> string
+  val equal_block : block -> block -> bool
 
   type graph = block IntMap.t
+  val pp_graph : Format.formatter -> graph -> unit
+  val show_graph : graph -> string
+  val equal_graph : graph -> graph -> bool
+
   type zgraph = zblock * graph
+  val pp_zgraph : Format.formatter -> zgraph -> unit
+  val show_zgraph : zgraph -> string
+  val equal_zgraph : zgraph -> zgraph -> bool
+
   type nodes = zgraph -> zgraph
 
   module Blocks : sig

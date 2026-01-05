@@ -6,43 +6,44 @@ functor
   ->
   struct
     module Target = Target
-    type uid = int [@@deriving show]
+    type uid = int [@@deriving show, eq]
     let entry_uid = 0
 
-    type label = uid * string [@@deriving show]
-    type regs = Target.reg list [@@deriving show]
+    type label = uid * string [@@deriving show, eq]
+    type regs = Target.reg list [@@deriving show, eq]
 
-    type local = Local of bool [@@deriving show]
+    type local = Local of bool [@@deriving show, eq]
 
     type first =
       | Entry
       | Label of label * local
-    [@@deriving show]
+    [@@deriving show, eq]
 
-    type middle = Instruction of Target.instr [@@deriving show]
+    type middle = Instruction of Target.instr [@@deriving show, eq]
 
     type last =
       | Exit
       | Branch of Target.instr * label
       | CBranch of Target.instr * label * label
       | Return of Target.instr * regs
-    [@@deriving show]
+    [@@deriving show, eq]
 
     type head =
       | First of first
       | Head of head * middle
-    [@@deriving show]
+    [@@deriving show, eq]
 
     type tail =
       | Last of last
       | Tail of middle * tail
-    [@@deriving show]
+    [@@deriving show, eq]
 
-    type zblock = head * tail [@@deriving show]
-    type block = first * tail [@@deriving show]
+    type zblock = head * tail [@@deriving show, eq]
+    type block = first * tail [@@deriving show, eq]
 
-    type graph = block IntMap.t
-    type zgraph = zblock * graph
+    type graph = block IntMap.t [@@deriving show, eq]
+    type zgraph = zblock * graph [@@deriving show, eq]
+
     type nodes = zgraph -> zgraph
 
     let id = function
