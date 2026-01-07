@@ -140,8 +140,8 @@ module type S = sig
   val goto_start : zblock -> first * tail
   val goto_end : zblock -> head * last
 
-  val entry : graph -> zgraph
-  val exit : graph -> zgraph
+  val focus_entry : graph -> zgraph
+  val focus_exit : graph -> zgraph
   val focus : uid -> graph -> zgraph
   val unfocus : zgraph -> graph
 
@@ -167,6 +167,7 @@ module type S = sig
     ifnot:Target.label ->
     nodes
   val return : uses:regs -> nodes
+  val exit : nodes
 
   val precalculate_edges :
     graph ->

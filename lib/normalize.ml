@@ -212,4 +212,4 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
          let next = new_label () in
          go_stmt next stmt @@ Cfg.label next @@ acc)
        stmts
-       Cfg.(entry empty)
+       Cfg.(focus_entry empty)

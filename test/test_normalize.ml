@@ -28,13 +28,13 @@ let test_example_1 () =
     @@ instruction (assign ~src:(reg "tmp2") ~dest:(reg "a"))
     @@ branch (8, "label8")
     @@ label (1, "label1")
-    (* TODO: exit instruction builder *)
+    @@ exit
     @@ label (2, "label2")
     @@ branch (4, "label4")
     @@ label (3, "label3")
     @@ instruction (assign ~src:(Const 60) ~dest:(reg "result"))
     @@ branch (1, "label1")
-    @@ entry empty
+    @@ focus_entry empty
   in
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" result expected

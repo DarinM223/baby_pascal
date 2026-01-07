@@ -79,8 +79,8 @@ functor
       let block = IntMap.find uid graph in
       (unzip block, IntMap.remove uid graph)
 
-    let entry graph = focus entry_uid graph
-    let exit graph =
+    let focus_entry graph = focus entry_uid graph
+    let focus_exit graph =
       let rec find_exit = function
         | (uid, block) :: rest -> begin
           match goto_end (unzip block) with
@@ -115,13 +115,13 @@ functor
         | Tail (m, l) -> ht_to_last (Head (head, m)) l
 
       let prepare_for_splicing graph ~single ~multi =
-        let (_, entry_tail), graph = entry graph in
+        let (_, entry_tail), graph = focus_entry graph in
         if IntMap.is_empty graph then
           match lastt entry_tail with
           | Exit -> single entry_tail
           | _ -> failwith "not a single exit block"
         else
-          let exit_block, graph = exit graph in
+          let exit_block, graph = focus_exit graph in
           let exit_head, exit_last = goto_end exit_block in
           match exit_last with
           | Exit -> multi ~entry:entry_tail ~exit:exit_head ~rest:graph
@@ -155,13 +155,13 @@ functor
       prepare_for_splicing graph ~single ~multi
 
     let splice_head_only head graph =
-      let gentry, graph = entry graph in
+      let gentry, graph = focus_entry graph in
       match gentry with
       | First Entry, tail -> Blocks.insert (ht_to_first head tail) graph
       | _ -> failwith "graph to splice doesn't start with entry"
 
     let remove_entry graph =
-      let gentry, graph = entry graph in
+      let gentry, graph = focus_entry graph in
       match gentry with
       | First Entry, tail -> (tail, graph)
       | _ -> failwith "removing nonexistent entry"
@@ -192,7 +192,7 @@ functor
       | Return _ -> []
 
     let reverse_postorder_dfs graph =
-      let entry, blocks = entry graph in
+      let entry, blocks = focus_entry graph in
       let rec vnode block acc visited k =
         let u = id block in
         if IntSet.mem u visited then k acc visited
@@ -237,6 +237,10 @@ functor
     let return ~uses ((head, tail), graph) =
       unreachable tail;
       ((head, Last (Return (Target.return ~uses, uses))), graph)
+
+    let exit ((head, tail), graph) =
+      unreachable tail;
+      ((head, Last Exit), graph)
 
     let precalculate_edges graph =
       let rpo = reverse_postorder_dfs graph in
