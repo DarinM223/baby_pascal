@@ -5,6 +5,7 @@ module Target : sig
     | Reg of reg
     | Label of label
 
+  val name : string -> reg
   val reg : string -> operand
   val assign : dest:operand -> src:operand -> instr
   val call : reg -> operand list -> instr

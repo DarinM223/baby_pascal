@@ -3,7 +3,6 @@ module Name = struct
   let pp fmt = function
     | s, -1 -> Format.pp_print_string fmt s
     | s, d -> Format.fprintf fmt "%s_%d" s d
-  let name (s : string) : t = (s, -1)
 end
 
 module NameSet = struct
@@ -49,7 +48,8 @@ module Target = struct
     | Const _ | Label _ -> NameSet.empty
     | Reg reg -> NameSet.singleton reg
 
-  let reg r = Reg (Name.name r)
+  let name (s : string) : Name.t = (s, -1)
+  let reg r = Reg (name r)
 
   let assign ~dest ~src =
     ( { uses = regset_of_operand src; defs = regset_of_operand dest },
@@ -126,7 +126,7 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
     let c = ref (-1) in
     fun () ->
       incr c;
-      Name.name ("tmp" ^ string_of_int !c)
+      Target.name ("tmp" ^ string_of_int !c)
   in
   let rec go_expr exp (k : Target.operand -> Cfg.nodes) : Cfg.nodes =
     match exp with
@@ -144,7 +144,7 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
       Fun.compose
         (Cfg.instruction (Target.bop bop ~src1:e1 ~src2:e2 ~dest:tmp))
         (k tmp)
-    | Ast.Call (f, es) -> go_call (Name.name f) es k
+    | Ast.Call (f, es) -> go_call (Target.name f) es k
   and short_circuit t f = function
     | Ast.Bool b -> Cfg.branch (if b then t else f)
     | Ast.Uop (Ast.Not, e) -> short_circuit f t e
@@ -204,7 +204,7 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
         Cfg.label begin_label @@ short_circuit t next test @@ Cfg.label t
         @@ List.fold_right (go_stmt begin_label) body
         @@ Cfg.branch begin_label @@ zgraph
-    | Ast.Call (f, es) -> go_call (Name.name f) es Fun.(const id)
+    | Ast.Call (f, es) -> go_call (Target.name f) es Fun.(const id)
   in
   Cfg.unfocus
   @@ List.fold_right
