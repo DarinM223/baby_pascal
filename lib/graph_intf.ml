@@ -18,8 +18,9 @@ module type Target = sig
     | EQ
     | NE
 
-  val goto : label -> instr
-  val cbranch : uses:reg list -> cond -> label -> label -> instr
+  val goto : label -> reg list -> instr
+  val cbranch :
+    uses:reg list -> cond -> label -> reg list -> label -> reg list -> instr
   val return : uses:reg list -> instr
 
   val pp_reg : Format.formatter -> reg -> unit
@@ -61,14 +62,14 @@ module type S = sig
   val show_regs : regs -> string
   val equal_regs : regs -> regs -> bool
 
-  type local = Local of bool
-  val pp_local : Format.formatter -> local -> unit
-  val show_local : local -> string
-  val equal_local : local -> local -> bool
+  type info
+  val pp_info : Format.formatter -> info -> unit
+  val show_info : info -> string
+  val equal_info : info -> info -> bool
 
   type first =
     | Entry
-    | Label of label * local
+    | Label of label * info
   val pp_first : Format.formatter -> first -> unit
   val show_first : first -> string
   val equal_first : first -> first -> bool
@@ -158,10 +159,12 @@ module type S = sig
 
   val unreachable : tail -> unit
   val instruction : Target.instr -> nodes
-  val label : Target.label -> nodes
-  val branch : Target.label -> nodes
+  val label : ?args:regs -> Target.label -> nodes
+  val branch : ?args:regs -> Target.label -> nodes
   val cbranch :
-    Target.reg list ->
+    ?ifso_args:regs ->
+    ?ifnot_args:regs ->
+    uses:Target.reg list ->
     Target.cond ->
     ifso:Target.label ->
     ifnot:Target.label ->

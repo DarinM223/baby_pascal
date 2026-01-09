@@ -16,7 +16,7 @@ module Target = struct
   type operand =
     | Const of int
     | Reg of reg
-    | Label of label
+    | Label of label * reg list
   [@@deriving show, eq]
   type info = {
     uses : NameSet.t;
@@ -65,8 +65,8 @@ module Target = struct
       },
       "call",
       Reg f :: es )
-  let goto label = (init_info, "j", [ Label label ])
-  let cbranch ~uses (cond : cond) l1 l2 =
+  let goto label args = (init_info, "j", [ Label (label, args) ])
+  let cbranch ~uses (cond : cond) l1 l1args l2 l2args =
     let instr =
       match cond with
       | LT -> "jl"
@@ -78,7 +78,8 @@ module Target = struct
     in
     ( { init_info with uses = NameSet.of_list uses },
       instr,
-      Label l1 :: Label l2 :: List.map (fun r -> Reg r) uses )
+      Label (l1, l1args) :: Label (l2, l2args) :: List.map (fun r -> Reg r) uses
+    )
   let return ~uses = ({ init_info with uses = NameSet.of_list uses }, "ret", [])
   let uop op ~dest ~src =
     let instr =
@@ -165,7 +166,7 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
           (NameSet.to_list (Target.regset_of_operand e1))
           (NameSet.to_list (Target.regset_of_operand e2))
       in
-      Cfg.cbranch uses cond ~ifso:t ~ifnot:f
+      Cfg.cbranch ~uses cond ~ifso:t ~ifnot:f
     | _ -> failwith "Invalid expression for short circuiting"
   and go_call f es k =
     let rec go acc = function

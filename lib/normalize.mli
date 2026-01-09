@@ -3,7 +3,7 @@ module Target : sig
   type operand =
     | Const of int
     | Reg of reg
-    | Label of label
+    | Label of label * reg list
 
   val name : string -> reg
   val reg : string -> operand

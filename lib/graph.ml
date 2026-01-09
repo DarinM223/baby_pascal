@@ -12,11 +12,15 @@ functor
     type label = uid * string [@@deriving show, eq]
     type regs = Target.reg list [@@deriving show, eq]
 
-    type local = Local of bool [@@deriving show, eq]
+    type info = {
+      local : bool;
+      args : regs;
+    }
+    [@@deriving show, eq]
 
     type first =
       | Entry
-      | Label of label * local
+      | Label of label * info
     [@@deriving show, eq]
 
     type middle = Instruction of Target.instr [@@deriving show, eq]
@@ -216,22 +220,27 @@ functor
     let instruction instr ((head, tail), graph) =
       ((head, Tail (Instruction instr, tail)), graph)
 
-    let label label ((head, tail), graph) =
-      ( (head, Last (Branch (Target.goto label, label))),
-        Blocks.insert (Label (label, Local false), tail) graph )
+    let label ?(args = []) label ((head, tail), graph) =
+      ( (head, Last (Branch (Target.goto label [], label))),
+        Blocks.insert (Label (label, { local = false; args }), tail) graph )
 
     let unreachable = function
       | Last (Branch _ | Exit) -> ()
       | _ -> failwith "unreachable code"
 
-    let branch label ((head, tail), graph) =
+    let branch ?(args = []) label ((head, tail), graph) =
       unreachable tail;
-      ((head, Last (Branch (Target.goto label, label))), graph)
+      ((head, Last (Branch (Target.goto label args, label))), graph)
 
-    let cbranch uses cond ~ifso ~ifnot ((head, tail), graph) =
+    let cbranch ?(ifso_args = []) ?(ifnot_args = []) ~uses cond ~ifso ~ifnot
+        ((head, tail), graph) =
       unreachable tail;
       ( ( head,
-          Last (CBranch (Target.cbranch ~uses cond ifso ifnot, ifso, ifnot)) ),
+          Last
+            (CBranch
+               ( Target.cbranch ~uses cond ifso ifso_args ifnot ifnot_args,
+                 ifso,
+                 ifnot )) ),
         graph )
 
     let return ~uses ((head, tail), graph) =
