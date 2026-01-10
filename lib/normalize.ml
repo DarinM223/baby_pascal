@@ -113,6 +113,7 @@ module Target = struct
 end
 
 module Cfg = Graph.Make (Target)
+module Flow = Dataflow.Make (Cfg)
 
 let normalize (stmts : Ast.stmt list) : Cfg.graph =
   let ( let* ) = ( @@ ) in
