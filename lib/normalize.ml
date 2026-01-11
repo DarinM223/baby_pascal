@@ -48,6 +48,7 @@ module Target = struct
     | Const _ | Label _ -> NameSet.empty
     | Reg reg -> NameSet.singleton reg
 
+  let info (info, _, _) = info
   let name (s : string) : Name.t = (s, -1)
   let reg r = Reg (name r)
 

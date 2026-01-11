@@ -1,6 +1,5 @@
 module Name : sig
   type t
-
   val pp : Format.formatter -> t -> unit
 end
 module NameSet : Set.S with type elt = Name.t
@@ -11,6 +10,11 @@ module Target : sig
     | Reg of reg
     | Label of label * reg list
 
+  type info = {
+    uses : NameSet.t;
+    defs : NameSet.t;
+  }
+  val info : instr -> info
   val name : string -> reg
   val reg : string -> operand
   val assign : dest:operand -> src:operand -> instr
