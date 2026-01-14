@@ -5,19 +5,38 @@ type liveness = {
   live_out : Normalize.Cfg.label -> Normalize.NameSet.t;
 }
 
-let calc_live graph =
+let name_fact () =
   let open Normalize in
-  let gen_kill = IntHashtbl.create 100 in
-  let liveness_fact =
+  let store = IntHashtbl.create 100 in
+  {
+    Flow.init_info = NameSet.empty;
+    add_info = NameSet.union;
+    changed = (fun ~before ~after -> NameSet.(cardinal after > cardinal before));
+    get = IntHashtbl.find store;
+    set = IntHashtbl.add store;
+  }
+
+let calc_a_orig graph : Normalize.Cfg.label -> Normalize.NameSet.t =
+  let open Normalize in
+  let fact = name_fact () in
+  let handle_instruction instr a =
+    let { Target.defs; _ } = Target.info instr in
+    NameSet.union a defs
+  in
+  let analysis =
     {
-      Flow.init_info = NameSet.empty;
-      add_info = NameSet.union;
-      changed =
-        (fun ~before ~after -> NameSet.(cardinal after > cardinal before));
-      get = IntHashtbl.find gen_kill;
-      set = IntHashtbl.add gen_kill;
+      Flow.BackwardAnalysis.first_in = (fun a _ -> a);
+      middle_in = (fun a (Instruction instr) -> handle_instruction instr a);
+      last_in = (fun _ -> NameSet.empty);
     }
   in
+  let analysis = (fact, analysis) in
+  let _ = Flow.BackwardAnalysis.run analysis graph in
+  fun (uid, _) -> fact.get uid
+
+let calc_live graph =
+  let open Normalize in
+  let liveness_fact = name_fact () in
   let handle_instruction instr a =
     let { Target.uses; defs } = Target.info instr in
     NameSet.union uses (NameSet.diff a defs)
