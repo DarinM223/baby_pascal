@@ -1,6 +1,8 @@
 module Name : sig
   type t
   val pp : Format.formatter -> t -> unit
+  val equal : t -> t -> bool
+  val hash : t -> int
 end
 module NameSet : Set.S with type elt = Name.t
 module Target : sig

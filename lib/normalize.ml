@@ -3,6 +3,7 @@ module Name = struct
   let pp fmt = function
     | s, -1 -> Format.pp_print_string fmt s
     | s, d -> Format.fprintf fmt "%s_%d" s d
+  let hash = Hashtbl.hash
 end
 
 module NameSet = struct
