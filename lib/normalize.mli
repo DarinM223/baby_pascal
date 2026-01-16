@@ -6,7 +6,7 @@ module Name : sig
 end
 module NameSet : Set.S with type elt = Name.t
 module Target : sig
-  include Graph.Target with type label = int * string
+  include Graph.Target with type label = int * string and type reg = Name.t
   type operand =
     | Const of int
     | Reg of reg

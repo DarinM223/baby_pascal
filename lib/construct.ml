@@ -82,29 +82,50 @@ let insert_phis (test : Normalize.Cfg.uid -> Normalize.Name.t -> bool)
   IntMap.iter
     (fun n _ -> NameSet.iter (fun a -> NameHashtbl.add defsites a n) (a_orig n))
     graph;
-  let a_phi = Hashtbl.create (NameHashtbl.length defsites) in
+  let a_phi = NameHashtbl.(create (length defsites)) in
   let go_variable a _ graph =
-    let w = ref (IntSet.of_list (NameHashtbl.find_all defsites a)) in
-    while not (IntSet.is_empty !w) do
-      let n = IntSet.min_elt !w in
-      let l = Normalize.Cfg.(block_label (zip (fst (focus n graph)))) in
-      w := IntSet.remove n !w;
-      let df =
-        l |> Dom.position_of_label
-        |> Lazy.force Dom.dominator_frontier
-        |> List.map (Fun.compose uid_of_label Dom.label_of_position)
-      in
-      List.iter
-        (fun y ->
-          if (not (List.mem y (Hashtbl.find_all a_phi a))) && test y a then begin
-            let _node = IntMap.find y graph in
-            (* let phi = List.init (IntSet.cardinal node.Block.pred) (fun _ -> a) in
-            CCVector.push node.phis { r = a'; ins = phi }; *)
-            Hashtbl.add a_phi a y;
-            if not (NameSet.mem a (a_orig y)) then w := IntSet.add y !w
-          end)
-        df
-    done;
-    graph
+    let go_frontier_node (worklist, graph) node_id =
+      if
+        (not (List.mem node_id (NameHashtbl.find_all a_phi a)))
+        && test node_id a
+      then begin
+        let zblock, graph = Normalize.Cfg.focus node_id graph in
+        let graph =
+          match Normalize.Cfg.goto_start zblock with
+          | Normalize.Cfg.Entry, _ -> failwith "Cannot add phi to entry block"
+          | Normalize.Cfg.Label (l, i), tail ->
+            let zblock =
+              ( Normalize.Cfg.(First (Label (l, { i with args = a :: i.args }))),
+                tail )
+            in
+            Normalize.Cfg.unfocus (zblock, graph)
+        in
+        NameHashtbl.add a_phi a node_id;
+        let worklist =
+          if not (NameSet.mem a (a_orig node_id)) then
+            IntSet.add node_id worklist
+          else worklist
+        in
+        (worklist, graph)
+      end
+      else (worklist, graph)
+    in
+    let rec go_defsite worklist graph =
+      if IntSet.is_empty worklist then graph
+      else
+        let n = IntSet.min_elt worklist in
+        let worklist = IntSet.remove n worklist in
+        let l = Normalize.Cfg.(block_label (zip (fst (focus n graph)))) in
+        let df =
+          l |> Dom.position_of_label
+          |> Lazy.force Dom.dominator_frontier
+          |> List.map (Fun.compose uid_of_label Dom.label_of_position)
+        in
+        let worklist, graph =
+          List.fold_left go_frontier_node (worklist, graph) df
+        in
+        go_defsite worklist graph
+    in
+    go_defsite (IntSet.of_list (NameHashtbl.find_all defsites a)) graph
   in
   NameHashtbl.fold go_variable defsites graph

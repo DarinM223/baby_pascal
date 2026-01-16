@@ -62,7 +62,10 @@ module type S = sig
   val show_regs : regs -> string
   val equal_regs : regs -> regs -> bool
 
-  type info
+  type info = {
+    local : bool;
+    args : regs;
+  }
   val pp_info : Format.formatter -> info -> unit
   val show_info : info -> string
   val equal_info : info -> info -> bool
