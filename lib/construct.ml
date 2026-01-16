@@ -1,20 +1,24 @@
 module IntHashtbl = Hashtbl.Make (Int)
-module NameHashtbl = Hashtbl.Make (Normalize.Name)
+module Name = Normalize.Name
+module NameHashtbl = Hashtbl.Make (Name)
 module IntMap = Graph_intf.IntMap
 module IntSet = Graph_intf.IntSet
+module Cfg = Normalize.Cfg
+module NameSet = Normalize.NameSet
+module Flow = Normalize.Flow
+module Target = Normalize.Target
 
 type liveness = {
-  live_in : Normalize.Cfg.uid -> Normalize.NameSet.t;
-  live_out : Normalize.Cfg.uid -> Normalize.NameSet.t;
+  live_in : Cfg.uid -> NameSet.t;
+  live_out : Cfg.uid -> NameSet.t;
 }
-type a_orig = Normalize.Cfg.uid -> Normalize.NameSet.t
+type a_orig = Cfg.uid -> NameSet.t
 
 let uid_of_label = function
-  | None -> Normalize.Cfg.entry_uid
+  | None -> Cfg.entry_uid
   | Some (uid, _) -> uid
 
 let name_fact () =
-  let open Normalize in
   let store = IntHashtbl.create 100 in
   {
     Flow.init_info = NameSet.empty;
@@ -25,7 +29,6 @@ let name_fact () =
   }
 
 let calc_a_orig graph : a_orig =
-  let open Normalize in
   let fact = name_fact () in
   let handle_instruction instr a =
     let { Target.defs; _ } = Target.info instr in
@@ -43,19 +46,18 @@ let calc_a_orig graph : a_orig =
   fact.get
 
 let calc_live graph : liveness =
-  let open Normalize in
   let liveness_fact = name_fact () in
   let handle_instruction instr a =
     let { Target.uses; defs } = Target.info instr in
     NameSet.union uses (NameSet.diff a defs)
   in
   let calc_live_out = function
-    | Normalize.Cfg.Exit -> NameSet.empty
-    | Normalize.Cfg.Branch (_, (uid, _)) -> liveness_fact.get uid
-    | Normalize.Cfg.CBranch (instr, (uid1, _), (uid2, _)) ->
+    | Cfg.Exit -> NameSet.empty
+    | Cfg.Branch (_, (uid, _)) -> liveness_fact.get uid
+    | Cfg.CBranch (instr, (uid1, _), (uid2, _)) ->
       handle_instruction instr
       @@ NameSet.union (liveness_fact.get uid1) (liveness_fact.get uid2)
-    | Normalize.Cfg.Return (instr, _) -> handle_instruction instr NameSet.empty
+    | Cfg.Return (instr, _) -> handle_instruction instr NameSet.empty
   in
   let liveness_analysis =
     {
@@ -69,16 +71,13 @@ let calc_live graph : liveness =
   {
     live_in = liveness_fact.get;
     live_out =
-      (fun uid ->
-        calc_live_out @@ Normalize.Cfg.last @@ fst
-        @@ Normalize.Cfg.focus uid graph);
+      (fun uid -> calc_live_out @@ Cfg.last @@ fst @@ Cfg.focus uid graph);
   }
 
-let insert_phis (test : Normalize.Cfg.uid -> Normalize.Name.t -> bool)
-    (module Dom : Dominator.S with type label = Normalize.Cfg.label)
-    (a_orig : a_orig) (graph : Normalize.Cfg.graph) =
-  let open Normalize in
-  let defsites : Normalize.Cfg.uid NameHashtbl.t = NameHashtbl.create 100 in
+let insert_phis (test : Cfg.uid -> Name.t -> bool)
+    (module Dom : Dominator.S with type label = Cfg.label) (a_orig : a_orig)
+    (graph : Cfg.graph) =
+  let defsites : Cfg.uid NameHashtbl.t = NameHashtbl.create 100 in
   IntMap.iter
     (fun n _ -> NameSet.iter (fun a -> NameHashtbl.add defsites a n) (a_orig n))
     graph;
@@ -89,16 +88,15 @@ let insert_phis (test : Normalize.Cfg.uid -> Normalize.Name.t -> bool)
         (not (List.mem node_id (NameHashtbl.find_all a_phi a)))
         && test node_id a
       then begin
-        let zblock, graph = Normalize.Cfg.focus node_id graph in
+        let zblock, graph = Cfg.focus node_id graph in
         let graph =
-          match Normalize.Cfg.goto_start zblock with
-          | Normalize.Cfg.Entry, _ -> failwith "Cannot add phi to entry block"
-          | Normalize.Cfg.Label (l, i), tail ->
+          match Cfg.goto_start zblock with
+          | Cfg.Entry, _ -> failwith "Cannot add phi to entry block"
+          | Cfg.Label (l, i), tail ->
             let zblock =
-              ( Normalize.Cfg.(First (Label (l, { i with args = a :: i.args }))),
-                tail )
+              (Cfg.(First (Label (l, { i with args = a :: i.args }))), tail)
             in
-            Normalize.Cfg.unfocus (zblock, graph)
+            Cfg.unfocus (zblock, graph)
         in
         NameHashtbl.add a_phi a node_id;
         let worklist =
@@ -115,7 +113,7 @@ let insert_phis (test : Normalize.Cfg.uid -> Normalize.Name.t -> bool)
       else
         let n = IntSet.min_elt worklist in
         let worklist = IntSet.remove n worklist in
-        let l = Normalize.Cfg.(block_label (zip (fst (focus n graph)))) in
+        let l = Cfg.(block_label (zip (fst (focus n graph)))) in
         let df =
           l |> Dom.position_of_label
           |> Lazy.force Dom.dominator_frontier
