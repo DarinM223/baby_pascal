@@ -18,8 +18,10 @@ let uid_of_label = function
   | None -> Cfg.entry_uid
   | Some (uid, _) -> uid
 
+let hashtbl_size = 100
+
 let name_fact () =
-  let store = IntHashtbl.create 100 in
+  let store = IntHashtbl.create hashtbl_size in
   {
     Flow.init_info = NameSet.empty;
     add_info = NameSet.union;
@@ -127,3 +129,46 @@ let insert_phis (test : Cfg.uid -> Name.t -> bool)
     go_defsite (IntSet.of_list (NameHashtbl.find_all defsites a)) graph
   in
   NameHashtbl.fold go_variable defsites graph
+
+let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
+    graph =
+  let ( let* ) = ( @@ ) in
+  let _count = NameHashtbl.create hashtbl_size in
+  let stack = NameHashtbl.create hashtbl_size in
+  let rec rename graph label children k =
+    let zblock, graph =
+      match label with
+      | None -> Cfg.focus_entry graph
+      | Some (uid, _) -> Cfg.focus uid graph
+    in
+    let first, tail = Cfg.goto_start zblock in
+    let rename_instruction vardefs instr =
+      (* todo: implement this *)
+      (vardefs, instr)
+    in
+    let rec go_tail tail k =
+      match tail with
+      | Cfg.Tail (instr, rest) ->
+        let* vardefs, rest = go_tail rest in
+        let vardefs, instr = rename_instruction vardefs instr in
+        k (vardefs, Cfg.Tail (instr, rest))
+      | Cfg.Last l -> k (NameSet.empty, Cfg.Last l)
+    in
+    let* vardefs, tail = go_tail tail in
+    let graph = Cfg.unfocus ((Cfg.First first, tail), graph) in
+    let rec go_children graph children k =
+      match children with
+      | child :: rest ->
+        let* graph = walk graph child in
+        go_children graph rest k
+      | [] -> k graph
+    in
+    let* graph = go_children graph children in
+    NameSet.iter (NameHashtbl.remove stack) vardefs;
+    k graph
+  and walk graph tree k =
+    match tree with
+    | Dom.Node (l, children) -> rename graph l children k
+    | Dom.Leaf l -> rename graph l [] k
+  in
+  walk graph (Lazy.force Dom.dominator_tree) (fun a -> a)
