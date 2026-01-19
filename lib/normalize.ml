@@ -19,12 +19,12 @@ module Target = struct
     | Reg of reg
     | Label of label * reg list
   [@@deriving show, eq]
-  type info = {
-    uses : NameSet.t;
-    defs : NameSet.t;
+  type instr = {
+    op : string;
+    srcs : operand list;
+    dests : operand list;
   }
   [@@deriving show, eq]
-  type instr = info * string * operand list [@@deriving show, eq]
 
   type cond =
     | LT
@@ -43,31 +43,26 @@ module Target = struct
     | Ast.Neq -> NE
     | _ -> failwith "Invalid binary operator"
 
-  let init_info = { uses = NameSet.empty; defs = NameSet.empty }
-
   let regset_of_operand = function
-    | Const _ | Label _ -> NameSet.empty
+    | Const _ -> NameSet.empty
+    | Label (_, args) -> NameSet.of_list args
     | Reg reg -> NameSet.singleton reg
 
-  let info (info, _, _) = info
   let name (s : string) : Name.t = (s, -1)
   let reg r = Reg (name r)
 
-  let assign ~dest ~src =
-    ( { uses = regset_of_operand src; defs = regset_of_operand dest },
-      ":=",
-      [ dest; src ] )
-  let call f es =
-    ( {
-        init_info with
-        uses =
-          List.fold_left
-            (fun acc o -> NameSet.union acc (regset_of_operand o))
-            (NameSet.singleton f) es;
-      },
-      "call",
-      Reg f :: es )
-  let goto label args = (init_info, "j", [ Label (label, args) ])
+  let uses instr =
+    instr.srcs |> List.map regset_of_operand
+    |> List.fold_left NameSet.union NameSet.empty
+  let defs instr =
+    instr.dests |> List.map regset_of_operand
+    |> List.fold_left NameSet.union NameSet.empty
+  let map_uses f instr = { instr with srcs = List.map f instr.srcs }
+  let map_defs f instr = { instr with dests = List.map f instr.dests }
+
+  let assign ~dest ~src = { op = ":="; srcs = [ src ]; dests = [ dest ] }
+  let call f es = { op = "call"; srcs = Reg f :: es; dests = [] }
+  let goto label args = { op = "j"; srcs = [ Label (label, args) ]; dests = [] }
   let cbranch ~uses (cond : cond) l1 l1args l2 l2args =
     let instr =
       match cond with
@@ -78,19 +73,22 @@ module Target = struct
       | EQ -> "jz"
       | NE -> "jnz"
     in
-    ( { init_info with uses = NameSet.of_list uses },
-      instr,
-      Label (l1, l1args) :: Label (l2, l2args) :: List.map (fun r -> Reg r) uses
-    )
-  let return ~uses = ({ init_info with uses = NameSet.of_list uses }, "ret", [])
+    {
+      op = instr;
+      srcs =
+        Label (l1, l1args)
+        :: Label (l2, l2args)
+        :: List.map (fun r -> Reg r) uses;
+      dests = [];
+    }
+  let return ~uses =
+    { op = "ret"; srcs = List.map (fun r -> Reg r) uses; dests = [] }
   let uop op ~dest ~src =
     let instr =
       match op with
       | Ast.Not -> "not"
     in
-    ( { uses = regset_of_operand src; defs = regset_of_operand dest },
-      instr,
-      [ dest; src ] )
+    { op = instr; srcs = [ src ]; dests = [ dest ] }
   let bop (op : Ast.bop) ~dest ~src1 ~src2 =
     let instr =
       match op with
@@ -106,12 +104,7 @@ module Target = struct
       | Ast.Gt -> "gt"
       | Ast.Ge -> "ge"
     in
-    ( {
-        uses = NameSet.union (regset_of_operand src1) (regset_of_operand src2);
-        defs = regset_of_operand dest;
-      },
-      instr,
-      [ dest; src1; src2 ] )
+    { op = instr; srcs = [ src1; src2 ]; dests = [ dest ] }
 end
 
 module Cfg = Graph.Make (Target)

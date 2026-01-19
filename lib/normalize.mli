@@ -4,7 +4,10 @@ module Name : sig
   val equal : t -> t -> bool
   val hash : t -> int
 end
-module NameSet : Set.S with type elt = Name.t
+module NameSet : sig
+  include Set.S with type elt = Name.t
+  val pp : Format.formatter -> t -> unit
+end
 module Target : sig
   include Graph.Target with type label = int * string and type reg = Name.t
   type operand =
@@ -12,11 +15,10 @@ module Target : sig
     | Reg of reg
     | Label of label * reg list
 
-  type info = {
-    uses : NameSet.t;
-    defs : NameSet.t;
-  }
-  val info : instr -> info
+  val uses : instr -> NameSet.t
+  val defs : instr -> NameSet.t
+  val map_uses : (operand -> operand) -> instr -> instr
+  val map_defs : (operand -> operand) -> instr -> instr
   val name : string -> reg
   val reg : string -> operand
   val assign : dest:operand -> src:operand -> instr

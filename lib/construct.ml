@@ -32,10 +32,7 @@ let name_fact () =
 
 let calc_a_orig graph : a_orig =
   let fact = name_fact () in
-  let handle_instruction instr a =
-    let { Target.defs; _ } = Target.info instr in
-    NameSet.union a defs
-  in
+  let handle_instruction instr a = NameSet.union a (Target.defs instr) in
   let analysis =
     {
       Flow.BackwardAnalysis.first_in = (fun a _ -> a);
@@ -50,8 +47,7 @@ let calc_a_orig graph : a_orig =
 let calc_live graph : liveness =
   let liveness_fact = name_fact () in
   let handle_instruction instr a =
-    let { Target.uses; defs } = Target.info instr in
-    NameSet.union uses (NameSet.diff a defs)
+    NameSet.union (Target.uses instr) (NameSet.diff a (Target.defs instr))
   in
   let calc_live_out = function
     | Cfg.Exit -> NameSet.empty
@@ -142,16 +138,16 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
       | Some (uid, _) -> Cfg.focus uid graph
     in
     let first, tail = Cfg.goto_start zblock in
-    let rename_instruction vardefs instr =
+    let rename_instruction vardefs (instr : Target.instr) =
       (* todo: implement this *)
       (vardefs, instr)
     in
     let rec go_tail tail k =
       match tail with
-      | Cfg.Tail (instr, rest) ->
+      | Cfg.Tail (Cfg.Instruction instr, rest) ->
         let* vardefs, rest = go_tail rest in
         let vardefs, instr = rename_instruction vardefs instr in
-        k (vardefs, Cfg.Tail (instr, rest))
+        k (vardefs, Cfg.Tail (Cfg.Instruction instr, rest))
       | Cfg.Last l -> k (NameSet.empty, Cfg.Last l)
     in
     let* vardefs, tail = go_tail tail in
