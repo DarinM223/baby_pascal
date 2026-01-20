@@ -1,6 +1,9 @@
 module IntHashtbl = Hashtbl.Make (Int)
 module Name = Normalize.Name
-module NameHashtbl = Hashtbl.Make (Name)
+module NameHashtbl = Hashtbl.Make (struct
+  include Name
+  let hash n = Hashtbl.hash (label n)
+end)
 module IntMap = Graph_intf.IntMap
 module IntSet = Graph_intf.IntSet
 module Cfg = Normalize.Cfg
@@ -129,7 +132,7 @@ let insert_phis (test : Cfg.uid -> Name.t -> bool)
 let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
     graph =
   let ( let* ) = ( @@ ) in
-  let _count = NameHashtbl.create hashtbl_size in
+  let count = NameHashtbl.create hashtbl_size in
   let stack = NameHashtbl.create hashtbl_size in
   let rec rename graph label children k =
     let zblock, graph =
@@ -138,19 +141,70 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
       | Some (uid, _) -> Cfg.focus uid graph
     in
     let first, tail = Cfg.goto_start zblock in
-    let rename_instruction vardefs (instr : Target.instr) =
-      (* todo: implement this *)
-      (vardefs, instr)
+    let replace_use (use : Name.t) : Name.t =
+      let i = NameHashtbl.find stack use in
+      Name.update_index i use
     in
-    let rec go_tail tail k =
+    let replace_def (def : Name.t) : Name.t =
+      begin try NameHashtbl.replace count def (NameHashtbl.find count def + 1)
+      with Not_found -> NameHashtbl.add count def 1
+      end;
+      let i = NameHashtbl.find count def in
+      NameHashtbl.add stack def i;
+      Name.update_index i def
+    in
+    let rename_block_argument vardefs (def : Name.t) =
+      (NameSet.add def vardefs, replace_def def)
+    in
+    let rename_instruction vardefs (instr : Target.instr) =
+      let instr =
+        Target.map_uses
+          (function
+            | Reg reg -> Reg (replace_use reg)
+            | Label (((uid, _) as l), args) -> begin
+              match Cfg.first @@ fst @@ Cfg.focus uid graph with
+              | Cfg.Entry -> Label (l, args)
+              | Cfg.Label (_, args') ->
+                (* handle call instructions to pass block parameters *)
+                Label (l, List.map replace_use args'.args)
+            end
+            | op -> op)
+          instr
+      in
+      let vardefs = ref vardefs in
+      let instr =
+        Target.map_defs
+          (function
+            | Reg reg ->
+              vardefs := NameSet.add reg !vardefs;
+              Reg (replace_def reg)
+            | op -> op)
+          instr
+      in
+      (!vardefs, instr)
+    in
+    let vardefs, first =
+      match first with
+      | Cfg.Entry -> (NameSet.empty, first)
+      | Cfg.Label (l, args) ->
+        let vardefs, args' =
+          List.fold_right
+            (fun arg (vardefs, args) ->
+              let vardefs, arg = rename_block_argument vardefs arg in
+              (vardefs, arg :: args))
+            args.args (NameSet.empty, [])
+        in
+        (vardefs, Cfg.Label (l, { args with args = args' }))
+    in
+    let rec go_tail vardefs tail k =
       match tail with
       | Cfg.Tail (Cfg.Instruction instr, rest) ->
-        let* vardefs, rest = go_tail rest in
+        let* vardefs, rest = go_tail vardefs rest in
         let vardefs, instr = rename_instruction vardefs instr in
         k (vardefs, Cfg.Tail (Cfg.Instruction instr, rest))
-      | Cfg.Last l -> k (NameSet.empty, Cfg.Last l)
+      | Cfg.Last l -> k (vardefs, Cfg.Last l)
     in
-    let* vardefs, tail = go_tail tail in
+    let* vardefs, tail = go_tail vardefs tail in
     let graph = Cfg.unfocus ((Cfg.First first, tail), graph) in
     let rec go_children graph children k =
       match children with

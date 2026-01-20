@@ -2,7 +2,9 @@ module Name : sig
   type t
   val pp : Format.formatter -> t -> unit
   val equal : t -> t -> bool
-  val hash : t -> int
+  val label : t -> string
+  val index : t -> int
+  val update_index : int -> t -> t
 end
 module NameSet : sig
   include Set.S with type elt = Name.t
