@@ -16,8 +16,8 @@ end
 
 module type Maker = functor
   (G : Graph.S)
-  (_ : Graph.Extra with type label = int * string and type graph = G.graph)
-  -> S
+  (_ : Graph.Extra with type label = G.label and type graph = G.graph)
+  -> S with type label = G.label and type graph = G.graph
 
 module type Intf = sig
   module type S = S

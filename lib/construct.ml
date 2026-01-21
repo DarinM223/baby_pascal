@@ -129,6 +129,11 @@ let insert_phis (test : Cfg.uid -> Name.t -> bool)
   in
   NameHashtbl.fold go_variable defsites graph
 
+let insert_phis_minimal = insert_phis (fun _ _ -> true)
+
+let insert_phis_pruned (live : liveness) =
+  insert_phis (fun y a -> NameSet.mem a (live.live_in y))
+
 let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
     graph =
   let ( let* ) = ( @@ ) in
