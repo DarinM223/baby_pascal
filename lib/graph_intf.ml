@@ -36,6 +36,7 @@ module type Extra = sig
   val pp_label : Format.formatter -> label -> unit
   val position_of_int : int -> position
   val int_of_position : position -> int
+  val pp_position : Format.formatter -> position -> unit
   val size : int
   val label_of_position : position -> label option
   val position_of_label : label option -> position

@@ -147,7 +147,7 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
     in
     let first, tail = Cfg.goto_start zblock in
     let replace_use (use : Name.t) : Name.t =
-      let i = NameHashtbl.find stack use in
+      let i = try NameHashtbl.find stack use with Not_found -> 0 in
       Name.update_index i use
     in
     let replace_def (def : Name.t) : Name.t =

@@ -15,6 +15,7 @@ functor
     type node_type =
       | Undefined
       | Defined of Extra.position
+    [@@deriving show]
     let idom = Array.make Extra.size Undefined
     let set_doms pos v = idom.(Extra.int_of_position pos) <- Defined v
     let doms pos =
@@ -35,7 +36,7 @@ functor
       !finger1
 
     let idom =
-      let changed = ref false in
+      let changed = ref true in
       set_doms (Extra.position_of_label None) (Extra.position_of_label None);
       let go_block block =
         let block_pos = Extra.position_of_label (G.block_label block) in
@@ -63,6 +64,7 @@ functor
         List.iter go_block rpo
       done;
       doms
+
     let dominator_tree =
       lazy begin
         let children_mapping = Array.make Extra.size IntSet.empty in
@@ -93,6 +95,7 @@ functor
           Extra.graph;
         build_tree (Extra.position_of_label None) (fun t -> t)
       end
+
     let dominator_frontier =
       lazy begin
         let frontier = Array.make Extra.size IntSet.empty in

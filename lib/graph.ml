@@ -255,7 +255,7 @@ functor
       let rpo = reverse_postorder_dfs graph in
       let module Extra = struct
         type label = Target.label
-        type position = int
+        type position = int [@@deriving show]
         type graph = block IntMap.t
         let pp_label = pp_label
         let position_of_int p = p
