@@ -188,6 +188,18 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
       in
       (!vardefs, instr)
     in
+    let rename_last vardefs = function
+      | Cfg.Exit -> (vardefs, Cfg.Exit)
+      | Cfg.Branch (instr, label) ->
+        let vardefs, instr = rename_instruction vardefs instr in
+        (vardefs, Cfg.Branch (instr, label))
+      | Cfg.CBranch (instr, l1, l2) ->
+        let vardefs, instr = rename_instruction vardefs instr in
+        (vardefs, Cfg.CBranch (instr, l1, l2))
+      | Cfg.Return (instr, regs) ->
+        let vardefs, instr = rename_instruction vardefs instr in
+        (vardefs, Cfg.Return (instr, regs))
+    in
     let vardefs, first =
       match first with
       | Cfg.Entry -> (NameSet.empty, first)
@@ -204,10 +216,12 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
     let rec go_tail vardefs tail k =
       match tail with
       | Cfg.Tail (Cfg.Instruction instr, rest) ->
-        let* vardefs, rest = go_tail vardefs rest in
         let vardefs, instr = rename_instruction vardefs instr in
+        let* vardefs, rest = go_tail vardefs rest in
         k (vardefs, Cfg.Tail (Cfg.Instruction instr, rest))
-      | Cfg.Last l -> k (vardefs, Cfg.Last l)
+      | Cfg.Last l ->
+        let vardefs, l = rename_last vardefs l in
+        k (vardefs, Cfg.Last l)
     in
     let* vardefs, tail = go_tail vardefs tail in
     let graph = Cfg.unfocus ((Cfg.First first, tail), graph) in

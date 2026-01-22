@@ -1,5 +1,5 @@
 module Name = struct
-  type t = string * int [@@deriving show, eq, ord]
+  type t = string * int [@@deriving eq, ord]
   let pp fmt = function
     | s, -1 -> Format.pp_print_string fmt s
     | s, d -> Format.fprintf fmt "%s_%d" s d
