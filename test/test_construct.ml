@@ -4,6 +4,65 @@ open Baby_pascal
 let name' s i = Normalize.(Name.update_index i (Target.name s))
 let reg' s i = Normalize.Target.Reg (name' s i)
 
+let test_figure_19_2 () =
+  let cfg =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ branch (1, "label1")
+    @@ label (1, "label1")
+    @@ instruction (assign ~src:(reg "x") ~dest:(reg "b"))
+    @@ instruction (assign ~src:(Const 0) ~dest:(reg "a"))
+    @@ branch (2, "label2")
+    @@ label (2, "label2")
+    @@ cbranch ~uses:[ name "b" ] LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
+    @@ label (3, "label3")
+    @@ instruction (assign ~src:(reg "b") ~dest:(reg "a"))
+    @@ branch (4, "label4")
+    @@ label (4, "label4")
+    @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
+    @@ branch (5, "label5")
+    @@ label (5, "label5")
+    @@ exit @@ focus_entry empty
+  in
+  let extra = Normalize.Cfg.precalculate_edges cfg in
+  let module Extra =
+    (val extra
+        : Graph.Extra with type graph = Normalize.Cfg.graph
+         and type label = Normalize.Target.label)
+  in
+  let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
+  let a_orig = Construct.calc_a_orig cfg in
+  let live = Construct.calc_live cfg in
+  let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
+  let cfg = Construct.rename_variables (module Dom) cfg in
+  let expected =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ branch (1, "label1")
+    @@ label (1, "label1")
+    @@ instruction (assign ~src:(reg' "x" 0) ~dest:(reg' "b" 1))
+    @@ instruction (assign ~src:(Const 0) ~dest:(reg' "a" 1))
+    @@ branch (2, "label2")
+    @@ label (2, "label2")
+    @@ cbranch
+         ~ifnot_args:[ name' "a" 1 ]
+         ~uses:[ name' "b" 1 ]
+         LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
+    @@ label (3, "label3")
+    @@ instruction (assign ~src:(reg' "b" 1) ~dest:(reg' "a" 2))
+    @@ branch ~args:[ name' "a" 2 ] (4, "label4")
+    @@ label ~args:[ name' "a" 3 ] (4, "label4")
+    @@ instruction
+         (bop Add ~dest:(reg' "c" 1) ~src1:(reg' "a" 3) ~src2:(reg' "b" 1))
+    @@ branch (5, "label5")
+    @@ label (5, "label5")
+    @@ exit @@ focus_entry empty
+  in
+  (check Normalize.Cfg.(testable pp_graph equal_graph))
+    "Produces proper graph" cfg expected
+
 let test_figure_19_4 () =
   let ast =
     Ast.
@@ -64,5 +123,8 @@ let _ =
   run "Test SSA construction for zipper CFG"
     [
       ( "Tests proper output",
-        [ test_case "figure 19.4" `Quick test_figure_19_4 ] );
+        [
+          test_case "figure 19.2" `Quick test_figure_19_2;
+          test_case "figure 19.4" `Quick test_figure_19_4;
+        ] );
     ]
