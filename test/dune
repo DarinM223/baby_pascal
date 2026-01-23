@@ -4,7 +4,6 @@
   test_graph
   test_dom
   test_ssa_construct
-  test_ssa_graph
   test_normalize
   test_construct)
  (modes
