@@ -167,7 +167,11 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
           (function
             | Reg reg -> Reg (replace_use reg)
             | Label (((uid, _) as l), args) -> begin
-              match Cfg.first @@ fst @@ Cfg.focus uid graph with
+              let first =
+                if Some l = label then first
+                else Cfg.first @@ fst @@ Cfg.focus uid graph
+              in
+              match first with
               | Cfg.Entry -> Label (l, args)
               | Cfg.Label (_, args') ->
                 (* handle call instructions to pass block parameters *)

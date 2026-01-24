@@ -33,8 +33,7 @@ let test_figure_19_2 () =
   in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
   let a_orig = Construct.calc_a_orig cfg in
-  let live = Construct.calc_live cfg in
-  let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
+  let cfg = Construct.insert_phis_minimal (module Dom) a_orig cfg in
   let cfg = Construct.rename_variables (module Dom) cfg in
   let expected =
     let open Normalize.Target in
@@ -63,7 +62,102 @@ let test_figure_19_2 () =
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" cfg expected
 
+let test_figure_19_3 () =
+  let cfg =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ branch (1, "label1")
+    @@ label (1, "label1")
+    @@ instruction (assign ~src:(Const 0) ~dest:(reg "a"))
+    @@ branch (2, "label2")
+    @@ label (2, "label2")
+    @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
+    @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "c") ~src2:(reg "b"))
+    @@ instruction (bop Mul ~dest:(reg "a") ~src1:(reg "b") ~src2:(Const 2))
+    @@ cbranch ~uses:[ name "a" ] LT ~ifso:(2, "label2") ~ifnot:(3, "label3")
+    @@ label (3, "label3")
+    @@ exit @@ focus_entry empty
+  in
+  let extra = Normalize.Cfg.precalculate_edges cfg in
+  let module Extra =
+    (val extra
+        : Graph.Extra with type graph = Normalize.Cfg.graph
+         and type label = Normalize.Target.label)
+  in
+  let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
+  let a_orig = Construct.calc_a_orig cfg in
+  let cfg = Construct.insert_phis_minimal (module Dom) a_orig cfg in
+  let cfg = Construct.rename_variables (module Dom) cfg in
+  let expected =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ branch (1, "label1")
+    @@ label (1, "label1")
+    @@ instruction (assign ~src:(Const 0) ~dest:(reg' "a" 1))
+    @@ branch ~args:[ name' "c" 0; name' "b" 0; name' "a" 1 ] (2, "label2")
+    @@ label ~args:[ name' "c" 1; name' "b" 1; name' "a" 2 ] (2, "label2")
+    @@ instruction
+         (bop Add ~dest:(reg' "b" 2) ~src1:(reg' "a" 2) ~src2:(Const 1))
+    @@ instruction
+         (bop Add ~dest:(reg' "c" 2) ~src1:(reg' "c" 1) ~src2:(reg' "b" 2))
+    @@ instruction
+         (bop Mul ~dest:(reg' "a" 3) ~src1:(reg' "b" 2) ~src2:(Const 2))
+    @@ cbranch
+         ~ifso_args:[ name' "c" 2; name' "b" 2; name' "a" 3 ]
+         ~uses:[ name' "a" 3 ]
+         LT ~ifso:(2, "label2") ~ifnot:(3, "label3")
+    @@ label (3, "label3")
+    @@ exit @@ focus_entry empty
+  in
+  (check Normalize.Cfg.(testable pp_graph equal_graph))
+    "Produces proper graph" cfg expected
+
 let test_figure_19_4 () =
+  let ast =
+    Ast.
+      [
+        Assign ("i", Int 1);
+        Assign ("j", Int 1);
+        Assign ("k", Int 0);
+        While
+          ( Bop (Lt, Var "k", Int 100),
+            [
+              If
+                ( Bop (Lt, Var "j", Int 20),
+                  [
+                    Assign ("j", Var "i");
+                    Assign ("k", Bop (Add, Var "k", Int 1));
+                  ],
+                  [
+                    Assign ("j", Var "k");
+                    Assign ("k", Bop (Add, Var "k", Int 2));
+                  ] );
+            ] );
+        Assign ("result", Var "j");
+      ]
+  in
+  let cfg = Normalize.normalize ast in
+  let extra = Normalize.Cfg.precalculate_edges cfg in
+  let module Extra =
+    (val extra
+        : Graph.Extra with type graph = Normalize.Cfg.graph
+         and type label = Normalize.Target.label)
+  in
+  let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
+  let a_orig = Construct.calc_a_orig cfg in
+  let cfg = Construct.insert_phis_minimal (module Dom) a_orig cfg in
+  let cfg = Construct.rename_variables (module Dom) cfg in
+  let expected =
+    (* let open Normalize.Target in *)
+    let open Normalize.Cfg in
+    empty
+  in
+  (check Normalize.Cfg.(testable pp_graph equal_graph))
+    "Produces proper graph" cfg expected
+
+let test_pruned () =
   let ast =
     Ast.
       [
@@ -125,6 +219,8 @@ let _ =
       ( "Tests proper output",
         [
           test_case "figure 19.2" `Quick test_figure_19_2;
+          test_case "figure 19.3" `Quick test_figure_19_3;
           test_case "figure 19.4" `Quick test_figure_19_4;
+          test_case "pruned" `Quick test_pruned;
         ] );
     ]
