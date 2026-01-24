@@ -147,12 +147,45 @@ let test_figure_19_4 () =
   in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
   let a_orig = Construct.calc_a_orig cfg in
-  let cfg = Construct.insert_phis_minimal (module Dom) a_orig cfg in
+  let live = Construct.calc_live cfg in
+  let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
   let cfg = Construct.rename_variables (module Dom) cfg in
   let expected =
-    (* let open Normalize.Target in *)
+    let open Normalize.Target in
     let open Normalize.Cfg in
-    empty
+    unfocus
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg' "i" 1))
+    @@ branch (9, "label9")
+    @@ label (1, "label1")
+    @@ exit
+    @@ label (2, "label2")
+    @@ instruction (assign ~src:(reg' "j" 2) ~dest:(reg' "result" 1))
+    @@ branch (1, "label1")
+    @@ label ~args:[ name' "k" 2; name' "j" 2 ] (3, "label3")
+    @@ cbranch ~uses:[ name' "k" 2 ] LT ~ifso:(4, "label4") ~ifnot:(2, "label2")
+    @@ label (4, "label4")
+    @@ cbranch ~uses:[ name' "j" 2 ] LT ~ifso:(5, "label5") ~ifnot:(6, "label6")
+    @@ label (5, "label5")
+    @@ instruction (assign ~src:(reg' "i" 1) ~dest:(reg' "j" 3))
+    @@ instruction
+         (bop Add ~dest:(reg' "tmp1" 1) ~src1:(reg' "k" 2) ~src2:(Const 1))
+    @@ instruction (assign ~src:(reg' "tmp1" 1) ~dest:(reg' "k" 3))
+    @@ branch ~args:[ name' "k" 3; name' "j" 3 ] (3, "label3")
+    @@ label (6, "label6")
+    @@ instruction (assign ~src:(reg' "k" 2) ~dest:(reg' "j" 4))
+    @@ instruction
+         (bop Add ~dest:(reg' "tmp0" 1) ~src1:(reg' "k" 2) ~src2:(Const 2))
+    @@ instruction (assign ~src:(reg' "tmp0" 1) ~dest:(reg' "k" 4))
+    @@ branch ~args:[ name' "k" 4; name' "j" 4 ] (3, "label3")
+    @@ label (7, "label7")
+    @@ branch ~args:[ name' "k" 1; name' "j" 1 ] (3, "label3")
+    @@ label (8, "label8")
+    @@ instruction (assign ~src:(Const 0) ~dest:(reg' "k" 1))
+    @@ branch (7, "label7")
+    @@ label (9, "label9")
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg' "j" 1))
+    @@ branch (8, "label8")
+    @@ focus_entry empty
   in
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" cfg expected
