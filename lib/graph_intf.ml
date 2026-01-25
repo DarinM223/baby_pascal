@@ -8,6 +8,7 @@ module IntHashtbl = Hashtbl.Make (Int)
 module type Target = sig
   type label
   type reg
+  type operand
   type instr
 
   type cond =
@@ -20,7 +21,7 @@ module type Target = sig
 
   val goto : label -> reg list -> instr
   val cbranch :
-    uses:reg list -> cond -> label -> reg list -> label -> reg list -> instr
+    args:operand list -> cond -> label -> reg list -> label -> reg list -> instr
   val return : uses:reg list -> instr
 
   val pp_reg : Format.formatter -> reg -> unit
@@ -168,7 +169,7 @@ module type S = sig
   val cbranch :
     ?ifso_args:regs ->
     ?ifnot_args:regs ->
-    uses:Target.reg list ->
+    args:Target.operand list ->
     Target.cond ->
     ifso:Target.label ->
     ifnot:Target.label ->

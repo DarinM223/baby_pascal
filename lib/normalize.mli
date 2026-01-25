@@ -11,11 +11,17 @@ module NameSet : sig
   val pp : Format.formatter -> t -> unit
 end
 module Target : sig
-  include Graph.Target with type label = int * string and type reg = Name.t
+  type label = int * string
+  type reg = Name.t
   type operand =
     | Const of int
     | Reg of reg
     | Label of label * reg list
+  include
+    Graph.Target
+      with type label := label
+       and type reg := reg
+       and type operand := operand
 
   val uses : instr -> NameSet.t
   val defs : instr -> NameSet.t
@@ -33,6 +39,7 @@ module Cfg :
     with type Target.label = Target.label
      and type Target.instr = Target.instr
      and type Target.reg = Target.reg
+     and type Target.operand = Target.operand
 module Flow : Dataflow.S with module G = Cfg
 
 val normalize : Ast.stmt list -> Cfg.graph

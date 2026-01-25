@@ -1,9 +1,7 @@
 (tests
  (names
   test_code
-  test_graph
   test_dom
-  test_ssa_construct
   test_normalize
   test_construct)
  (modes

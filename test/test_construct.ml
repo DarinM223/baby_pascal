@@ -15,7 +15,7 @@ let test_figure_19_2 () =
     @@ instruction (assign ~src:(Const 0) ~dest:(reg "a"))
     @@ branch (2, "label2")
     @@ label (2, "label2")
-    @@ cbranch ~uses:[ name "b" ] LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
+    @@ cbranch ~args:[ reg "b" ] LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
     @@ label (3, "label3")
     @@ instruction (assign ~src:(reg "b") ~dest:(reg "a"))
     @@ branch (4, "label4")
@@ -47,7 +47,7 @@ let test_figure_19_2 () =
     @@ label (2, "label2")
     @@ cbranch
          ~ifnot_args:[ name' "a" 1 ]
-         ~uses:[ name' "b" 1 ]
+         ~args:[ reg' "b" 1 ]
          LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
     @@ label (3, "label3")
     @@ instruction (assign ~src:(reg' "b" 1) ~dest:(reg' "a" 2))
@@ -75,7 +75,7 @@ let test_figure_19_3 () =
     @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
     @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "c") ~src2:(reg "b"))
     @@ instruction (bop Mul ~dest:(reg "a") ~src1:(reg "b") ~src2:(Const 2))
-    @@ cbranch ~uses:[ name "a" ] LT ~ifso:(2, "label2") ~ifnot:(3, "label3")
+    @@ cbranch ~args:[ reg "a" ] LT ~ifso:(2, "label2") ~ifnot:(3, "label3")
     @@ label (3, "label3")
     @@ exit @@ focus_entry empty
   in
@@ -106,7 +106,7 @@ let test_figure_19_3 () =
          (bop Mul ~dest:(reg' "a" 3) ~src1:(reg' "b" 2) ~src2:(Const 2))
     @@ cbranch
          ~ifso_args:[ name' "c" 2; name' "b" 2; name' "a" 3 ]
-         ~uses:[ name' "a" 3 ]
+         ~args:[ reg' "a" 3 ]
          LT ~ifso:(2, "label2") ~ifnot:(3, "label3")
     @@ label (3, "label3")
     @@ exit @@ focus_entry empty
@@ -162,9 +162,13 @@ let test_figure_19_4 () =
     @@ instruction (assign ~src:(reg' "j" 2) ~dest:(reg' "result" 1))
     @@ branch (1, "label1")
     @@ label ~args:[ name' "k" 2; name' "j" 2 ] (3, "label3")
-    @@ cbranch ~uses:[ name' "k" 2 ] LT ~ifso:(4, "label4") ~ifnot:(2, "label2")
+    @@ cbranch
+         ~args:[ reg' "k" 2; Const 100 ]
+         LT ~ifso:(4, "label4") ~ifnot:(2, "label2")
     @@ label (4, "label4")
-    @@ cbranch ~uses:[ name' "j" 2 ] LT ~ifso:(5, "label5") ~ifnot:(6, "label6")
+    @@ cbranch
+         ~args:[ reg' "j" 2; Const 20 ]
+         LT ~ifso:(5, "label5") ~ifnot:(6, "label6")
     @@ label (5, "label5")
     @@ instruction (assign ~src:(reg' "i" 1) ~dest:(reg' "j" 3))
     @@ instruction
@@ -221,7 +225,9 @@ let test_pruned () =
     let open Normalize.Target in
     let open Normalize.Cfg in
     unfocus
-    @@ cbranch ~uses:[ name' "i" 0 ] LT ~ifso:(6, "label6") ~ifnot:(7, "label7")
+    @@ cbranch
+         ~args:[ reg' "i" 0; Const 2 ]
+         LT ~ifso:(6, "label6") ~ifnot:(7, "label7")
     @@ label (1, "label1")
     @@ exit
     @@ label ~args:[ name' "z" 3 ] (2, "label2")
@@ -234,7 +240,9 @@ let test_pruned () =
     @@ instruction (assign ~src:(reg' "x" 0) ~dest:(reg' "z" 2))
     @@ branch ~args:[ name' "z" 2 ] (2, "label2")
     @@ label (5, "label5")
-    @@ cbranch ~uses:[ name' "i" 0 ] LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
+    @@ cbranch
+         ~args:[ reg' "i" 0; Const 2 ]
+         LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
     @@ label (6, "label6")
     @@ instruction (assign ~src:(Const 1) ~dest:(reg' "y" 1))
     @@ branch (5, "label5")

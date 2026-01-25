@@ -232,13 +232,13 @@ functor
       unreachable tail;
       ((head, Last (Branch (Target.goto label args, label))), graph)
 
-    let cbranch ?(ifso_args = []) ?(ifnot_args = []) ~uses cond ~ifso ~ifnot
+    let cbranch ?(ifso_args = []) ?(ifnot_args = []) ~args cond ~ifso ~ifnot
         ((head, tail), graph) =
       unreachable tail;
       ( ( head,
           Last
             (CBranch
-               ( Target.cbranch ~uses cond ifso ifso_args ifnot ifnot_args,
+               ( Target.cbranch ~args cond ifso ifso_args ifnot ifnot_args,
                  ifso,
                  ifnot )) ),
         graph )

@@ -65,7 +65,7 @@ module Target = struct
   let assign ~dest ~src = { op = ":="; srcs = [ src ]; dests = [ dest ] }
   let call f es = { op = "call"; srcs = Reg f :: es; dests = [] }
   let goto label args = { op = "j"; srcs = [ Label (label, args) ]; dests = [] }
-  let cbranch ~uses (cond : cond) l1 l1args l2 l2args =
+  let cbranch ~args (cond : cond) l1 l1args l2 l2args =
     let instr =
       match cond with
       | LT -> "jl"
@@ -77,10 +77,7 @@ module Target = struct
     in
     {
       op = instr;
-      srcs =
-        Label (l1, l1args)
-        :: Label (l2, l2args)
-        :: List.map (fun r -> Reg r) uses;
+      srcs = Label (l1, l1args) :: Label (l2, l2args) :: args;
       dests = [];
     }
   let return ~uses =
@@ -159,12 +156,7 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
       let* e1 = go_expr e1 in
       let* e2 = go_expr e2 in
       let cond = Target.cond_of_bop bop in
-      let uses =
-        List.append
-          (NameSet.to_list (Target.regset_of_operand e1))
-          (NameSet.to_list (Target.regset_of_operand e2))
-      in
-      Cfg.cbranch ~uses cond ~ifso:t ~ifnot:f
+      Cfg.cbranch ~args:[ e1; e2 ] cond ~ifso:t ~ifnot:f
     | _ -> failwith "Invalid expression for short circuiting"
   and go_call f es k =
     let rec go acc = function
