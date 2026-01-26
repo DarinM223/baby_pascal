@@ -10,7 +10,7 @@ functor
     type tree =
       | Leaf of label option
       | Node of label option * tree list
-    [@@deriving show]
+    [@@deriving show, eq]
 
     type node_type =
       | Undefined

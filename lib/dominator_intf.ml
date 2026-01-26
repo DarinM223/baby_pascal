@@ -8,6 +8,7 @@ module type S = sig
     | Node of label option * tree list
   val pp_tree : Format.formatter -> tree -> unit
   val show_tree : tree -> string
+  val equal_tree : tree -> tree -> bool
 
   val idom : position -> position
   val dominator_tree : tree Lazy.t
@@ -16,8 +17,12 @@ end
 
 module type Maker = functor
   (G : Graph.S)
-  (_ : Graph.Extra with type label = G.label and type graph = G.graph)
-  -> S with type label = G.label and type graph = G.graph
+  (E : Graph.Extra with type label = G.label and type graph = G.graph)
+  ->
+  S
+    with type position = E.position
+     and type label = G.label
+     and type graph = G.graph
 
 module type Intf = sig
   module type S = S

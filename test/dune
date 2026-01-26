@@ -1,8 +1,7 @@
 (tests
  (names
-  test_code
-  test_dom
   test_normalize
+  test_dominator
   test_construct)
  (modes
   (byte exe))

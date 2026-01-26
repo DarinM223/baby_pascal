@@ -35,9 +35,11 @@ module type Extra = sig
   type position
   type graph
   val pp_label : Format.formatter -> label -> unit
+  val equal_label : label -> label -> bool
   val position_of_int : int -> position
   val int_of_position : position -> int
   val pp_position : Format.formatter -> position -> unit
+  val equal_position : position -> position -> bool
   val size : int
   val label_of_position : position -> label option
   val position_of_label : label option -> position
