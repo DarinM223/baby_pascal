@@ -21,13 +21,6 @@ module Target = struct
     | Reg of reg
     | Label of label * reg list
   [@@deriving show, eq]
-  type instr = {
-    op : string;
-    srcs : operand list;
-    dests : operand list;
-  }
-  [@@deriving show, eq]
-
   type cond =
     | LT
     | LE
@@ -35,6 +28,18 @@ module Target = struct
     | GE
     | EQ
     | NE
+  [@@deriving show, eq]
+
+  (* destination goes before sources for operands *)
+  type instr =
+    | Assign of operand * operand
+    | Call of operand * operand * operand list
+    | Goto of label * reg list
+    | Cbranch of operand * operand * cond * label * reg list * label * reg list
+    | Return of operand list
+    | Uop of operand * Ast.uop * operand
+    | Bop of operand * Ast.bop * operand * operand
+  [@@deriving show, eq]
 
   let cond_of_bop = function
     | Ast.Lt -> LT
@@ -53,57 +58,76 @@ module Target = struct
   let name (s : string) : Name.t = (s, -1)
   let reg r = Reg (name r)
 
+  let srcs = function
+    | Assign (_, o) -> [ o ]
+    | Call (_, o1, o2) -> o1 :: o2
+    | Goto (l, args) -> [ Label (l, args) ]
+    | Cbranch (o1, o2, _, l1, l1args, l2, l2args) ->
+      [ Label (l1, l1args); Label (l2, l2args); o1; o2 ]
+    | Return o -> o
+    | Uop (_, _, o) -> [ o ]
+    | Bop (_, _, o1, o2) -> [ o1; o2 ]
+  let dests = function
+    | Assign (o, _) -> [ o ]
+    | Call (o, _, _) -> [ o ]
+    | Goto (_, _) -> []
+    | Cbranch (_, _, _, _, _, _, _) -> []
+    | Return _ -> []
+    | Uop (o, _, _) -> [ o ]
+    | Bop (o, _, _, _) -> [ o ]
+
   let uses instr =
-    instr.srcs |> List.map regset_of_operand
+    srcs instr |> List.map regset_of_operand
     |> List.fold_left NameSet.union NameSet.empty
   let defs instr =
-    instr.dests |> List.map regset_of_operand
+    dests instr |> List.map regset_of_operand
     |> List.fold_left NameSet.union NameSet.empty
-  let map_uses f instr = { instr with srcs = List.map f instr.srcs }
-  let map_defs f instr = { instr with dests = List.map f instr.dests }
+  let map_uses f = function
+    | Assign (d, s) -> Assign (d, f s)
+    | Call (d, sf, s) ->
+      let sf = f sf in
+      Call (d, sf, List.map f s)
+    | Goto (l, args) -> begin
+      match f (Label (l, args)) with
+      | Label (l, args) -> Goto (l, args)
+      | _ -> failwith "map_uses: goto label transformed into different operand"
+    end
+    | Cbranch (o1, o2, c, l1, l1args, l2, l2args) ->
+      let o1 = f o1 in
+      let o2 = f o2 in
+      let ol1 = f (Label (l1, l1args)) in
+      let ol2 = f (Label (l2, l2args)) in
+      begin match (ol1, ol2) with
+      | Label (l1, l1args), Label (l2, l2args) ->
+        Cbranch (o1, o2, c, l1, l1args, l2, l2args)
+      | _ ->
+        failwith "map_uses: cbranch label transformed into different operand"
+      end
+    | Return o -> Return (List.map f o)
+    | Uop (d, op, s) -> Uop (d, op, f s)
+    | Bop (d, op, s1, s2) ->
+      let s1 = f s1 in
+      Bop (d, op, s1, f s2)
+  let map_defs f = function
+    | Assign (d, s) -> Assign (f d, s)
+    | Call (d, sf, s) -> Call (f d, sf, s)
+    | Goto (l, args) -> Goto (l, args)
+    | Cbranch (o1, o2, c, l1, l1args, l2, l2args) ->
+      Cbranch (o1, o2, c, l1, l1args, l2, l2args)
+    | Return o -> Return o
+    | Uop (d, op, s) -> Uop (f d, op, s)
+    | Bop (d, op, s1, s2) -> Bop (f d, op, s1, s2)
 
-  let assign ~dest ~src = { op = ":="; srcs = [ src ]; dests = [ dest ] }
-  let call f es = { op = "call"; srcs = Reg f :: es; dests = [] }
-  let goto label args = { op = "j"; srcs = [ Label (label, args) ]; dests = [] }
+  let assign ~dest ~src = Assign (dest, src)
+  let call ~dest f es = Call (dest, f, es)
+  let goto label args = Goto (label, args)
   let cbranch ~args (cond : cond) l1 l1args l2 l2args =
-    let instr =
-      match cond with
-      | LT -> "jl"
-      | LE -> "jle"
-      | GT -> "jg"
-      | GE -> "jge"
-      | EQ -> "jz"
-      | NE -> "jnz"
-    in
-    {
-      op = instr;
-      srcs = Label (l1, l1args) :: Label (l2, l2args) :: args;
-      dests = [];
-    }
-  let return ~uses =
-    { op = "ret"; srcs = List.map (fun r -> Reg r) uses; dests = [] }
-  let uop op ~dest ~src =
-    let instr =
-      match op with
-      | Ast.Not -> "not"
-    in
-    { op = instr; srcs = [ src ]; dests = [ dest ] }
-  let bop (op : Ast.bop) ~dest ~src1 ~src2 =
-    let instr =
-      match op with
-      | Ast.Add -> "add"
-      | Ast.Sub -> "sub"
-      | Ast.Mul -> "mul"
-      | Ast.And -> "and"
-      | Ast.Or -> "or"
-      | Ast.Eq -> "eq"
-      | Ast.Neq -> "neq"
-      | Ast.Lt -> "lt"
-      | Ast.Le -> "le"
-      | Ast.Gt -> "gt"
-      | Ast.Ge -> "ge"
-    in
-    { op = instr; srcs = [ src1; src2 ]; dests = [ dest ] }
+    match args with
+    | [ o1; o2 ] -> Cbranch (o1, o2, cond, l1, l1args, l2, l2args)
+    | _ -> failwith "cbranch expects only two arguments currently"
+  let return ~uses = Return (List.map (fun r -> Reg r) uses)
+  let uop op ~dest ~src = Uop (dest, op, src)
+  let bop (op : Ast.bop) ~dest ~src1 ~src2 = Bop (dest, op, src1, src2)
 end
 
 module Cfg = Graph.Make (Target)
@@ -140,7 +164,7 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
       Fun.compose
         (Cfg.instruction (Target.bop bop ~src1:e1 ~src2:e2 ~dest:tmp))
         (k tmp)
-    | Ast.Call (f, es) -> go_call (Target.name f) es k
+    | Ast.Call (f, es) -> go_call (Target.reg f) es k
   and short_circuit t f = function
     | Ast.Bool b -> Cfg.branch (if b then t else f)
     | Ast.Uop (Ast.Not, e) -> short_circuit f t e
@@ -166,7 +190,7 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
       | [] ->
         let es = List.rev acc in
         let tmp = Target.Reg (fresh ()) in
-        Fun.compose (Cfg.instruction (Target.call f es)) (k tmp)
+        Fun.compose (Cfg.instruction (Target.call ~dest:tmp f es)) (k tmp)
     in
     go [] es
   and go_stmt (next : Cfg.label) = function
@@ -195,7 +219,7 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
         Cfg.label begin_label @@ short_circuit t next test @@ Cfg.label t
         @@ List.fold_right (go_stmt begin_label) body
         @@ Cfg.branch begin_label @@ zgraph
-    | Ast.Call (f, es) -> go_call (Target.name f) es Fun.(const id)
+    | Ast.Call (f, es) -> go_call (Target.reg f) es Fun.(const id)
   in
   Cfg.unfocus
   @@ List.fold_right

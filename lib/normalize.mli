@@ -30,7 +30,7 @@ module Target : sig
   val name : string -> reg
   val reg : string -> operand
   val assign : dest:operand -> src:operand -> instr
-  val call : reg -> operand list -> instr
+  val call : dest:operand -> operand -> operand list -> instr
   val uop : Ast.uop -> dest:operand -> src:operand -> instr
   val bop : Ast.bop -> dest:operand -> src1:operand -> src2:operand -> instr
 end

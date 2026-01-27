@@ -1,7 +1,7 @@
 type typ =
   | TInteger
   | TBoolean
-type uop = Not
+type uop = Not [@@deriving show, eq]
 type bop =
   | Add
   | Sub
@@ -14,6 +14,7 @@ type bop =
   | Le
   | Gt
   | Ge
+[@@deriving show, eq]
 
 type expr =
   | Int of int

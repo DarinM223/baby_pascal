@@ -3,13 +3,14 @@ open Baby_pascal
 
 let test_dom () =
   let cfg =
+    let open Normalize.Target in
     let open Normalize.Cfg in
     unfocus
     @@ branch (2, "")
     @@ label (2, "")
-    @@ cbranch ~args:[] EQ ~ifso:(3, "") ~ifnot:(4, "")
+    @@ cbranch ~args:[ reg "a"; Const 2 ] EQ ~ifso:(3, "") ~ifnot:(4, "")
     @@ label (3, "")
-    @@ cbranch ~args:[] EQ ~ifso:(5, "") ~ifnot:(6, "")
+    @@ cbranch ~args:[ reg "b"; Const 1 ] EQ ~ifso:(5, "") ~ifnot:(6, "")
     @@ label (4, "")
     @@ return ~uses:[]
     @@ label (5, "")

@@ -15,7 +15,9 @@ let test_figure_19_2 () =
     @@ instruction (assign ~src:(Const 0) ~dest:(reg "a"))
     @@ branch (2, "label2")
     @@ label (2, "label2")
-    @@ cbranch ~args:[ reg "b" ] LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
+    @@ cbranch
+         ~args:[ reg "b"; Const 4 ]
+         LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
     @@ label (3, "label3")
     @@ instruction (assign ~src:(reg "b") ~dest:(reg "a"))
     @@ branch (4, "label4")
@@ -47,7 +49,7 @@ let test_figure_19_2 () =
     @@ label (2, "label2")
     @@ cbranch
          ~ifnot_args:[ name' "a" 1 ]
-         ~args:[ reg' "b" 1 ]
+         ~args:[ reg' "b" 1; Const 4 ]
          LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
     @@ label (3, "label3")
     @@ instruction (assign ~src:(reg' "b" 1) ~dest:(reg' "a" 2))
@@ -75,7 +77,9 @@ let test_figure_19_3 () =
     @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
     @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "c") ~src2:(reg "b"))
     @@ instruction (bop Mul ~dest:(reg "a") ~src1:(reg "b") ~src2:(Const 2))
-    @@ cbranch ~args:[ reg "a" ] LT ~ifso:(2, "label2") ~ifnot:(3, "label3")
+    @@ cbranch
+         ~args:[ reg "a"; Const 10 ]
+         LT ~ifso:(2, "label2") ~ifnot:(3, "label3")
     @@ label (3, "label3")
     @@ exit @@ focus_entry empty
   in
@@ -106,7 +110,7 @@ let test_figure_19_3 () =
          (bop Mul ~dest:(reg' "a" 3) ~src1:(reg' "b" 2) ~src2:(Const 2))
     @@ cbranch
          ~ifso_args:[ name' "c" 2; name' "b" 2; name' "a" 3 ]
-         ~args:[ reg' "a" 3 ]
+         ~args:[ reg' "a" 3; Const 10 ]
          LT ~ifso:(2, "label2") ~ifnot:(3, "label3")
     @@ label (3, "label3")
     @@ exit @@ focus_entry empty
