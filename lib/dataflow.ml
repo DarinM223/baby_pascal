@@ -162,5 +162,8 @@ functor
         in
         rewrite_blocks changed G.empty
           (List.rev (G.reverse_postorder_dfs graph))
+
+      let solve_and_rewrite pass graph entry =
+        solve_and_rewrite pass graph entry false
     end
   end

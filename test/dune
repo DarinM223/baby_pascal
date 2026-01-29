@@ -2,7 +2,8 @@
  (names
   test_normalize
   test_dominator
-  test_construct)
+  test_construct
+  test_deadcode)
  (modes
   (byte exe))
  (flags (:standard))

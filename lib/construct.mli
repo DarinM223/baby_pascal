@@ -1,3 +1,4 @@
+val name_fact : unit -> Normalize.NameSet.t Normalize.Flow.fact
 type liveness = {
   live_in : Normalize.Cfg.uid -> Normalize.NameSet.t;
   live_out : Normalize.Cfg.uid -> Normalize.NameSet.t;

@@ -34,8 +34,7 @@ module type S = sig
     }
     type 'a t = 'a fact * 'a functions
     val solve_graph : 'a t -> G.graph -> 'a -> 'a
-    val solve_and_rewrite :
-      'a t -> G.graph -> 'a -> bool -> 'a * (G.graph * bool)
+    val solve_and_rewrite : 'a t -> G.graph -> 'a -> 'a * (G.graph * bool)
   end
 end
 
