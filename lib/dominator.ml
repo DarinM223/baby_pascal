@@ -65,9 +65,10 @@ functor
       done;
       doms
 
-    let dominator_tree =
+    let dominator_tree_at =
       lazy begin
         let children_mapping = Array.make Extra.size IntSet.empty in
+        let node_mapping = Array.make Extra.size (Leaf None) in
         let add_children block =
           let parent = Extra.int_of_position (idom block) in
           children_mapping.(parent) <-
@@ -82,7 +83,10 @@ functor
           in
           let rec go acc children =
             match children with
-            | [] -> k (Node (Extra.label_of_position node, List.rev acc))
+            | [] ->
+              let tree = Node (Extra.label_of_position node, List.rev acc) in
+              node_mapping.(Extra.int_of_position node) <- tree;
+              k tree
             | c :: cs -> build_tree c (fun tree -> go (tree :: acc) cs)
           in
           match children with
@@ -93,8 +97,12 @@ functor
           (fun _ block ->
             block |> G.block_label |> Extra.position_of_label |> add_children)
           Extra.graph;
-        build_tree (Extra.position_of_label None) (fun t -> t)
+        build_tree
+          (Extra.position_of_label None)
+          (Fun.const (fun p -> node_mapping.(Extra.int_of_position p)))
       end
+    let dominator_tree =
+      Lazy.map (fun f -> f (Extra.position_of_label None)) dominator_tree_at
 
     let dominator_frontier =
       lazy begin

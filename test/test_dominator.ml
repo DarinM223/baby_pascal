@@ -50,6 +50,17 @@ let test_dom () =
   in
   (check Dom.(testable pp_tree equal_tree))
     "Produces proper dominator tree" tree expected;
+  let tree =
+    Lazy.force Dom.dominator_tree_at (Extra.position_of_label (Some (3, "")))
+  in
+  let expected =
+    Dom.(
+      Node
+        ( Some (3, ""),
+          [ Leaf (Some (5, "")); Leaf (Some (6, "")); Leaf (Some (7, "")) ] ))
+  in
+  (check Dom.(testable pp_tree equal_tree))
+    "Produces proper dominator subtree" tree expected;
   let df = Lazy.force Dom.dominator_frontier in
   let labels =
     [

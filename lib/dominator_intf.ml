@@ -12,6 +12,7 @@ module type S = sig
 
   val idom : position -> position
   val dominator_tree : tree Lazy.t
+  val dominator_tree_at : (position -> tree) Lazy.t
   val dominator_frontier : (position -> position list) Lazy.t
 end
 
