@@ -1,20 +1,79 @@
 open Alcotest
 open Baby_pascal
 
-let test_example_1 () =
+let test_simple () =
   let cfg =
-    (* let open Normalize.Target in *)
+    let open Normalize.Target in
     let open Normalize.Cfg in
-    unfocus @@ focus_entry empty
+    unfocus
+    @@ instruction (assign ~src:(reg "x") ~dest:(reg "a"))
+    @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
+    @@ instruction (assign ~src:(reg "x") ~dest:(reg "c"))
+    @@ instruction (bop Add ~dest:(reg "d") ~src1:(reg "c") ~src2:(Const 1))
+    @@ return ~uses:[ name "b" ]
+    @@ focus_entry empty
   in
   let expected =
-    (* let open Normalize.Target in *)
+    let open Normalize.Target in
     let open Normalize.Cfg in
-    unfocus @@ focus_entry empty
+    unfocus
+    @@ instruction (assign ~src:(reg "x") ~dest:(reg "a"))
+    @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
+    @@ return ~uses:[ name "b" ]
+    @@ focus_entry empty
   in
+  let cfg, changed = Deadcode.deadcode cfg in
+  (check bool) "Graph changed" changed true;
+  (check Normalize.Cfg.(testable pp_graph equal_graph))
+    "Produces proper graph" cfg expected
+
+let test_branch () =
+  let cfg =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ instruction (assign ~src:(reg "x") ~dest:(reg "a"))
+    @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
+    @@ instruction (assign ~src:(reg "x") ~dest:(reg "c"))
+    @@ instruction (bop Add ~dest:(reg "d") ~src1:(reg "c") ~src2:(Const 1))
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg "e"))
+    @@ instruction (assign ~src:(Const 2) ~dest:(reg "f"))
+    @@ cbranch ~args:[ reg "f"; Const 0 ] EQ ~ifso:(1, "") ~ifnot:(2, "")
+    @@ label (1, "")
+    @@ instruction (bop Add ~dest:(reg "g") ~src1:(reg "a") ~src2:(Const 1))
+    @@ return ~uses:[ name "b" ]
+    @@ label (2, "")
+    @@ instruction (bop Add ~dest:(reg "h") ~src1:(reg "c") ~src2:(Const 1))
+    @@ return ~uses:[ name "d" ]
+    @@ focus_entry empty
+  in
+  let expected =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ instruction (assign ~src:(reg "x") ~dest:(reg "a"))
+    @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
+    @@ instruction (assign ~src:(reg "x") ~dest:(reg "c"))
+    @@ instruction (bop Add ~dest:(reg "d") ~src1:(reg "c") ~src2:(Const 1))
+    @@ instruction (assign ~src:(Const 2) ~dest:(reg "f"))
+    @@ cbranch ~args:[ reg "f"; Const 0 ] EQ ~ifso:(1, "") ~ifnot:(2, "")
+    @@ label (1, "")
+    @@ return ~uses:[ name "b" ]
+    @@ label (2, "")
+    @@ return ~uses:[ name "d" ]
+    @@ focus_entry empty
+  in
+  let cfg, changed = Deadcode.deadcode cfg in
+  (check bool) "Graph changed" changed true;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" cfg expected
 
 let _ =
   run "Dead code elimination"
-    [ ("Tests proper output", [ test_case "example 1" `Quick test_example_1 ]) ]
+    [
+      ( "Tests proper output",
+        [
+          test_case "no control flow" `Quick test_simple;
+          test_case "branch" `Quick test_branch;
+        ] );
+    ]
