@@ -10,6 +10,7 @@ functor
       init_info : 'a;
       add_info : 'a -> 'a -> 'a;
       changed : before:'a -> after:'a -> bool;
+      skip_block : G.uid -> bool;
       get : G.uid -> 'a;
       set : G.uid -> 'a -> unit;
     }
@@ -28,7 +29,7 @@ functor
     let run fact changed entry_fact f blocks =
       let rec iterate n =
         changed := false;
-        List.iter f blocks;
+        List.iter (fun b -> if not (fact.skip_block (G.id b)) then f b) blocks;
         if !changed then
           if n < 1000 then iterate (n + 1) else failwith "didn't converge"
         else n
@@ -150,15 +151,20 @@ functor
                   failwith "rewriting a label in backwards dataflow"
               end
             in
-            let head, last = G.(goto_end (unzip b)) in
-            begin match pass_fns.last_in last with
-            | Dataflow a -> propagate head a (G.Last last) rewritten changed
-            | Rewrite g ->
-              let a, (g, _) = solve_and_rewrite pass g fact.init_info changed in
-              let t, g = G.remove_entry g in
-              let rewritten = G.Blocks.union g rewritten in
-              propagate head a t rewritten true
-            end
+            if fact.skip_block (G.id b) then
+              rewrite_blocks changed (G.Blocks.insert b rewritten) bs
+            else
+              let head, last = G.(goto_end (unzip b)) in
+              begin match pass_fns.last_in last with
+              | Dataflow a -> propagate head a (G.Last last) rewritten changed
+              | Rewrite g ->
+                let a, (g, _) =
+                  solve_and_rewrite pass g fact.init_info changed
+                in
+                let t, g = G.remove_entry g in
+                let rewritten = G.Blocks.union g rewritten in
+                propagate head a t rewritten true
+              end
         in
         rewrite_blocks changed G.empty
           (List.rev (G.reverse_postorder_dfs graph))

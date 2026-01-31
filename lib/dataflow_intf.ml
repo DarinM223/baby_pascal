@@ -5,6 +5,7 @@ module type S = sig
     init_info : 'a;
     add_info : 'a -> 'a -> 'a;
     changed : before:'a -> after:'a -> bool;
+    skip_block : G.uid -> bool;
     get : G.uid -> 'a;
     set : G.uid -> 'a -> unit;
   }

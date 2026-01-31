@@ -30,6 +30,7 @@ let name_fact () =
     Flow.init_info = NameSet.empty;
     add_info = NameSet.union;
     changed = (fun ~before ~after -> NameSet.(cardinal after > cardinal before));
+    skip_block = Fun.const false;
     get = IntHashtbl.find store;
     set = IntHashtbl.add store;
   }
