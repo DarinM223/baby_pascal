@@ -24,7 +24,7 @@ module type S = sig
       last_in : G.last -> 'a;
     }
     type 'a t = 'a fact * 'a functions
-    val run : 'a fact * 'a functions -> G.graph -> int
+    val run : 'a t -> G.graph -> int
   end
 
   module BackwardPass : sig
@@ -32,6 +32,25 @@ module type S = sig
       first_in : 'a -> G.first -> 'a answer;
       middle_in : 'a -> G.middle -> 'a answer;
       last_in : G.last -> 'a answer;
+    }
+    type 'a t = 'a fact * 'a functions
+    val solve_graph : 'a t -> G.graph -> 'a -> 'a
+    val solve_and_rewrite : 'a t -> G.graph -> 'a -> 'a * (G.graph * bool)
+  end
+
+  module ForwardAnalysis : sig
+    type 'a functions = {
+      middle_out : 'a -> G.middle -> 'a;
+      last_outs : 'a -> G.last -> (G.uid -> 'a -> unit) -> unit;
+    }
+    type 'a t = 'a fact * 'a functions
+    val run : entry_fact:'a -> 'a t -> G.graph -> int
+  end
+
+  module ForwardPass : sig
+    type 'a functions = {
+      middle_out : 'a -> G.middle -> 'a answer;
+      last_outs : 'a -> G.last -> ((G.uid -> 'a -> unit) -> unit) answer;
     }
     type 'a t = 'a fact * 'a functions
     val solve_graph : 'a t -> G.graph -> 'a -> 'a
