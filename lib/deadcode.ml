@@ -23,6 +23,7 @@ let deadcode graph =
   in
   let pass =
     {
+      (* todo: remove unused block args *)
       Flow.BackwardPass.first_in = (fun a _ -> Dataflow a);
       middle_in = (fun a (Instruction instr) -> handle_middle instr a);
       last_in = (fun l -> Dataflow (calc_live_out l));
