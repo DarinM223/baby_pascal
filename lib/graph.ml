@@ -79,6 +79,13 @@ functor
       | head, Last last -> (head, last)
       | head, Tail (mid, tail) -> goto_end (Head (head, mid), tail)
 
+    let rec map_first f = function
+      | First first, tail -> (First (f first), tail)
+      | Head (head, mid), tail -> map_first f (head, Tail (mid, tail))
+    let rec map_last f = function
+      | head, Last last -> (head, Last (f last))
+      | head, Tail (mid, tail) -> map_last f (Head (head, mid), tail)
+
     let focus uid graph =
       let block = IntMap.find uid graph in
       (unzip block, IntMap.remove uid graph)

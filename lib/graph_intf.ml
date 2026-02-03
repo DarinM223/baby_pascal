@@ -147,6 +147,8 @@ module type S = sig
   val last : zblock -> last
   val goto_start : zblock -> first * tail
   val goto_end : zblock -> head * last
+  val map_first : (first -> first) -> zblock -> zblock
+  val map_last : (last -> last) -> zblock -> zblock
 
   val focus_entry : graph -> zgraph
   val focus_exit : graph -> zgraph
