@@ -10,7 +10,7 @@ functor
     let entry_uid = 0
 
     type label = uid * string [@@deriving show, eq]
-    type regs = Target.reg list [@@deriving show, eq]
+    type regs = Target.regs [@@deriving show, eq]
 
     type info = {
       local : bool;

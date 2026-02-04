@@ -8,6 +8,7 @@ module IntHashtbl = Hashtbl.Make (Int)
 module type Target = sig
   type label
   type reg
+  type regs = reg list
   type operand
   type instr
 
@@ -28,6 +29,9 @@ module type Target = sig
   val equal_reg : reg -> reg -> bool
   val pp_instr : Format.formatter -> instr -> unit
   val equal_instr : instr -> instr -> bool
+  val pp_regs : Format.formatter -> regs -> unit
+  val show_regs : regs -> string
+  val equal_regs : regs -> regs -> bool
 end
 
 module type Extra = sig

@@ -2,6 +2,8 @@ module Name : sig
   type t
   val pp : Format.formatter -> t -> unit
   val equal : t -> t -> bool
+  val tombstone : t
+  val is_tombstone : t -> bool
   val label : t -> string
   val index : t -> int
   val update_index : int -> t -> t

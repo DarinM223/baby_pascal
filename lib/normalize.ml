@@ -1,11 +1,17 @@
 module Name = struct
   type t = string * int [@@deriving eq, ord]
-  let pp fmt = function
-    | s, -1 -> Format.pp_print_string fmt s
-    | s, d -> Format.fprintf fmt "%s_%d" s d
+
+  let tombstone = ("", -999)
+  let is_tombstone n = n == tombstone
+  let pp fmt n =
+    if is_tombstone n then Format.pp_print_string fmt "tombstone"
+    else
+      match n with
+      | s, -1 -> Format.pp_print_string fmt s
+      | s, d -> Format.fprintf fmt "%s_%d" s d
   let label (s, _) = s
   let index (_, i) = i
-  let update_index i (s, _) = (s, i)
+  let update_index i ((s, _) as n) = if is_tombstone n then n else (s, i)
 end
 
 module NameSet = struct
@@ -16,10 +22,19 @@ end
 module Target = struct
   type label = int * string [@@deriving show, eq]
   type reg = Name.t [@@deriving show, eq]
+  type regs = reg list [@@deriving show, eq]
+  let pp_regs fmt regs =
+    pp_regs fmt @@ List.filter (fun n -> not (Name.is_tombstone n)) regs
+  let show_regs regs =
+    show_regs @@ List.filter (fun n -> not (Name.is_tombstone n)) regs
+  let equal_regs a b =
+    equal_regs
+      (List.filter (fun n -> not (Name.is_tombstone n)) a)
+      (List.filter (fun n -> not (Name.is_tombstone n)) b)
   type operand =
     | Const of int
     | Reg of reg
-    | Label of label * reg list
+    | Label of label * regs
   [@@deriving show, eq]
   type cond =
     | LT
@@ -34,8 +49,8 @@ module Target = struct
   type instr =
     | Assign of operand * operand
     | Call of operand * operand * operand list
-    | Goto of label * reg list
-    | Cbranch of operand * operand * cond * label * reg list * label * reg list
+    | Goto of label * regs
+    | Cbranch of operand * operand * cond * label * regs * label * regs
     | Return of operand list
     | Uop of operand * Ast.uop * operand
     | Bop of operand * Ast.bop * operand * operand
@@ -52,8 +67,10 @@ module Target = struct
 
   let regset_of_operand = function
     | Const _ -> NameSet.empty
-    | Label (_, args) -> NameSet.of_list args
-    | Reg reg -> NameSet.singleton reg
+    | Label (_, args) ->
+      NameSet.of_list (List.filter (fun n -> not (Name.is_tombstone n)) args)
+    | Reg reg ->
+      if Name.is_tombstone reg then NameSet.empty else NameSet.singleton reg
 
   let name (s : string) : Name.t = (s, -1)
   let reg r = Reg (name r)
@@ -82,7 +99,12 @@ module Target = struct
   let defs instr =
     dests instr |> List.map regset_of_operand
     |> List.fold_left NameSet.union NameSet.empty
-  let map_uses f = function
+  let map_uses f =
+    let f = function
+      | Reg reg when Name.is_tombstone reg -> Reg reg
+      | operand -> f operand
+    in
+    function
     | Assign (d, s) -> Assign (d, f s)
     | Call (d, sf, s) ->
       let sf = f sf in
@@ -108,7 +130,12 @@ module Target = struct
     | Bop (d, op, s1, s2) ->
       let s1 = f s1 in
       Bop (d, op, s1, f s2)
-  let map_defs f = function
+  let map_defs f =
+    let f = function
+      | Reg reg when Name.is_tombstone reg -> Reg reg
+      | operand -> f operand
+    in
+    function
     | Assign (d, s) -> Assign (f d, s)
     | Call (d, sf, s) -> Call (f d, sf, s)
     | Goto (l, args) -> Goto (l, args)

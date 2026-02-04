@@ -16,12 +16,13 @@ let test_figure_19_2 () =
     @@ branch (2, "label2")
     @@ label (2, "label2")
     @@ cbranch
+         ~ifnot_args:[ Normalize.Name.tombstone ]
          ~args:[ reg "b"; Const 4 ]
          LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
     @@ label (3, "label3")
     @@ instruction (assign ~src:(reg "b") ~dest:(reg "a"))
-    @@ branch (4, "label4")
-    @@ label (4, "label4")
+    @@ branch ~args:[ Normalize.Name.tombstone ] (4, "label4")
+    @@ label ~args:[ Normalize.Name.tombstone ] (4, "label4")
     @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
     @@ branch (5, "label5")
     @@ label (5, "label5")
