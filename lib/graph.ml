@@ -79,12 +79,21 @@ functor
       | head, Last last -> (head, last)
       | head, Tail (mid, tail) -> goto_end (Head (head, mid), tail)
 
-    let rec map_first f = function
-      | First first, tail -> (First (f first), tail)
-      | Head (head, mid), tail -> map_first f (head, Tail (mid, tail))
-    let rec map_last f = function
-      | head, Last last -> (head, Last (f last))
-      | head, Tail (mid, tail) -> map_last f (Head (head, mid), tail)
+    let map_first f (head, tail) =
+      let rec go head k =
+        match head with
+        | First first -> k (First (f first))
+        | Head (head, mid) -> go head (fun head -> k (Head (head, mid)))
+      in
+      go head (fun head -> (head, tail))
+
+    let rec map_last f (head, tail) =
+      let rec go tail k =
+        match tail with
+        | Last last -> k (Last (f last))
+        | Tail (mid, tail) -> go tail (fun tail -> k (Tail (mid, tail)))
+      in
+      go tail (fun tail -> (head, tail))
 
     let focus uid graph =
       let block = IntMap.find uid graph in

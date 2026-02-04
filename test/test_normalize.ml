@@ -60,6 +60,60 @@ let test_example_1 () =
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" result expected
 
+let test_map_first_last () =
+  let open Normalize.Target in
+  let open Normalize.Cfg in
+  let cfg =
+    unfocus
+    @@ label (1, "")
+    @@ instruction (assign ~src:(Const 60) ~dest:(reg "result"))
+    @@ branch (2, "")
+    @@ label (2, "")
+    @@ exit @@ focus_entry empty
+  in
+  let zblock, rest = focus 1 cfg in
+  (* move to the right *)
+  let zblock =
+    match zblock with
+    | head, Tail (mid, tail) -> (Head (head, mid), tail)
+    | head, Last last -> (head, Last last)
+  in
+  let handle_first = function
+    | Entry -> Entry
+    | Label (label, info) ->
+      Label (label, { info with args = [ name "a"; name "b" ] })
+  in
+  let handle_last = function
+    | Exit -> Exit
+    | Branch (_, l) -> Branch (goto l [ name "a"; name "b" ], l)
+    | CBranch (_, _, _) -> failwith ""
+    | Return (_, _) -> failwith ""
+  in
+  let zblock = map_last handle_last (map_first handle_first zblock) in
+  let expected =
+    ( Head
+        ( First
+            (Label ((1, ""), { local = false; args = [ name "a"; name "b" ] })),
+          Instruction (assign ~src:(Const 60) ~dest:(reg "result")) ),
+      Last (Branch (goto (2, "") [ name "a"; name "b" ], (2, ""))) )
+  in
+  (check (testable pp_zblock equal_zblock))
+    "Produces proper zipper" zblock expected;
+  let cfg = unfocus (zblock, rest) in
+  let expected =
+    unfocus
+    @@ label ~args:[ name "a"; name "b" ] (1, "")
+    @@ instruction (assign ~src:(Const 60) ~dest:(reg "result"))
+    @@ branch ~args:[ name "a"; name "b" ] (2, "")
+    @@ label (2, "")
+    @@ exit @@ focus_entry empty
+  in
+  (check (testable pp_graph equal_graph)) "Produces proper graph" cfg expected
+
 let _ =
   run "Normalize to zipper cfg"
-    [ ("Tests proper output", [ test_case "example 1" `Quick test_example_1 ]) ]
+    [
+      ("Tests proper output", [ test_case "example 1" `Quick test_example_1 ]);
+      ( "Tests zipper operations",
+        [ test_case "map_first and map_last" `Quick test_map_first_last ] );
+    ]
