@@ -147,8 +147,21 @@ functor
                 match pass_fns.first_in a f with
                 | Dataflow _ ->
                   rewrite_blocks changed (G.Blocks.insert (f, t) rewritten) bs
-                | Rewrite _ ->
-                  failwith "rewriting a label in backwards dataflow"
+                | Rewrite g -> begin
+                  try
+                    let (h, t'), _ =
+                      match f with
+                      | G.Entry -> G.focus_entry g
+                      | G.Label ((uid, _), _) -> G.focus uid g
+                    in
+                    let g = G.(unfocus ((First Entry, t'), empty)) in
+                    let a, (g, _) = solve_and_rewrite pass g a changed in
+                    let t, g = G.splice_tail g t in
+                    let rewritten = G.Blocks.union g rewritten in
+                    propagate h a t rewritten true
+                  with Not_found ->
+                    failwith "rewriting a label in backwards dataflow"
+                end
               end
             in
             if fact.skip_block (G.id b) then

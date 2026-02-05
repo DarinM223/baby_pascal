@@ -68,6 +68,40 @@ let test_branch () =
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" cfg expected
 
+let test_block_args () =
+  let cfg =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ instruction (assign ~src:(Const 2) ~dest:(reg "c"))
+    @@ instruction (assign ~src:(Const 3) ~dest:(reg "b"))
+    @@ branch ~args:[ name "a"; name "b"; name "c" ] (1, "")
+    @@ label ~args:[ name "d"; name "e"; name "f" ] (1, "")
+    @@ cbranch ~args:[ reg "e"; Const 0 ] EQ ~ifso:(2, "") ~ifnot:(3, "")
+    @@ label (2, "")
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg "g"))
+    @@ branch ~args:[ name "g"; name "h"; name "i" ] (1, "")
+    @@ label (3, "")
+    @@ exit @@ focus_entry empty
+  in
+  let expected =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ instruction (assign ~src:(Const 3) ~dest:(reg "b"))
+    @@ branch ~args:[ name "b" ] (1, "")
+    @@ label ~args:[ name "e" ] (1, "")
+    @@ cbranch ~args:[ reg "e"; Const 0 ] EQ ~ifso:(2, "") ~ifnot:(3, "")
+    @@ label (2, "")
+    @@ branch ~args:[ name "h" ] (1, "")
+    @@ label (3, "")
+    @@ exit @@ focus_entry empty
+  in
+  let cfg, changed = Deadcode.deadcode cfg in
+  (check bool) "Graph changed" changed true;
+  (check Normalize.Cfg.(testable pp_graph equal_graph))
+    "Produces proper graph" cfg expected
+
 let _ =
   run "Dead code elimination"
     [
@@ -75,5 +109,6 @@ let _ =
         [
           test_case "no control flow" `Quick test_simple;
           test_case "branch" `Quick test_branch;
+          test_case "block arguments" `Quick test_block_args;
         ] );
     ]
