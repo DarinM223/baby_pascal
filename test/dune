@@ -3,7 +3,8 @@
   test_normalize
   test_dominator
   test_construct
-  test_deadcode)
+  test_deadcode
+  test_constprop)
  (modes
   (byte exe))
  (flags (:standard))

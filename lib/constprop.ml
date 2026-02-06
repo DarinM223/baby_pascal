@@ -60,7 +60,14 @@ let block_args graph =
     | Cfg.Entry -> a
     | Cfg.Label ((uid, _), info) ->
       IntHashtbl.replace args_tbl uid info.args;
-      List.fold_left (fun a arg -> NameMap.add arg NameSet.empty a) a info.args
+      List.fold_left
+        (fun a arg ->
+          NameMap.update arg
+            (function
+              | None -> Some NameSet.empty
+              | Some a -> Some a)
+            a)
+        a info.args
   in
   let handle_last =
     let go_use (a : NameSet.t NameMap.t) = function
