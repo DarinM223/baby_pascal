@@ -1,6 +1,7 @@
 module Cfg = Normalize.Cfg
 module IntHashtbl = Hashtbl.Make (Int)
 module Flow = Normalize.Flow
+module Target = Normalize.Target
 module Name = Normalize.Name
 module NameMap = struct
   include CCMap.Make (struct
@@ -54,18 +55,45 @@ let block_args_fact () =
 
 let block_args graph =
   let fact = block_args_fact () in
+  let args_tbl = IntHashtbl.create hashtbl_size in
   let handle_first a = function
     | Cfg.Entry -> a
-    | Cfg.Label (_, info) ->
+    | Cfg.Label ((uid, _), info) ->
+      IntHashtbl.replace args_tbl uid info.args;
       List.fold_left (fun a arg -> NameMap.add arg NameSet.empty a) a info.args
+  in
+  let handle_last =
+    let go_use (a : NameSet.t NameMap.t) = function
+      | Target.Label ((uid, _), args) -> begin
+        try
+          let args' = IntHashtbl.find args_tbl uid in
+          List.fold_left
+            (fun a (arg', arg) ->
+              NameMap.update arg'
+                (function
+                  | None -> Some (NameSet.singleton arg)
+                  | Some set -> Some (NameSet.add arg set))
+                a)
+            a (List.combine args' args)
+        with Not_found -> a
+      end
+      | _ -> a
+    in
+    function
+    | Cfg.Exit -> NameMap.empty
+    | Cfg.Branch (i, (uid, _)) ->
+      List.fold_left go_use (fact.get uid) (Target.srcs i)
+    | Cfg.CBranch (i, (uid1, _), (uid2, _)) ->
+      List.fold_left go_use
+        (fact.add_info (fact.get uid1) (fact.get uid2))
+        (Target.srcs i)
+    | Cfg.Return (_, _) -> NameMap.empty
   in
   let analysis =
     {
       Flow.BackwardAnalysis.first_in = handle_first;
-      (* todo: calls add to args set *)
       middle_in = (fun a _ -> a);
-      (* todo: merge maps of successors *)
-      last_in = (fun _ -> NameMap.empty);
+      last_in = handle_last;
     }
   in
   let analysis = (fact, analysis) in

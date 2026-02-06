@@ -25,6 +25,8 @@ module Target : sig
        and type reg := reg
        and type operand := operand
 
+  val srcs : instr -> operand list
+  val dests : instr -> operand list
   val uses : instr -> NameSet.t
   val defs : instr -> NameSet.t
   val map_uses : (operand -> operand) -> instr -> instr
