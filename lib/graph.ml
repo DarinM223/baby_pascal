@@ -134,8 +134,8 @@ functor
         | Last l -> (head, l)
         | Tail (m, l) -> ht_to_last (Head (head, m)) l
 
-      let prepare_for_splicing graph ~single ~multi =
-        let (_, entry_tail), graph = focus_entry graph in
+      let prepare_for_splicing ?(entry = entry_uid) graph ~single ~multi =
+        let (_, entry_tail), graph = focus entry graph in
         if IntMap.is_empty graph then
           match lastt entry_tail with
           | Exit -> single entry_tail
@@ -159,7 +159,7 @@ functor
       in
       prepare_for_splicing graph ~single ~multi
 
-    let splice_tail graph tail =
+    let splice_tail ?(entry = entry_uid) graph tail =
       let single tail' =
         match ht_to_last (First Entry) tail' with
         | head, Exit -> begin
@@ -172,7 +172,7 @@ functor
       let multi ~entry ~exit ~rest =
         (entry, Blocks.insert (ht_to_first exit tail) rest)
       in
-      prepare_for_splicing graph ~single ~multi
+      prepare_for_splicing ~entry graph ~single ~multi
 
     let splice_head_only head graph =
       let gentry, graph = focus_entry graph in

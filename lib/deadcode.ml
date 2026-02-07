@@ -23,9 +23,7 @@ let deadcode graph =
       in
       if args <> info.args then begin
         IntHashtbl.replace block_args uid args;
-        Flow.Rewrite
-          (Cfg.unfocus
-             ((First (Label (l, { info with args })), Last Cfg.Exit), Cfg.empty))
+        Flow.Rewrite Cfg.(unfocus @@ label ~args l @@ focus_entry empty)
       end
       else Flow.Dataflow a
   in

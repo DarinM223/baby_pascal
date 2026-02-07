@@ -50,6 +50,13 @@ functor
       restore ();
       (result, entry_info)
 
+    let skipping_entry (fact, fns) =
+      ( {
+          fact with
+          skip_block = (fun uid -> uid = G.entry_uid || fact.skip_block uid);
+        },
+        fns )
+
     module BackwardAnalysis = struct
       type 'a functions = {
         first_in : 'a -> G.first -> 'a;
@@ -107,7 +114,7 @@ functor
             | G.First f ->
               (match pass_fns.first_in out f with
               | Dataflow a -> a
-              | Rewrite g -> solve_graph pass g out)
+              | Rewrite g -> solve_graph (skipping_entry pass) g out)
           in
           let head, last = G.(goto_end (unzip b)) in
           let block_in =
@@ -148,16 +155,28 @@ functor
                 | Dataflow _ ->
                   rewrite_blocks changed (G.Blocks.insert (f, t) rewritten) bs
                 | Rewrite g ->
-                  let (h, t'), _ =
-                    match f with
-                    | G.Entry -> G.focus_entry g
-                    | G.Label ((uid, _), _) -> G.focus uid g
+                  let _, (g, _) =
+                    solve_and_rewrite (skipping_entry pass) g a changed
                   in
-                  let g = G.(unfocus ((First Entry, t'), empty)) in
-                  let a, (g, _) = solve_and_rewrite pass g a changed in
-                  let t, g = G.splice_tail g t in
-                  let rewritten = G.Blocks.union g rewritten in
-                  propagate h a t rewritten true
+                  begin match f with
+                  | G.Entry ->
+                    let t, g = G.splice_tail g t in
+                    let rewritten = G.Blocks.union g rewritten in
+                    rewrite_blocks changed
+                      (G.Blocks.insert (G.Entry, t) rewritten)
+                      bs
+                  | G.Label ((uid, _), _) ->
+                    let f =
+                      match G.focus uid g with
+                      | (First f, _), _ -> f
+                      | _ -> failwith "block doesn't have first, cannot happen"
+                    in
+                    let t, g =
+                      G.(splice_tail ~entry:uid (snd (remove_entry g)) t)
+                    in
+                    let rewritten = G.Blocks.union g rewritten in
+                    rewrite_blocks changed (G.Blocks.insert (f, t) rewritten) bs
+                  end
               end
             in
             if fact.skip_block (G.id b) then

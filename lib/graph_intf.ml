@@ -160,7 +160,7 @@ module type S = sig
   val unfocus : zgraph -> graph
 
   val splice_head : head -> graph -> graph * head
-  val splice_tail : graph -> tail -> tail * graph
+  val splice_tail : ?entry:uid -> graph -> tail -> tail * graph
   val splice_head_only : head -> graph -> graph
   val remove_entry : graph -> tail * graph
   val splice_focus_entry : zgraph -> graph -> zgraph
