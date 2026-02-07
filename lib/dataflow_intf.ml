@@ -40,6 +40,7 @@ module type S = sig
 
   module ForwardAnalysis : sig
     type 'a functions = {
+      first_out : G.first -> 'a;
       middle_out : 'a -> G.middle -> 'a;
       last_outs : 'a -> G.last -> (G.uid -> 'a -> unit) -> unit;
     }
@@ -49,6 +50,7 @@ module type S = sig
 
   module ForwardPass : sig
     type 'a functions = {
+      first_out : G.first -> 'a answer;
       middle_out : 'a -> G.middle -> 'a answer;
       last_outs : 'a -> G.last -> ((G.uid -> 'a -> unit) -> unit) answer;
     }

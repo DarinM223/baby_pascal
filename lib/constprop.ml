@@ -109,6 +109,10 @@ let block_args graph =
 
 let constprop graph =
   let fact = state_fact () in
+  let handle_first = function
+    | Cfg.Entry -> Flow.Dataflow fact.init_info
+    | Cfg.Label ((uid, _), _) -> Flow.Dataflow (fact.get uid)
+  in
   let handle_instruction _instr _a = failwith "" in
   let handle_middle a instr = Flow.Dataflow (handle_instruction instr a) in
   let handle_last a = function
@@ -126,8 +130,8 @@ let constprop graph =
   in
   let pass =
     {
-      Flow.ForwardPass.middle_out =
-        (fun a (Instruction instr) -> handle_middle a instr);
+      Flow.ForwardPass.first_out = handle_first;
+      middle_out = (fun a (Instruction instr) -> handle_middle a instr);
       last_outs = handle_last;
     }
   in

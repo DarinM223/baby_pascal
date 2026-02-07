@@ -147,21 +147,17 @@ functor
                 match pass_fns.first_in a f with
                 | Dataflow _ ->
                   rewrite_blocks changed (G.Blocks.insert (f, t) rewritten) bs
-                | Rewrite g -> begin
-                  try
-                    let (h, t'), _ =
-                      match f with
-                      | G.Entry -> G.focus_entry g
-                      | G.Label ((uid, _), _) -> G.focus uid g
-                    in
-                    let g = G.(unfocus ((First Entry, t'), empty)) in
-                    let a, (g, _) = solve_and_rewrite pass g a changed in
-                    let t, g = G.splice_tail g t in
-                    let rewritten = G.Blocks.union g rewritten in
-                    propagate h a t rewritten true
-                  with Not_found ->
-                    failwith "rewriting a label in backwards dataflow"
-                end
+                | Rewrite g ->
+                  let (h, t'), _ =
+                    match f with
+                    | G.Entry -> G.focus_entry g
+                    | G.Label ((uid, _), _) -> G.focus uid g
+                  in
+                  let g = G.(unfocus ((First Entry, t'), empty)) in
+                  let a, (g, _) = solve_and_rewrite pass g a changed in
+                  let t, g = G.splice_tail g t in
+                  let rewritten = G.Blocks.union g rewritten in
+                  propagate h a t rewritten true
               end
             in
             if fact.skip_block (G.id b) then
@@ -188,6 +184,7 @@ functor
 
     module ForwardAnalysis = struct
       type 'a functions = {
+        first_out : G.first -> 'a;
         middle_out : 'a -> G.middle -> 'a;
         last_outs : 'a -> G.last -> (G.uid -> 'a -> unit) -> unit;
       }
@@ -195,13 +192,13 @@ functor
 
       let run ~entry_fact (fact, analysis) graph =
         let changed = ref false in
-        let set_successor_facts block =
+        let set_successor_facts (first, tail) =
           let update = update fact changed in
           let rec forward in' = function
             | G.Tail (m, t) -> forward (analysis.middle_out in' m) t
             | G.Last l -> analysis.last_outs in' l update
           in
-          forward (fact.get (G.id block)) (snd block)
+          forward (analysis.first_out first) tail
         in
         let blocks = G.reverse_postorder_dfs graph in
         run fact changed entry_fact set_successor_facts blocks
@@ -209,10 +206,18 @@ functor
 
     module ForwardPass = struct
       type 'a functions = {
+        first_out : G.first -> 'a answer;
         middle_out : 'a -> G.middle -> 'a answer;
         last_outs : 'a -> G.last -> ((G.uid -> 'a -> unit) -> unit) answer;
       }
       type 'a t = 'a fact * 'a functions
+
+      let with_entry ((fact, pass_fns) : 'a t) (entry_fact : 'a) : 'a t =
+        let first_out = function
+          | G.Entry -> Dataflow entry_fact
+          | f -> pass_fns.first_out f
+        in
+        (fact, { pass_fns with first_out })
 
       let with_exit (fact, pass_fns) exit_fact_ref =
         let last_outs in' = function
@@ -223,12 +228,11 @@ functor
 
       let rec solve_graph ((fact, _) as pass) graph entry_fact =
         let exit_fact_ref = ref fact.init_info in
-        let _ =
-          general_forward (with_exit pass exit_fact_ref) entry_fact graph
-        in
+        let pass = with_entry (with_exit pass exit_fact_ref) entry_fact in
+        let _ = general_forward pass graph in
         !exit_fact_ref
 
-      and general_forward ((fact, pass_fns) as pass) entry_fact graph =
+      and general_forward ((fact, pass_fns) as pass) graph =
         let changed = ref false in
         let update = update fact changed in
         let set_successor_facts (first, tail) =
@@ -245,14 +249,14 @@ functor
             end
           in
           let in' =
-            match first with
-            | G.Entry -> entry_fact
-            | G.Label ((uid, _), _) -> fact.get uid
+            match pass_fns.first_out first with
+            | Dataflow a -> a
+            | Rewrite g -> solve_graph pass g fact.init_info
           in
           set_tail_facts in' tail
         in
         let blocks = G.reverse_postorder_dfs graph in
-        run fact changed entry_fact set_successor_facts blocks
+        run fact changed fact.init_info set_successor_facts blocks
 
       let check_property_match (fact : 'a fact) uid a =
         let a' = fact.get uid in
@@ -267,12 +271,11 @@ functor
       let rec solve_and_rewrite ((fact, _) as pass) graph entry_fact changed =
         let _ = solve_graph pass graph entry_fact in
         let exit_ref = ref fact.init_info in
-        let result =
-          forward_rewrite (with_exit pass exit_ref) graph entry_fact changed
-        in
+        let pass = with_entry (with_exit pass exit_ref) entry_fact in
+        let result = forward_rewrite pass graph changed in
         (!exit_ref, result)
 
-      and forward_rewrite ((fact, pass_fns) as pass) graph entry_fact changed =
+      and forward_rewrite ((fact, pass_fns) as pass) graph changed =
         let rec rewrite_blocks changed rewritten = function
           | [] -> (rewritten, changed)
           | b :: bs ->
@@ -304,12 +307,23 @@ functor
               rewrite_blocks changed (G.Blocks.insert b rewritten) bs
             else
               let first, tail = b in
-              let a =
-                match first with
-                | G.Entry -> entry_fact
-                | G.Label ((uid, _), _) -> fact.get uid
-              in
-              propagate (G.First first) a tail rewritten changed
+              begin match pass_fns.first_out first with
+              | Dataflow a -> propagate (G.First first) a tail rewritten changed
+              | Rewrite g ->
+                (* todo: rewrite counts entry block of temporary graph
+                   make temporary pass that skips entry block *)
+                let a, (g, _) =
+                  solve_and_rewrite pass g fact.init_info changed
+                in
+                let zblock, g =
+                  match first with
+                  | G.Entry -> G.focus_entry g
+                  | G.Label ((uid, _), _) -> G.focus uid g
+                in
+                let h, _ = G.goto_end zblock in
+                let rewritten = G.Blocks.union g rewritten in
+                propagate h a tail rewritten true
+              end
         in
         rewrite_blocks changed G.empty (G.reverse_postorder_dfs graph)
 
