@@ -148,7 +148,7 @@ functor
           | _ -> failwith "not a single exit graph"
     end
 
-    let splice_head head graph =
+    let splice_head ?(entry = entry_uid) head graph =
       let single tail' =
         match ht_to_last head tail' with
         | head, Exit -> (empty, head)
@@ -157,7 +157,7 @@ functor
       let multi ~entry ~exit ~rest =
         (Blocks.insert (ht_to_first head entry) rest, exit)
       in
-      prepare_for_splicing graph ~single ~multi
+      prepare_for_splicing ~entry graph ~single ~multi
 
     let splice_tail ?(entry = entry_uid) graph tail =
       let single tail' =

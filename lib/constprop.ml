@@ -12,34 +12,7 @@ module NameMap = struct
 end
 module NameSet = Normalize.NameSet
 
-type lattice =
-  | NeverDefined
-  | Defined of int
-  | OverDefined
-[@@deriving show, eq]
-
-type t = {
-  mapping : lattice NameMap.t;
-  executable : bool;
-}
-[@@deriving show, eq]
-
 let hashtbl_size = 100
-let state_fact () =
-  let store = IntHashtbl.create hashtbl_size in
-  {
-    Flow.init_info = { mapping = NameMap.empty; executable = false };
-    add_info =
-      (fun a b ->
-        {
-          mapping = NameMap.union (fun _ _ a -> Some a) a.mapping b.mapping;
-          executable = b.executable;
-        });
-    changed = (fun ~before ~after -> not (equal before after));
-    skip_block = (fun uid -> not (IntHashtbl.find store uid).executable);
-    get = IntHashtbl.find store;
-    set = IntHashtbl.add store;
-  }
 
 let block_args_fact () =
   let store = IntHashtbl.create hashtbl_size in
@@ -107,11 +80,45 @@ let block_args graph =
   let _ = Flow.BackwardAnalysis.run analysis graph in
   fact.get Cfg.entry_uid
 
-let constprop graph =
+type lattice =
+  | NeverDefined
+  | Defined of int
+  | OverDefined
+[@@deriving show, eq]
+
+type t = {
+  mapping : lattice NameMap.t;
+  executable : bool;
+}
+[@@deriving show, eq]
+
+let state_fact () =
+  let store = IntHashtbl.create hashtbl_size in
+  {
+    Flow.init_info = { mapping = NameMap.empty; executable = false };
+    add_info =
+      (fun a b ->
+        {
+          mapping = NameMap.union (fun _ _ a -> Some a) a.mapping b.mapping;
+          executable = b.executable;
+        });
+    changed = (fun ~before ~after -> not (equal before after));
+    skip_block = (fun uid -> not (IntHashtbl.find store uid).executable);
+    get = IntHashtbl.find store;
+    set = IntHashtbl.add store;
+  }
+
+let constprop (_block_args : NameSet.t NameMap.t) graph =
   let fact = state_fact () in
   let handle_first = function
     | Cfg.Entry -> Flow.Dataflow fact.init_info
-    | Cfg.Label ((uid, _), _) -> Flow.Dataflow (fact.get uid)
+    | Cfg.Label ((uid, _), _) ->
+      let a = fact.get uid in
+      (* todo: for each block arg, if all calls (found by looking up in block_args)
+               resolve to the same constant,
+               set arg to the constant in the mapping and replace the arg
+               with a tombstone *)
+      Flow.Dataflow a
   in
   let handle_instruction _instr _a = failwith "" in
   let handle_middle a instr = Flow.Dataflow (handle_instruction instr a) in
@@ -120,9 +127,6 @@ let constprop graph =
     | Cfg.Branch (_, (uid, _)) -> Flow.Dataflow (fun set -> set uid a)
     | Cfg.CBranch (_, (uid1, _), (uid2, _)) ->
       Flow.Dataflow
-        (* todo: for each block arg, if all calls resolve to the same constant,
-        set arg to the constant in the mapping *)
-        (* unused args can be "removed" by replacing them with a tombstone *)
         (fun set ->
           set uid1 a;
           set uid2 a)

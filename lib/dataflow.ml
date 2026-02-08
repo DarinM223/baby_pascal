@@ -329,19 +329,27 @@ functor
               begin match pass_fns.first_out first with
               | Dataflow a -> propagate (G.First first) a tail rewritten changed
               | Rewrite g ->
-                (* todo: rewrite counts entry block of temporary graph
-                   make temporary pass that skips entry block *)
                 let a, (g, _) =
-                  solve_and_rewrite pass g fact.init_info changed
+                  solve_and_rewrite (skipping_entry pass) g fact.init_info
+                    changed
                 in
-                let zblock, g =
-                  match first with
-                  | G.Entry -> G.focus_entry g
-                  | G.Label ((uid, _), _) -> G.focus uid g
-                in
-                let h, _ = G.goto_end zblock in
-                let rewritten = G.Blocks.union g rewritten in
-                propagate h a tail rewritten true
+                begin match first with
+                | G.Entry ->
+                  let g, h = G.splice_head (G.First G.Entry) g in
+                  let rewritten = G.Blocks.union g rewritten in
+                  propagate h a tail rewritten true
+                | G.Label ((uid, _), _) ->
+                  let f =
+                    match G.focus uid g with
+                    | (First f, _), _ -> f
+                    | _ -> failwith "block doesn't have first, cannot happen"
+                  in
+                  let g, h =
+                    G.(splice_head ~entry:uid (First f) (snd (remove_entry g)))
+                  in
+                  let rewritten = G.Blocks.union g rewritten in
+                  propagate h a tail rewritten true
+                end
               end
         in
         rewrite_blocks changed G.empty (G.reverse_postorder_dfs graph)
