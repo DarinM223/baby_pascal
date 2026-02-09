@@ -22,7 +22,8 @@ let deadcode graph =
           info.args
       in
       if args <> info.args then begin
-        IntHashtbl.replace block_args uid args;
+        IntHashtbl.replace block_args uid
+          (List.map (fun n -> Target.Reg n) args);
         Flow.Rewrite Cfg.(unfocus @@ label ~args l @@ focus_entry empty)
       end
       else Flow.Dataflow a
@@ -49,7 +50,7 @@ let deadcode graph =
           let block_args = IntHashtbl.find block_args uid in
           let args' =
             List.map
-              (fun (a, b) -> if Name.is_tombstone a then a else b)
+              (fun (a, b) -> if Target.is_tombstone a then a else b)
               (List.combine block_args args)
           in
           if args' <> args then changed := true;

@@ -15,13 +15,12 @@ let test_figure_19_2 () =
     @@ instruction (assign ~src:(Const 0) ~dest:(reg "a"))
     @@ branch (2, "label2")
     @@ label (2, "label2")
-    @@ cbranch
-         ~ifnot_args:[ Normalize.Name.tombstone ]
+    @@ cbranch ~ifnot_args:[ tombstone ]
          ~args:[ reg "b"; Const 4 ]
          LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
     @@ label (3, "label3")
     @@ instruction (assign ~src:(reg "b") ~dest:(reg "a"))
-    @@ branch ~args:[ Normalize.Name.tombstone ] (4, "label4")
+    @@ branch ~args:[ tombstone ] (4, "label4")
     @@ label ~args:[ Normalize.Name.tombstone ] (4, "label4")
     @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
     @@ branch (5, "label5")
@@ -49,12 +48,12 @@ let test_figure_19_2 () =
     @@ branch (2, "label2")
     @@ label (2, "label2")
     @@ cbranch
-         ~ifnot_args:[ name' "a" 1 ]
+         ~ifnot_args:[ reg' "a" 1 ]
          ~args:[ reg' "b" 1; Const 4 ]
          LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
     @@ label (3, "label3")
     @@ instruction (assign ~src:(reg' "b" 1) ~dest:(reg' "a" 2))
-    @@ branch ~args:[ name' "a" 2 ] (4, "label4")
+    @@ branch ~args:[ reg' "a" 2 ] (4, "label4")
     @@ label ~args:[ name' "a" 3 ] (4, "label4")
     @@ instruction
          (bop Add ~dest:(reg' "c" 1) ~src1:(reg' "a" 3) ~src2:(reg' "b" 1))
@@ -101,7 +100,7 @@ let test_figure_19_3 () =
     @@ branch (1, "label1")
     @@ label (1, "label1")
     @@ instruction (assign ~src:(Const 0) ~dest:(reg' "a" 1))
-    @@ branch ~args:[ name' "c" 0; name' "b" 0; name' "a" 1 ] (2, "label2")
+    @@ branch ~args:[ reg' "c" 0; reg' "b" 0; reg' "a" 1 ] (2, "label2")
     @@ label ~args:[ name' "c" 1; name' "b" 1; name' "a" 2 ] (2, "label2")
     @@ instruction
          (bop Add ~dest:(reg' "b" 2) ~src1:(reg' "a" 2) ~src2:(Const 1))
@@ -110,7 +109,7 @@ let test_figure_19_3 () =
     @@ instruction
          (bop Mul ~dest:(reg' "a" 3) ~src1:(reg' "b" 2) ~src2:(Const 2))
     @@ cbranch
-         ~ifso_args:[ name' "c" 2; name' "b" 2; name' "a" 3 ]
+         ~ifso_args:[ reg' "c" 2; reg' "b" 2; reg' "a" 3 ]
          ~args:[ reg' "a" 3; Const 10 ]
          LT ~ifso:(2, "label2") ~ifnot:(3, "label3")
     @@ label (3, "label3")
@@ -179,15 +178,15 @@ let test_figure_19_4 () =
     @@ instruction
          (bop Add ~dest:(reg' "tmp1" 1) ~src1:(reg' "k" 2) ~src2:(Const 1))
     @@ instruction (assign ~src:(reg' "tmp1" 1) ~dest:(reg' "k" 3))
-    @@ branch ~args:[ name' "k" 3; name' "j" 3 ] (3, "label3")
+    @@ branch ~args:[ reg' "k" 3; reg' "j" 3 ] (3, "label3")
     @@ label (6, "label6")
     @@ instruction (assign ~src:(reg' "k" 2) ~dest:(reg' "j" 4))
     @@ instruction
          (bop Add ~dest:(reg' "tmp0" 1) ~src1:(reg' "k" 2) ~src2:(Const 2))
     @@ instruction (assign ~src:(reg' "tmp0" 1) ~dest:(reg' "k" 4))
-    @@ branch ~args:[ name' "k" 4; name' "j" 4 ] (3, "label3")
+    @@ branch ~args:[ reg' "k" 4; reg' "j" 4 ] (3, "label3")
     @@ label (7, "label7")
-    @@ branch ~args:[ name' "k" 1; name' "j" 1 ] (3, "label3")
+    @@ branch ~args:[ reg' "k" 1; reg' "j" 1 ] (3, "label3")
     @@ label (8, "label8")
     @@ instruction (assign ~src:(Const 0) ~dest:(reg' "k" 1))
     @@ branch (7, "label7")
@@ -240,10 +239,10 @@ let test_pruned () =
     @@ branch (1, "label1")
     @@ label (3, "label3")
     @@ instruction (assign ~src:(Const 1) ~dest:(reg' "z" 1))
-    @@ branch ~args:[ name' "z" 1 ] (2, "label2")
+    @@ branch ~args:[ reg' "z" 1 ] (2, "label2")
     @@ label (4, "label4")
     @@ instruction (assign ~src:(reg' "x" 0) ~dest:(reg' "z" 2))
-    @@ branch ~args:[ name' "z" 2 ] (2, "label2")
+    @@ branch ~args:[ reg' "z" 2 ] (2, "label2")
     @@ label (5, "label5")
     @@ cbranch
          ~args:[ reg' "i" 0; Const 2 ]

@@ -6,11 +6,11 @@ let test_block_args () =
     let open Normalize.Target in
     let open Normalize.Cfg in
     unfocus
-    @@ branch ~args:[ name "a"; name "b"; name "c" ] (1, "")
+    @@ branch ~args:[ reg "a"; reg "b"; reg "c" ] (1, "")
     @@ label ~args:[ name "d"; name "e"; name "f" ] (1, "")
     @@ cbranch ~args:[ reg "e"; Const 0 ] EQ ~ifso:(2, "") ~ifnot:(3, "")
     @@ label (2, "")
-    @@ branch ~args:[ name "g"; name "h"; name "i" ] (1, "")
+    @@ branch ~args:[ reg "g"; reg "h"; Const 1 ] (1, "")
     @@ label (3, "")
     @@ exit @@ focus_entry empty
   in
@@ -19,14 +19,15 @@ let test_block_args () =
       NameMap.of_list
         Normalize.Target.
           [
-            (name "d", NameSet.of_list [ name "a"; name "g" ]);
-            (name "e", NameSet.of_list [ name "b"; name "h" ]);
-            (name "f", NameSet.of_list [ name "c"; name "i" ]);
+            (name "d", OperandSet.of_list [ reg "a"; reg "g" ]);
+            (name "e", OperandSet.of_list [ reg "b"; reg "h" ]);
+            (name "f", OperandSet.of_list [ reg "c"; Const 1 ]);
           ])
   in
   let result = Constprop.block_args cfg in
   (check
-     Constprop.(testable (NameMap.pp NameSet.pp) (NameMap.equal NameSet.equal)))
+     Constprop.(
+       testable (NameMap.pp OperandSet.pp) (NameMap.equal OperandSet.equal)))
     "Produces proper mapping" result expected
 
 let test_const_prop () = ()

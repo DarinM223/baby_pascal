@@ -10,7 +10,13 @@ module NameMap = struct
   end)
   let pp pp_v = pp Name.pp pp_v
 end
-module NameSet = Normalize.NameSet
+module OperandSet = struct
+  include CCSet.Make (struct
+    type t = Target.operand
+    let compare = compare
+  end)
+  let pp = pp Target.pp_operand
+end
 
 let hashtbl_size = 100
 
@@ -18,9 +24,9 @@ let block_args_fact () =
   let store = IntHashtbl.create hashtbl_size in
   {
     Flow.init_info = NameMap.empty;
-    add_info = NameMap.union (fun _ a b -> Some (NameSet.union a b));
+    add_info = NameMap.union (fun _ a b -> Some (OperandSet.union a b));
     changed =
-      (fun ~before ~after -> not (NameMap.equal NameSet.equal before after));
+      (fun ~before ~after -> not (NameMap.equal OperandSet.equal before after));
     skip_block = Fun.const false;
     get = IntHashtbl.find store;
     set = IntHashtbl.add store;
@@ -37,13 +43,13 @@ let block_args graph =
         (fun a arg ->
           NameMap.update arg
             (function
-              | None -> Some NameSet.empty
+              | None -> Some OperandSet.empty
               | Some a -> Some a)
             a)
         a info.args
   in
   let handle_last =
-    let go_use (a : NameSet.t NameMap.t) = function
+    let go_use (a : OperandSet.t NameMap.t) = function
       | Target.Label ((uid, _), args) -> begin
         try
           let args' = IntHashtbl.find args_tbl uid in
@@ -51,8 +57,8 @@ let block_args graph =
             (fun a (arg', arg) ->
               NameMap.update arg'
                 (function
-                  | None -> Some (NameSet.singleton arg)
-                  | Some set -> Some (NameSet.add arg set))
+                  | None -> Some (OperandSet.singleton arg)
+                  | Some set -> Some (OperandSet.add arg set))
                 a)
             a (List.combine args' args)
         with Not_found -> a
@@ -108,16 +114,20 @@ let state_fact () =
     set = IntHashtbl.add store;
   }
 
-let constprop (_block_args : NameSet.t NameMap.t) graph =
+let constprop (_block_args : OperandSet.t NameMap.t) graph =
   let fact = state_fact () in
+  let saved_args = IntHashtbl.create hashtbl_size in
   let handle_first = function
     | Cfg.Entry -> Flow.Dataflow fact.init_info
-    | Cfg.Label ((uid, _), _) ->
+    | Cfg.Label ((uid, _), info) ->
       let a = fact.get uid in
       (* todo: for each block arg, if all calls (found by looking up in block_args)
                resolve to the same constant,
                set arg to the constant in the mapping and replace the arg
                with a tombstone *)
+      let rewrite_block_arg _arg = failwith "" in
+      let args = List.map rewrite_block_arg info.args in
+      IntHashtbl.add saved_args uid (List.map (fun n -> Target.Reg n) args);
       Flow.Dataflow a
   in
   let handle_instruction _instr _a = failwith "" in

@@ -18,13 +18,15 @@ module Target : sig
   type operand =
     | Const of int
     | Reg of reg
-    | Label of label * reg list
+    | Label of label * operand list
   include
     Graph.Target
       with type label := label
        and type reg := reg
        and type operand := operand
 
+  val tombstone : operand
+  val is_tombstone : operand -> bool
   val srcs : instr -> operand list
   val dests : instr -> operand list
   val uses : instr -> NameSet.t

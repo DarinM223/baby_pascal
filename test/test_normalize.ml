@@ -85,7 +85,7 @@ let test_map_first_last () =
   in
   let handle_last = function
     | Exit -> Exit
-    | Branch (_, l) -> Branch (goto l [ name "a"; name "b" ], l)
+    | Branch (_, l) -> Branch (goto l [ reg "a"; reg "b" ], l)
     | CBranch (_, _, _) -> failwith ""
     | Return (_, _) -> failwith ""
   in
@@ -95,7 +95,7 @@ let test_map_first_last () =
         ( First
             (Label ((1, ""), { local = false; args = [ name "a"; name "b" ] })),
           Instruction (assign ~src:(Const 60) ~dest:(reg "result")) ),
-      Last (Branch (goto (2, "") [ name "a"; name "b" ], (2, ""))) )
+      Last (Branch (goto (2, "") [ reg "a"; reg "b" ], (2, ""))) )
   in
   (check (testable pp_zblock equal_zblock))
     "Produces proper zipper" zblock expected;
@@ -104,7 +104,7 @@ let test_map_first_last () =
     unfocus
     @@ label ~args:[ name "a"; name "b" ] (1, "")
     @@ instruction (assign ~src:(Const 60) ~dest:(reg "result"))
-    @@ branch ~args:[ name "a"; name "b" ] (2, "")
+    @@ branch ~args:[ reg "a"; reg "b" ] (2, "")
     @@ label (2, "")
     @@ exit @@ focus_entry empty
   in

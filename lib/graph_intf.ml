@@ -10,6 +10,7 @@ module type Target = sig
   type reg
   type regs = reg list
   type operand
+  type operands = operand list
   type instr
 
   type cond =
@@ -20,9 +21,9 @@ module type Target = sig
     | EQ
     | NE
 
-  val goto : label -> reg list -> instr
+  val goto : label -> operands -> instr
   val cbranch :
-    args:operand list -> cond -> label -> reg list -> label -> reg list -> instr
+    args:operands -> cond -> label -> operands -> label -> operands -> instr
   val return : uses:reg list -> instr
 
   val pp_reg : Format.formatter -> reg -> unit
@@ -32,6 +33,12 @@ module type Target = sig
   val pp_regs : Format.formatter -> regs -> unit
   val show_regs : regs -> string
   val equal_regs : regs -> regs -> bool
+  val pp_operand : Format.formatter -> operand -> unit
+  val show_operand : operand -> string
+  val equal_operand : operand -> operand -> bool
+  val pp_operands : Format.formatter -> operands -> unit
+  val show_operands : operands -> string
+  val equal_operands : operands -> operands -> bool
 end
 
 module type Extra = sig
@@ -173,10 +180,10 @@ module type S = sig
   val unreachable : tail -> unit
   val instruction : Target.instr -> nodes
   val label : ?args:regs -> Target.label -> nodes
-  val branch : ?args:regs -> Target.label -> nodes
+  val branch : ?args:Target.operands -> Target.label -> nodes
   val cbranch :
-    ?ifso_args:regs ->
-    ?ifnot_args:regs ->
+    ?ifso_args:Target.operands ->
+    ?ifnot_args:Target.operands ->
     args:Target.operand list ->
     Target.cond ->
     ifso:Target.label ->

@@ -31,11 +31,25 @@ module Target = struct
     equal_regs
       (List.filter (fun n -> not (Name.is_tombstone n)) a)
       (List.filter (fun n -> not (Name.is_tombstone n)) b)
+
   type operand =
     | Const of int
     | Reg of reg
-    | Label of label * regs
-  [@@deriving show, eq]
+    | Label of label * operands
+  and operands = operand list [@@deriving show, eq]
+  let tombstone = Reg Name.tombstone
+  let is_tombstone = function
+    | Reg r -> Name.is_tombstone r
+    | _ -> false
+  let pp_operands fmt operands =
+    pp_operands fmt @@ List.filter (fun o -> not (is_tombstone o)) operands
+  let show_operands operands =
+    show_operands @@ List.filter (fun o -> not (is_tombstone o)) operands
+  let equal_operands a b =
+    equal_operands
+      (List.filter (fun o -> not (is_tombstone o)) a)
+      (List.filter (fun o -> not (is_tombstone o)) b)
+
   type cond =
     | LT
     | LE
@@ -49,8 +63,8 @@ module Target = struct
   type instr =
     | Assign of operand * operand
     | Call of operand * operand * operand list
-    | Goto of label * regs
-    | Cbranch of operand * operand * cond * label * regs * label * regs
+    | Goto of label * operands
+    | Cbranch of operand * operand * cond * label * operands * label * operands
     | Return of operand list
     | Uop of operand * Ast.uop * operand
     | Bop of operand * Ast.bop * operand * operand
@@ -65,10 +79,14 @@ module Target = struct
     | Ast.Neq -> NE
     | _ -> failwith "Invalid binary operator"
 
-  let regset_of_operand = function
+  let rec regset_of_operand = function
     | Const _ -> NameSet.empty
     | Label (_, args) ->
-      NameSet.of_list (List.filter (fun n -> not (Name.is_tombstone n)) args)
+      args
+      |> List.filter (fun n -> not (is_tombstone n))
+      |> List.fold_left
+           (fun acc o -> NameSet.union acc (regset_of_operand o))
+           NameSet.empty
     | Reg reg ->
       if Name.is_tombstone reg then NameSet.empty else NameSet.singleton reg
 

@@ -75,12 +75,12 @@ let test_block_args () =
     unfocus
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "c"))
     @@ instruction (assign ~src:(Const 3) ~dest:(reg "b"))
-    @@ branch ~args:[ name "a"; name "b"; name "c" ] (1, "")
+    @@ branch ~args:[ reg "a"; reg "b"; reg "c" ] (1, "")
     @@ label ~args:[ name "d"; name "e"; name "f" ] (1, "")
     @@ cbranch ~args:[ reg "e"; Const 0 ] EQ ~ifso:(2, "") ~ifnot:(3, "")
     @@ label (2, "")
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "g"))
-    @@ branch ~args:[ name "g"; name "h"; name "i" ] (1, "")
+    @@ branch ~args:[ reg "g"; reg "h"; reg "i" ] (1, "")
     @@ label (3, "")
     @@ exit @@ focus_entry empty
   in
@@ -89,11 +89,11 @@ let test_block_args () =
     let open Normalize.Cfg in
     unfocus
     @@ instruction (assign ~src:(Const 3) ~dest:(reg "b"))
-    @@ branch ~args:[ name "b" ] (1, "")
+    @@ branch ~args:[ reg "b" ] (1, "")
     @@ label ~args:[ name "e" ] (1, "")
     @@ cbranch ~args:[ reg "e"; Const 0 ] EQ ~ifso:(2, "") ~ifnot:(3, "")
     @@ label (2, "")
-    @@ branch ~args:[ name "h" ] (1, "")
+    @@ branch ~args:[ reg "h" ] (1, "")
     @@ label (3, "")
     @@ exit @@ focus_entry empty
   in
