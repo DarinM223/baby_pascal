@@ -12,10 +12,14 @@ module NameMap = struct
 end
 module OperandSet = struct
   include CCSet.Make (struct
-    type t = Target.operand
+    type t = Cfg.uid * Target.operand
     let compare = compare
   end)
-  let pp = pp Target.pp_operand
+  let pp =
+    let pp_tuple fmt (uid, op) =
+      Format.fprintf fmt "(%d,%a)" uid Target.pp_operand op
+    in
+    pp pp_tuple
 end
 
 let hashtbl_size = 100
@@ -48,17 +52,17 @@ let block_args graph =
             a)
         a info.args
   in
-  let handle_last =
+  let handle_last uid =
     let go_use (a : OperandSet.t NameMap.t) = function
-      | Target.Label ((uid, _), args) -> begin
+      | Target.Label ((uid', _), args) -> begin
         try
-          let args' = IntHashtbl.find args_tbl uid in
+          let args' = IntHashtbl.find args_tbl uid' in
           List.fold_left
             (fun a (arg', arg) ->
               NameMap.update arg'
                 (function
-                  | None -> Some (OperandSet.singleton arg)
-                  | Some set -> Some (OperandSet.add arg set))
+                  | None -> Some (OperandSet.singleton (uid, arg))
+                  | Some set -> Some (OperandSet.add (uid, arg) set))
                 a)
             a (List.combine args' args)
         with Not_found -> a

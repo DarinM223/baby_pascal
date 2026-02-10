@@ -61,7 +61,7 @@ functor
       type 'a functions = {
         first_in : 'a -> G.first -> 'a;
         middle_in : 'a -> G.middle -> 'a;
-        last_in : G.last -> 'a;
+        last_in : G.uid -> G.last -> 'a;
       }
       type 'a t = 'a fact * 'a functions
 
@@ -74,7 +74,7 @@ functor
             | G.Head (h, m) -> head_in h (analysis.middle_in out m)
             | G.First f -> analysis.first_in out f
           in
-          let block_in = head_in head (analysis.last_in last) in
+          let block_in = head_in head (analysis.last_in (G.id block) last) in
           update fact changed (G.id block) block_in
         in
         let blocks = List.rev (G.reverse_postorder_dfs graph) in
@@ -85,14 +85,14 @@ functor
       type 'a functions = {
         first_in : 'a -> G.first -> 'a answer;
         middle_in : 'a -> G.middle -> 'a answer;
-        last_in : G.last -> 'a answer;
+        last_in : G.uid -> G.last -> 'a answer;
       }
       type 'a t = 'a fact * 'a functions
 
       let with_exit ((fact, pass_fns) : 'a t) (exit_fact : 'a) : 'a t =
-        let last_in = function
+        let last_in uid = function
           | G.Exit -> Dataflow exit_fact
-          | l -> pass_fns.last_in l
+          | l -> pass_fns.last_in uid l
         in
         (fact, { pass_fns with last_in })
 
@@ -119,7 +119,7 @@ functor
           let head, last = G.(goto_end (unzip b)) in
           let block_in =
             head_in head
-              (match pass_fns.last_in last with
+              (match pass_fns.last_in (G.id b) last with
               | Dataflow a -> a
               | Rewrite g -> solve_graph pass g fact.init_info)
           in
@@ -183,7 +183,7 @@ functor
               rewrite_blocks changed (G.Blocks.insert b rewritten) bs
             else
               let head, last = G.(goto_end (unzip b)) in
-              begin match pass_fns.last_in last with
+              begin match pass_fns.last_in (G.id b) last with
               | Dataflow a -> propagate head a (G.Last last) rewritten changed
               | Rewrite g ->
                 let a, (g, _) =

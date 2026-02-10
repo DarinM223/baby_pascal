@@ -19,9 +19,9 @@ let test_block_args () =
       NameMap.of_list
         Normalize.Target.
           [
-            (name "d", OperandSet.of_list [ reg "a"; reg "g" ]);
-            (name "e", OperandSet.of_list [ reg "b"; reg "h" ]);
-            (name "f", OperandSet.of_list [ reg "c"; Const 1 ]);
+            (name "d", OperandSet.of_list [ (0, reg "a"); (2, reg "g") ]);
+            (name "e", OperandSet.of_list [ (0, reg "b"); (2, reg "h") ]);
+            (name "f", OperandSet.of_list [ (0, reg "c"); (2, Const 1) ]);
           ])
   in
   let result = Constprop.block_args cfg in

@@ -42,7 +42,7 @@ let calc_a_orig graph : a_orig =
     {
       Flow.BackwardAnalysis.first_in = (fun a _ -> a);
       middle_in = (fun a (Instruction instr) -> handle_instruction instr a);
-      last_in = (fun _ -> NameSet.empty);
+      last_in = (fun _ _ -> NameSet.empty);
     }
   in
   let analysis = (fact, analysis) in
@@ -66,7 +66,7 @@ let calc_live graph : liveness =
     {
       Flow.BackwardAnalysis.first_in = (fun a _ -> a);
       middle_in = (fun a (Instruction instr) -> handle_instruction instr a);
-      last_in = calc_live_out;
+      last_in = Fun.const calc_live_out;
     }
   in
   let liveness_analysis = (liveness_fact, liveness_analysis) in

@@ -62,7 +62,7 @@ let deadcode graph =
     let instr = Target.map_uses go_use instr in
     (instr, !changed)
   in
-  let handle_last last =
+  let handle_last _ last =
     match last with
     | Cfg.Exit -> Flow.Dataflow (calc_live_out last)
     | Cfg.Branch (i, l) ->

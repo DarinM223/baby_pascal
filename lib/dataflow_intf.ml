@@ -21,7 +21,7 @@ module type S = sig
     type 'a functions = {
       first_in : 'a -> G.first -> 'a;
       middle_in : 'a -> G.middle -> 'a;
-      last_in : G.last -> 'a;
+      last_in : G.uid -> G.last -> 'a;
     }
     type 'a t = 'a fact * 'a functions
     val run : 'a t -> G.graph -> int
@@ -31,7 +31,7 @@ module type S = sig
     type 'a functions = {
       first_in : 'a -> G.first -> 'a answer;
       middle_in : 'a -> G.middle -> 'a answer;
-      last_in : G.last -> 'a answer;
+      last_in : G.uid -> G.last -> 'a answer;
     }
     type 'a t = 'a fact * 'a functions
     val solve_graph : 'a t -> G.graph -> 'a -> 'a
