@@ -62,10 +62,10 @@ module Target = struct
   (* destination goes before sources for operands *)
   type instr =
     | Assign of operand * operand
-    | Call of operand * operand * operand list
+    | Call of operand * operand * operands
     | Goto of label * operands
     | Cbranch of operand * operand * cond * label * operands * label * operands
-    | Return of operand list
+    | Return of operands
     | Uop of operand * Ast.uop * operand
     | Bop of operand * Ast.bop * operand * operand
   [@@deriving show, eq]

@@ -18,12 +18,35 @@ module Target : sig
   type operand =
     | Const of int
     | Reg of reg
-    | Label of label * operand list
+    | Label of label * operands
+  and operands = operand list
+
+  type cond =
+    | LT
+    | LE
+    | GT
+    | GE
+    | EQ
+    | NE
+
+  (* destination goes before sources for operands *)
+  type instr =
+    | Assign of operand * operand
+    | Call of operand * operand * operands
+    | Goto of label * operands
+    | Cbranch of operand * operand * cond * label * operands * label * operands
+    | Return of operands
+    | Uop of operand * Ast.uop * operand
+    | Bop of operand * Ast.bop * operand * operand
+
   include
     Graph.Target
       with type label := label
        and type reg := reg
+       and type cond := cond
+       and type instr := instr
        and type operand := operand
+       and type operands := operands
 
   val tombstone : operand
   val is_tombstone : operand -> bool

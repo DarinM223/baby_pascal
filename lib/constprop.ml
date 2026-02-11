@@ -118,27 +118,83 @@ let state_fact () =
     set = IntHashtbl.add store;
   }
 
-let constprop (_block_args : OperandSet.t NameMap.t) graph =
+let rec remove_consecutive_duplicates = function
+  | [] -> []
+  | [ a ] -> [ a ]
+  | a :: b :: rest ->
+    if a = b then remove_consecutive_duplicates (b :: rest)
+    else a :: remove_consecutive_duplicates (b :: rest)
+
+let constprop (block_args : OperandSet.t NameMap.t) graph =
   let fact = state_fact () in
   let saved_args = IntHashtbl.create hashtbl_size in
+  let lookup_operand op a =
+    match op with
+    | Target.Const c -> Defined c
+    | Target.Reg r -> begin
+      try NameMap.find r a.mapping with Not_found -> NeverDefined
+    end
+    | _ -> NeverDefined
+  in
   let handle_first = function
     | Cfg.Entry -> Flow.Dataflow fact.init_info
-    | Cfg.Label ((uid, _), info) ->
+    | Cfg.Label (((uid, _) as l), info) ->
       let a = fact.get uid in
-      (* todo: for each block arg, if all calls (found by looking up in block_args)
-               resolve to the same constant,
-               set arg to the constant in the mapping and replace the arg
-               with a tombstone *)
-      let rewrite_block_arg _arg = failwith "" in
-      let args = List.map rewrite_block_arg info.args in
-      IntHashtbl.add saved_args uid (List.map (fun n -> Target.Reg n) args);
-      Flow.Dataflow a
+      let update_block_arg a arg =
+        let call_args = NameMap.find arg block_args in
+        let get_values acc = function
+          | uid, Target.Const i when (fact.get uid).executable ->
+            Defined i :: acc
+          | uid, Target.Reg arg when (fact.get uid).executable -> begin
+            match NameMap.find_opt arg a.mapping with
+            | Some NeverDefined | None -> acc
+            | Some v -> v :: acc
+          end
+          | _ -> acc
+        in
+        let values =
+          call_args |> OperandSet.to_list |> List.fold_left get_values []
+        in
+        match remove_consecutive_duplicates values with
+        | [ v ] -> { a with mapping = NameMap.add arg v a.mapping }
+        | [] -> a
+        | _ -> { a with mapping = NameMap.add arg OverDefined a.mapping }
+      in
+      let a' = List.fold_left update_block_arg a info.args in
+      if a' <> a then Flow.Dataflow a'
+      else begin
+        let rewrite_block_arg arg =
+          match NameMap.find_opt arg a.mapping with
+          | Some (Defined _) -> Name.tombstone
+          | _ -> arg
+        in
+        let args = List.map rewrite_block_arg info.args in
+        IntHashtbl.add saved_args uid (List.map (fun n -> Target.Reg n) args);
+        Flow.Rewrite Cfg.(unfocus @@ label ~args l @@ focus_entry empty)
+      end
   in
-  let handle_instruction _instr _a = failwith "" in
-  let handle_middle a instr = Flow.Dataflow (handle_instruction instr a) in
+  let handle_instruction a = function
+    | Target.Bop (Reg res, bop, lhs, rhs) ->
+      let res_value =
+        match (bop, lookup_operand lhs a, lookup_operand rhs a) with
+        | _, OverDefined, _ | _, _, OverDefined -> Some OverDefined
+        | _, NeverDefined, _ | _, _, NeverDefined -> None
+        | Ast.Add, Defined a, Defined b -> Some (Defined (a + b))
+        | _ -> None (* todo: remove *)
+      in
+      begin match res_value with
+      | Some v -> { a with mapping = NameMap.add res v a.mapping }
+      | None -> a
+      end
+    | Target.Call (Reg r, _, _) ->
+      { a with mapping = NameMap.add r OverDefined a.mapping }
+    | _ -> a
+  in
+  let handle_middle a instr = Flow.Dataflow (handle_instruction a instr) in
   let handle_last a = function
     | Cfg.Exit -> Flow.Dataflow (fun _ -> ())
-    | Cfg.Branch (_, (uid, _)) -> Flow.Dataflow (fun set -> set uid a)
+    | Cfg.Branch (_, (uid, _)) ->
+      Flow.Dataflow (fun set -> set uid { a with executable = true })
     | Cfg.CBranch (_, (uid1, _), (uid2, _)) ->
       Flow.Dataflow
         (fun set ->
@@ -154,4 +210,5 @@ let constprop (_block_args : OperandSet.t NameMap.t) graph =
     }
   in
   let pass = (fact, pass) in
+  (* todo: mark function arguments as overdefined *)
   snd @@ Flow.ForwardPass.solve_and_rewrite pass graph fact.init_info
