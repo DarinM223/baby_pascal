@@ -3,6 +3,7 @@ module IntHashtbl = Hashtbl.Make (Int)
 module Flow = Normalize.Flow
 module Target = Normalize.Target
 module Name = Normalize.Name
+module NameSet = Normalize.NameSet
 module NameMap = struct
   include CCMap.Make (struct
     include Name
@@ -125,6 +126,27 @@ let rec remove_consecutive_duplicates = function
     if a = b then remove_consecutive_duplicates (b :: rest)
     else a :: remove_consecutive_duplicates (b :: rest)
 
+let apply_bop l r = function
+  | Ast.Add -> l + r
+  | Ast.Sub -> l - r
+  | Ast.Mul -> l * r
+  | Ast.And -> Int.logand l r
+  | Ast.Or -> Int.logor l r
+  | Ast.Eq -> if l = r then 1 else 0
+  | Ast.Neq -> if l = r then 0 else 1
+  | Ast.Lt -> if l < r then 1 else 0
+  | Ast.Le -> if l <= r then 1 else 0
+  | Ast.Gt -> if l > r then 1 else 0
+  | Ast.Ge -> if l >= r then 1 else 0
+
+let apply_cond l r = function
+  | Target.LT -> l < r
+  | Target.LE -> l <= r
+  | Target.GT -> l > r
+  | Target.GE -> l >= r
+  | Target.EQ -> l = r
+  | Target.NE -> l <> r
+
 let constprop (block_args : OperandSet.t NameMap.t) graph =
   let fact = state_fact () in
   let saved_args = IntHashtbl.create hashtbl_size in
@@ -176,11 +198,10 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
   let handle_instruction a = function
     | Target.Bop (Reg res, bop, lhs, rhs) ->
       let res_value =
-        match (bop, lookup_operand lhs a, lookup_operand rhs a) with
-        | _, OverDefined, _ | _, _, OverDefined -> Some OverDefined
-        | _, NeverDefined, _ | _, _, NeverDefined -> None
-        | Ast.Add, Defined a, Defined b -> Some (Defined (a + b))
-        | _ -> None (* todo: remove *)
+        match (lookup_operand lhs a, lookup_operand rhs a) with
+        | OverDefined, _ | _, OverDefined -> Some OverDefined
+        | NeverDefined, _ | _, NeverDefined -> None
+        | Defined l, Defined r -> Some (Defined (apply_bop l r bop))
       in
       begin match res_value with
       | Some v -> { a with mapping = NameMap.add res v a.mapping }
@@ -190,16 +211,40 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
       { a with mapping = NameMap.add r OverDefined a.mapping }
     | _ -> a
   in
-  let handle_middle a instr = Flow.Dataflow (handle_instruction a instr) in
+  let handle_middle a instr =
+    let all_defs_defined =
+      instr |> Target.defs |> NameSet.to_list
+      |> List.map (fun n -> lookup_operand (Reg n) a)
+      |> List.for_all (function
+        | Defined _ -> true
+        | _ -> false)
+    in
+    if all_defs_defined then Flow.Rewrite Cfg.empty
+    else Flow.Dataflow (handle_instruction a instr)
+  in
   let handle_last a = function
     | Cfg.Exit -> Flow.Dataflow (fun _ -> ())
     | Cfg.Branch (_, (uid, _)) ->
       Flow.Dataflow (fun set -> set uid { a with executable = true })
-    | Cfg.CBranch (_, (uid1, _), (uid2, _)) ->
-      Flow.Dataflow
-        (fun set ->
-          set uid1 a;
-          set uid2 a)
+    | Cfg.CBranch (instr, (uid1, _), (uid2, _)) ->
+      let set_branches l r set =
+        set uid1 { a with executable = l };
+        set uid2 { a with executable = r }
+      in
+      let set_cond_executable b =
+        if b then set_branches true false else set_branches false true
+      in
+      let set_both_executable = set_branches true true in
+      begin match instr with
+      | Target.Cbranch (lhs, rhs, cond, _, _, _, _) ->
+        Flow.Dataflow
+          begin match (lookup_operand lhs a, lookup_operand rhs a) with
+          | OverDefined, _ | _, OverDefined -> set_both_executable
+          | NeverDefined, _ | _, NeverDefined -> fun _ -> ()
+          | Defined l, Defined r -> set_cond_executable (apply_cond l r cond)
+          end
+      | _ -> Flow.Dataflow (fun _ -> ())
+      end
     | Cfg.Return (_, _) -> Flow.Dataflow (fun _ -> ())
   in
   let pass =
