@@ -126,6 +126,9 @@ let rec remove_consecutive_duplicates = function
     if a = b then remove_consecutive_duplicates (b :: rest)
     else a :: remove_consecutive_duplicates (b :: rest)
 
+let apply_uop arg = function
+  | Ast.Not -> if arg <> 0 then 0 else 1
+
 let apply_bop l r = function
   | Ast.Add -> l + r
   | Ast.Sub -> l - r
@@ -147,22 +150,42 @@ let apply_cond l r = function
   | Target.EQ -> l = r
   | Target.NE -> l <> r
 
+let rewrite_uses lookup_operand a instr =
+  let instr' =
+    Target.map_uses
+      (fun op ->
+        match lookup_operand a op with
+        | Defined c -> Const c
+        | _ -> op)
+      instr
+  in
+  (instr', Target.equal_instr instr' instr)
+
 let constprop (block_args : OperandSet.t NameMap.t) graph =
   let fact = state_fact () in
   let saved_args = IntHashtbl.create hashtbl_size in
-  let lookup_operand op a =
-    match op with
+  let lookup_operand a = function
     | Target.Const c -> Defined c
     | Target.Reg r -> begin
       try NameMap.find r a.mapping with Not_found -> NeverDefined
     end
     | _ -> NeverDefined
   in
+  let add_to_mapping a k = function
+    | Some v -> begin
+      match NameMap.find_opt k a.mapping with
+      | Some v' when v <> v' ->
+        (true, { a with mapping = NameMap.add k v a.mapping })
+      | None -> (true, { a with mapping = NameMap.add k v a.mapping })
+      | _ -> (false, a)
+    end
+    | None -> (false, a)
+  in
   let handle_first = function
     | Cfg.Entry -> Flow.Dataflow fact.init_info
     | Cfg.Label (((uid, _) as l), info) ->
       let a = fact.get uid in
-      let update_block_arg a arg =
+      let update_block_arg (changed, a) arg =
         let call_args = NameMap.find arg block_args in
         let get_values acc = function
           | uid, Target.Const i when (fact.get uid).executable ->
@@ -177,13 +200,16 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
         let values =
           call_args |> OperandSet.to_list |> List.fold_left get_values []
         in
-        match remove_consecutive_duplicates values with
-        | [ v ] -> { a with mapping = NameMap.add arg v a.mapping }
-        | [] -> a
-        | _ -> { a with mapping = NameMap.add arg OverDefined a.mapping }
+        let changed', a =
+          match remove_consecutive_duplicates values with
+          | [ v ] -> add_to_mapping a arg (Some v)
+          | [] -> (false, a)
+          | _ -> add_to_mapping a arg (Some OverDefined)
+        in
+        (changed || changed', a)
       in
-      let a' = List.fold_left update_block_arg a info.args in
-      if a' <> a then Flow.Dataflow a'
+      let changed, a = List.fold_left update_block_arg (false, a) info.args in
+      if changed then Flow.Dataflow a
       else begin
         let rewrite_block_arg arg =
           match NameMap.find_opt arg a.mapping with
@@ -196,55 +222,105 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
       end
   in
   let handle_instruction a = function
+    | Target.Assign (Reg res, arg) ->
+      let res_value =
+        match lookup_operand a arg with
+        | OverDefined -> Some OverDefined
+        | NeverDefined -> None
+        | Defined arg -> Some (Defined arg)
+      in
+      add_to_mapping a res res_value
+    | Target.Assign _ ->
+      failwith "handle_instruction: assign destination not a name"
+    | Target.Uop (Reg res, uop, arg) ->
+      let res_value =
+        match lookup_operand a arg with
+        | OverDefined -> Some OverDefined
+        | NeverDefined -> None
+        | Defined arg -> Some (Defined (apply_uop arg uop))
+      in
+      add_to_mapping a res res_value
+    | Target.Uop _ -> failwith "handle_instruction: uop destination not a name"
     | Target.Bop (Reg res, bop, lhs, rhs) ->
       let res_value =
-        match (lookup_operand lhs a, lookup_operand rhs a) with
+        match (lookup_operand a lhs, lookup_operand a rhs) with
         | OverDefined, _ | _, OverDefined -> Some OverDefined
         | NeverDefined, _ | _, NeverDefined -> None
         | Defined l, Defined r -> Some (Defined (apply_bop l r bop))
       in
-      begin match res_value with
-      | Some v -> { a with mapping = NameMap.add res v a.mapping }
-      | None -> a
-      end
-    | Target.Call (Reg r, _, _) ->
-      { a with mapping = NameMap.add r OverDefined a.mapping }
-    | _ -> a
+      add_to_mapping a res res_value
+    | Target.Bop _ -> failwith "handle_instruction: bop destination not a name"
+    | Target.Call (Reg r, _, _) -> add_to_mapping a r (Some OverDefined)
+    | Target.Call _ ->
+      failwith "handle_instruction: call destination not a name"
+    | Target.Return _ -> (false, a)
+    | Target.Goto _ ->
+      failwith "handle_instruction: goto instruction unexpected"
+    | Target.Cbranch _ ->
+      failwith "handle_instruction: cbranch instruction unexpected"
   in
   let handle_middle a instr =
     let all_defs_defined =
       instr |> Target.defs |> NameSet.to_list
-      |> List.map (fun n -> lookup_operand (Reg n) a)
+      |> List.map (fun n -> lookup_operand a (Reg n))
       |> List.for_all (function
         | Defined _ -> true
         | _ -> false)
     in
-    if all_defs_defined then Flow.Rewrite Cfg.empty
-    else Flow.Dataflow (handle_instruction a instr)
+    let changed, a = handle_instruction a instr in
+    if changed then Flow.Dataflow a
+    else if all_defs_defined then Flow.Rewrite Cfg.empty
+    else
+      let instr, changed = rewrite_uses lookup_operand a instr in
+      if changed then
+        Flow.Rewrite Cfg.(unfocus @@ instruction instr @@ focus_entry empty)
+      else Flow.Dataflow a
   in
   let handle_last a = function
     | Cfg.Exit -> Flow.Dataflow (fun _ -> ())
-    | Cfg.Branch (_, (uid, _)) ->
-      Flow.Dataflow (fun set -> set uid { a with executable = true })
-    | Cfg.CBranch (instr, (uid1, _), (uid2, _)) ->
-      let set_branches l r set =
-        set uid1 { a with executable = l };
-        set uid2 { a with executable = r }
+    | Cfg.Branch (i, ((uid, _) as l)) ->
+      if not (fact.get uid).executable then
+        Flow.Dataflow (fun set -> set uid { a with executable = true })
+      else
+        let i, changed =
+          Deadcode.rewrite_branch (IntHashtbl.find saved_args) i
+        in
+        let i, changed' = rewrite_uses lookup_operand a i in
+        if changed || changed' then
+          Flow.Rewrite
+            Cfg.(unfocus ((First Entry, Last (Branch (i, l))), empty))
+        else Flow.Dataflow (fun _ -> ())
+    | Cfg.CBranch
+        ( (Target.Cbranch (lhs, rhs, cond, _, _, _, _) as i),
+          ((uid1, _) as l1),
+          ((uid2, _) as l2) ) ->
+      let set_branches l r =
+        ( (fact.get uid1).executable <> l || (fact.get uid2).executable <> r,
+          fun set ->
+            set uid1 { a with executable = l };
+            set uid2 { a with executable = r } )
       in
       let set_cond_executable b =
         if b then set_branches true false else set_branches false true
       in
       let set_both_executable = set_branches true true in
-      begin match instr with
-      | Target.Cbranch (lhs, rhs, cond, _, _, _, _) ->
-        Flow.Dataflow
-          begin match (lookup_operand lhs a, lookup_operand rhs a) with
-          | OverDefined, _ | _, OverDefined -> set_both_executable
-          | NeverDefined, _ | _, NeverDefined -> fun _ -> ()
-          | Defined l, Defined r -> set_cond_executable (apply_cond l r cond)
-          end
-      | _ -> Flow.Dataflow (fun _ -> ())
-      end
+      let changed, flow =
+        match (lookup_operand a lhs, lookup_operand a rhs) with
+        | OverDefined, _ | _, OverDefined -> set_both_executable
+        | NeverDefined, _ | _, NeverDefined -> (false, fun _ -> ())
+        | Defined l, Defined r -> set_cond_executable (apply_cond l r cond)
+      in
+      if changed then Flow.Dataflow flow
+      else
+        let i, changed =
+          Deadcode.rewrite_branch (IntHashtbl.find saved_args) i
+        in
+        let i, changed' = rewrite_uses lookup_operand a i in
+        if changed || changed' then
+          Flow.Rewrite
+            Cfg.(unfocus ((First Entry, Last (CBranch (i, l1, l2))), empty))
+        else Flow.Dataflow (fun _ -> ())
+    | Cfg.CBranch _ -> failwith "handle_last: expected cbranch"
     | Cfg.Return (_, _) -> Flow.Dataflow (fun _ -> ())
   in
   let pass =
@@ -256,4 +332,5 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
   in
   let pass = (fact, pass) in
   (* todo: mark function arguments as overdefined *)
-  snd @@ Flow.ForwardPass.solve_and_rewrite pass graph fact.init_info
+  let entry_fact = { fact.init_info with executable = true } in
+  snd @@ Flow.ForwardPass.solve_and_rewrite pass graph entry_fact
