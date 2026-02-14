@@ -205,17 +205,17 @@ functor
       type 'a functions = {
         first_out : G.first -> 'a;
         middle_out : 'a -> G.middle -> 'a;
-        last_outs : 'a -> G.last -> (G.uid -> 'a -> unit) -> unit;
+        last_outs : G.uid -> 'a -> G.last -> (G.uid -> 'a -> unit) -> unit;
       }
       type 'a t = 'a fact * 'a functions
 
       let run ~entry_fact (fact, analysis) graph =
         let changed = ref false in
-        let set_successor_facts (first, tail) =
+        let set_successor_facts ((first, tail) as b) =
           let update = update fact changed in
           let rec forward in' = function
             | G.Tail (m, t) -> forward (analysis.middle_out in' m) t
-            | G.Last l -> analysis.last_outs in' l update
+            | G.Last l -> analysis.last_outs (G.id b) in' l update
           in
           forward (analysis.first_out first) tail
         in
@@ -227,7 +227,8 @@ functor
       type 'a functions = {
         first_out : G.first -> 'a answer;
         middle_out : 'a -> G.middle -> 'a answer;
-        last_outs : 'a -> G.last -> ((G.uid -> 'a -> unit) -> unit) answer;
+        last_outs :
+          G.uid -> 'a -> G.last -> ((G.uid -> 'a -> unit) -> unit) answer;
       }
       type 'a t = 'a fact * 'a functions
 
@@ -239,9 +240,9 @@ functor
         (fact, { pass_fns with first_out })
 
       let with_exit (fact, pass_fns) exit_fact_ref =
-        let last_outs in' = function
+        let last_outs uid in' = function
           | G.Exit -> Dataflow (fun _ -> exit_fact_ref := in')
-          | l -> pass_fns.last_outs in' l
+          | l -> pass_fns.last_outs uid in' l
         in
         (fact, { pass_fns with last_outs })
 
@@ -254,7 +255,7 @@ functor
       and general_forward ((fact, pass_fns) as pass) graph =
         let changed = ref false in
         let update = update fact changed in
-        let set_successor_facts (first, tail) =
+        let set_successor_facts ((first, tail) as b) =
           let rec set_tail_facts in' = function
             | G.Tail (m, t) -> begin
               match pass_fns.middle_out in' m with
@@ -262,7 +263,7 @@ functor
               | Rewrite g -> set_tail_facts (solve_graph pass g in') t
             end
             | G.Last l -> begin
-              match pass_fns.last_outs in' l with
+              match pass_fns.last_outs (G.id b) in' l with
               | Dataflow setter -> setter update
               | Rewrite g -> ignore (solve_graph pass g in')
             end
@@ -306,11 +307,12 @@ functor
                 | Rewrite g ->
                   let a, (g, _) = solve_and_rewrite pass g a changed in
                   let g, h = G.splice_head h g in
+                  let _, g = G.remove_entry g in
                   let rewritten = G.Blocks.union g rewritten in
                   propagate h a t rewritten true
               end
               | G.Last l -> begin
-                match pass_fns.last_outs a l with
+                match pass_fns.last_outs (G.id b) a l with
                 | Dataflow set ->
                   set (check_property_match fact);
                   rewrite_blocks changed

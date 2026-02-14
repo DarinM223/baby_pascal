@@ -170,7 +170,7 @@ module Target = struct
     match args with
     | [ o1; o2 ] -> Cbranch (o1, o2, cond, l1, l1args, l2, l2args)
     | _ -> failwith "cbranch expects only two arguments currently"
-  let return ~uses = Return (List.map (fun r -> Reg r) uses)
+  let return ~uses = Return uses
   let uop op ~dest ~src = Uop (dest, op, src)
   let bop (op : Ast.bop) ~dest ~src1 ~src2 = Bop (dest, op, src1, src2)
 end

@@ -10,7 +10,7 @@ let test_simple () =
     @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
     @@ instruction (assign ~src:(reg "x") ~dest:(reg "c"))
     @@ instruction (bop Add ~dest:(reg "d") ~src1:(reg "c") ~src2:(Const 1))
-    @@ return ~uses:[ name "b" ]
+    @@ return ~uses:[ reg "b" ]
     @@ focus_entry empty
   in
   let expected =
@@ -19,7 +19,7 @@ let test_simple () =
     unfocus
     @@ instruction (assign ~src:(reg "x") ~dest:(reg "a"))
     @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
-    @@ return ~uses:[ name "b" ]
+    @@ return ~uses:[ reg "b" ]
     @@ focus_entry empty
   in
   let cfg, changed = Deadcode.deadcode cfg in
@@ -41,10 +41,10 @@ let test_branch () =
     @@ cbranch ~args:[ reg "f"; Const 0 ] EQ ~ifso:(1, "") ~ifnot:(2, "")
     @@ label (1, "")
     @@ instruction (bop Add ~dest:(reg "g") ~src1:(reg "a") ~src2:(Const 1))
-    @@ return ~uses:[ name "b" ]
+    @@ return ~uses:[ reg "b" ]
     @@ label (2, "")
     @@ instruction (bop Add ~dest:(reg "h") ~src1:(reg "c") ~src2:(Const 1))
-    @@ return ~uses:[ name "d" ]
+    @@ return ~uses:[ reg "d" ]
     @@ focus_entry empty
   in
   let expected =
@@ -58,9 +58,9 @@ let test_branch () =
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "f"))
     @@ cbranch ~args:[ reg "f"; Const 0 ] EQ ~ifso:(1, "") ~ifnot:(2, "")
     @@ label (1, "")
-    @@ return ~uses:[ name "b" ]
+    @@ return ~uses:[ reg "b" ]
     @@ label (2, "")
-    @@ return ~uses:[ name "d" ]
+    @@ return ~uses:[ reg "d" ]
     @@ focus_entry empty
   in
   let cfg, changed = Deadcode.deadcode cfg in

@@ -78,7 +78,7 @@ let block_args graph =
       List.fold_left go_use
         (fact.add_info (fact.get uid1) (fact.get uid2))
         (Target.srcs i)
-    | Cfg.Return (_, _) -> NameMap.empty
+    | Cfg.Return _ -> NameMap.empty
   in
   let analysis =
     {
@@ -110,11 +110,13 @@ let state_fact () =
     add_info =
       (fun a b ->
         {
-          mapping = NameMap.union (fun _ _ a -> Some a) a.mapping b.mapping;
-          executable = b.executable;
+          mapping = NameMap.union (fun _ a _ -> Some a) a.mapping b.mapping;
+          executable = a.executable || b.executable;
         });
     changed = (fun ~before ~after -> not (equal before after));
-    skip_block = (fun uid -> not (IntHashtbl.find store uid).executable);
+    skip_block =
+      (fun uid ->
+        uid <> Cfg.entry_uid && not (IntHashtbl.find store uid).executable);
     get = IntHashtbl.find store;
     set = IntHashtbl.add store;
   }
@@ -159,7 +161,16 @@ let rewrite_uses lookup_operand a instr =
         | _ -> op)
       instr
   in
-  (instr', Target.equal_instr instr' instr)
+  (instr', not (Target.equal_instr instr' instr))
+
+let is_side_effectful = function
+  | Target.Call _ -> true
+  | Target.Return _ -> true
+  | _ -> false
+
+let fact_changed fact uid a =
+  let old_a = fact.Flow.get uid in
+  fact.changed ~before:old_a ~after:(fact.add_info a old_a)
 
 let constprop (block_args : OperandSet.t NameMap.t) graph =
   let fact = state_fact () in
@@ -218,7 +229,8 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
         in
         let args = List.map rewrite_block_arg info.args in
         IntHashtbl.add saved_args uid (List.map (fun n -> Target.Reg n) args);
-        Flow.Rewrite Cfg.(unfocus @@ label ~args l @@ focus_entry empty)
+        if args = info.args then Flow.Dataflow a
+        else Flow.Rewrite Cfg.(unfocus @@ label ~args l @@ focus_entry empty)
       end
   in
   let handle_instruction a = function
@@ -269,18 +281,26 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
     in
     let changed, a = handle_instruction a instr in
     if changed then Flow.Dataflow a
-    else if all_defs_defined then Flow.Rewrite Cfg.empty
+    else if all_defs_defined && not (is_side_effectful instr) then
+      Flow.Rewrite Cfg.empty
     else
       let instr, changed = rewrite_uses lookup_operand a instr in
       if changed then
         Flow.Rewrite Cfg.(unfocus @@ instruction instr @@ focus_entry empty)
       else Flow.Dataflow a
   in
-  let handle_last a = function
-    | Cfg.Exit -> Flow.Dataflow (fun _ -> ())
+  let handle_last self_uid a =
+    let dataflow f =
+      Flow.Dataflow
+        (fun set ->
+          set self_uid a;
+          f set)
+    in
+    function
+    | Cfg.Exit -> dataflow (fun _ -> ())
     | Cfg.Branch (i, ((uid, _) as l)) ->
-      if not (fact.get uid).executable then
-        Flow.Dataflow (fun set -> set uid { a with executable = true })
+      let a = { a with executable = true } in
+      if fact_changed fact uid a then dataflow (fun set -> set uid a)
       else
         let i, changed =
           Deadcode.rewrite_branch (IntHashtbl.find saved_args) i
@@ -289,16 +309,18 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
         if changed || changed' then
           Flow.Rewrite
             Cfg.(unfocus ((First Entry, Last (Branch (i, l))), empty))
-        else Flow.Dataflow (fun _ -> ())
+        else dataflow (fun _ -> ())
     | Cfg.CBranch
         ( (Target.Cbranch (lhs, rhs, cond, _, _, _, _) as i),
           ((uid1, _) as l1),
           ((uid2, _) as l2) ) ->
       let set_branches l r =
-        ( (fact.get uid1).executable <> l || (fact.get uid2).executable <> r,
+        let al = { a with executable = l } in
+        let ar = { a with executable = r } in
+        ( fact_changed fact uid1 al || fact_changed fact uid2 ar,
           fun set ->
-            set uid1 { a with executable = l };
-            set uid2 { a with executable = r } )
+            set uid1 al;
+            set uid2 ar )
       in
       let set_cond_executable b =
         if b then set_branches true false else set_branches false true
@@ -310,7 +332,7 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
         | NeverDefined, _ | _, NeverDefined -> (false, fun _ -> ())
         | Defined l, Defined r -> set_cond_executable (apply_cond l r cond)
       in
-      if changed then Flow.Dataflow flow
+      if changed then dataflow flow
       else
         let i, changed =
           Deadcode.rewrite_branch (IntHashtbl.find saved_args) i
@@ -319,9 +341,15 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
         if changed || changed' then
           Flow.Rewrite
             Cfg.(unfocus ((First Entry, Last (CBranch (i, l1, l2))), empty))
-        else Flow.Dataflow (fun _ -> ())
+        else dataflow (fun _ -> ())
     | Cfg.CBranch _ -> failwith "handle_last: expected cbranch"
-    | Cfg.Return (_, _) -> Flow.Dataflow (fun _ -> ())
+    | Cfg.Return i ->
+      if fact_changed fact self_uid a then dataflow (fun _ -> ())
+      else
+        let i, changed = rewrite_uses lookup_operand a i in
+        if changed then
+          Flow.Rewrite Cfg.(unfocus ((First Entry, Last (Return i)), empty))
+        else dataflow (fun _ -> ())
   in
   let pass =
     {
@@ -332,5 +360,4 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
   in
   let pass = (fact, pass) in
   (* todo: mark function arguments as overdefined *)
-  let entry_fact = { fact.init_info with executable = true } in
-  snd @@ Flow.ForwardPass.solve_and_rewrite pass graph entry_fact
+  snd @@ Flow.ForwardPass.solve_and_rewrite pass graph fact.init_info

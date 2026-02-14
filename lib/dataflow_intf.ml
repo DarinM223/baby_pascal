@@ -42,7 +42,7 @@ module type S = sig
     type 'a functions = {
       first_out : G.first -> 'a;
       middle_out : 'a -> G.middle -> 'a;
-      last_outs : 'a -> G.last -> (G.uid -> 'a -> unit) -> unit;
+      last_outs : G.uid -> 'a -> G.last -> (G.uid -> 'a -> unit) -> unit;
     }
     type 'a t = 'a fact * 'a functions
     val run : entry_fact:'a -> 'a t -> G.graph -> int
@@ -52,7 +52,8 @@ module type S = sig
     type 'a functions = {
       first_out : G.first -> 'a answer;
       middle_out : 'a -> G.middle -> 'a answer;
-      last_outs : 'a -> G.last -> ((G.uid -> 'a -> unit) -> unit) answer;
+      last_outs :
+        G.uid -> 'a -> G.last -> ((G.uid -> 'a -> unit) -> unit) answer;
     }
     type 'a t = 'a fact * 'a functions
     val solve_graph : 'a t -> G.graph -> 'a -> 'a

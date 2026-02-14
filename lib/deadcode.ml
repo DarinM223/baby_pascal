@@ -60,7 +60,7 @@ let deadcode graph =
     | Cfg.CBranch (instr, (uid1, _), (uid2, _)) ->
       handle_instruction instr
       @@ NameSet.union (liveness_fact.get uid1) (liveness_fact.get uid2)
-    | Cfg.Return (instr, _) -> handle_instruction instr NameSet.empty
+    | Cfg.Return instr -> handle_instruction instr NameSet.empty
   in
   let handle_last _ last =
     match last with
@@ -76,7 +76,7 @@ let deadcode graph =
         Flow.Rewrite
           Cfg.(unfocus ((First Entry, Last (CBranch (i, l1, l2))), empty))
       else Flow.Dataflow (calc_live_out last)
-    | Cfg.Return (_, _) -> Flow.Dataflow (calc_live_out last)
+    | Cfg.Return _ -> Flow.Dataflow (calc_live_out last)
   in
   let pass =
     {

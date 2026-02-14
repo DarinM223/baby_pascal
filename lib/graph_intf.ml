@@ -24,7 +24,7 @@ module type Target = sig
   val goto : label -> operands -> instr
   val cbranch :
     args:operands -> cond -> label -> operands -> label -> operands -> instr
-  val return : uses:reg list -> instr
+  val return : uses:operands -> instr
 
   val pp_reg : Format.formatter -> reg -> unit
   val equal_reg : reg -> reg -> bool
@@ -65,7 +65,7 @@ module type S = sig
   val pp_uid : Format.formatter -> uid -> unit
   val show_uid : uid -> string
   val equal_uid : uid -> uid -> bool
-  val entry_uid : int
+  val entry_uid : uid
 
   type label = uid * string
   val pp_label : Format.formatter -> label -> unit
@@ -101,7 +101,7 @@ module type S = sig
     | Exit
     | Branch of Target.instr * label
     | CBranch of Target.instr * label * label
-    | Return of Target.instr * regs
+    | Return of Target.instr
   val pp_last : Format.formatter -> last -> unit
   val show_last : last -> string
   val equal_last : last -> last -> bool
@@ -147,6 +147,7 @@ module type S = sig
     val union : graph -> graph -> graph
   end
 
+  val exit_uid : graph -> uid
   val id : block -> uid
   val block_label : block -> label option
   val empty : graph
@@ -189,7 +190,7 @@ module type S = sig
     ifso:Target.label ->
     ifnot:Target.label ->
     nodes
-  val return : uses:regs -> nodes
+  val return : uses:Target.operands -> nodes
   val exit : nodes
 
   val precalculate_edges :

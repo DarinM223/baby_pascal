@@ -87,7 +87,7 @@ let test_map_first_last () =
     | Exit -> Exit
     | Branch (_, l) -> Branch (goto l [ reg "a"; reg "b" ], l)
     | CBranch (_, _, _) -> failwith ""
-    | Return (_, _) -> failwith ""
+    | Return _ -> failwith ""
   in
   let zblock = map_last handle_last (map_first handle_first zblock) in
   let expected =

@@ -29,7 +29,7 @@ functor
       | Exit
       | Branch of Target.instr * label
       | CBranch of Target.instr * label * label
-      | Return of Target.instr * regs
+      | Return of Target.instr
     [@@deriving show, eq]
 
     type head =
@@ -79,6 +79,17 @@ functor
       | head, Last last -> (head, last)
       | head, Tail (mid, tail) -> goto_end (Head (head, mid), tail)
 
+    let exit_uid graph =
+      let rec find_exit = function
+        | (uid, block) :: rest -> begin
+          match goto_end (unzip block) with
+          | _, Exit -> uid
+          | _ -> find_exit rest
+        end
+        | [] -> failwith "exit not found"
+      in
+      find_exit (IntMap.to_list graph)
+
     let map_first f (head, tail) =
       let rec go head k =
         match head with
@@ -101,15 +112,7 @@ functor
 
     let focus_entry graph = focus entry_uid graph
     let focus_exit graph =
-      let rec find_exit = function
-        | (uid, block) :: rest -> begin
-          match goto_end (unzip block) with
-          | _, Exit -> uid
-          | _ -> find_exit rest
-        end
-        | [] -> failwith "exit not found"
-      in
-      let uid = find_exit (IntMap.to_list graph) in
+      let uid = exit_uid graph in
       let zblock, graph = focus uid graph in
       let head, last = goto_end zblock in
       ((head, Last last), graph)
@@ -261,7 +264,7 @@ functor
 
     let return ~uses ((head, tail), graph) =
       unreachable tail;
-      ((head, Last (Return (Target.return ~uses, uses))), graph)
+      ((head, Last (Return (Target.return ~uses))), graph)
 
     let exit ((head, tail), graph) =
       unreachable tail;

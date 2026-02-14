@@ -60,7 +60,7 @@ let calc_live graph : liveness =
     | Cfg.CBranch (instr, (uid1, _), (uid2, _)) ->
       handle_instruction instr
       @@ NameSet.union (liveness_fact.get uid1) (liveness_fact.get uid2)
-    | Cfg.Return (instr, _) -> handle_instruction instr NameSet.empty
+    | Cfg.Return instr -> handle_instruction instr NameSet.empty
   in
   let liveness_analysis =
     {
@@ -203,9 +203,9 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
       | Cfg.CBranch (instr, l1, l2) ->
         let vardefs, instr = rename_instruction vardefs instr in
         (vardefs, Cfg.CBranch (instr, l1, l2))
-      | Cfg.Return (instr, regs) ->
+      | Cfg.Return instr ->
         let vardefs, instr = rename_instruction vardefs instr in
-        (vardefs, Cfg.Return (instr, regs))
+        (vardefs, Cfg.Return instr)
     in
     let vardefs, first =
       match first with
