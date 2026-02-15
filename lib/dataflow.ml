@@ -128,8 +128,10 @@ functor
         let blocks = List.rev (G.reverse_postorder_dfs graph) in
         run fact changed fact.init_info set_block_fact blocks
 
-      let rec solve_and_rewrite pass graph exit_fact changed =
+      let rec solve_and_rewrite ?(after_analysis = fun _ -> ()) pass graph
+          exit_fact changed =
         let entry_info = solve_graph pass graph exit_fact in
+        after_analysis entry_info;
         let result =
           backward_rewrite (with_exit pass exit_fact) graph changed
         in
@@ -197,8 +199,8 @@ functor
         rewrite_blocks changed G.empty
           (List.rev (G.reverse_postorder_dfs graph))
 
-      let solve_and_rewrite pass graph entry =
-        solve_and_rewrite pass graph entry false
+      let solve_and_rewrite ?after_analysis pass graph entry =
+        solve_and_rewrite ?after_analysis pass graph entry false
     end
 
     module ForwardAnalysis = struct
@@ -288,8 +290,10 @@ functor
                "property at label %s changed after reaching fixed point"
           @@ G.show_uid uid
 
-      let rec solve_and_rewrite ((fact, _) as pass) graph entry_fact changed =
-        let _ = solve_graph pass graph entry_fact in
+      let rec solve_and_rewrite ?(after_analysis = fun _ -> ())
+          ((fact, _) as pass) graph entry_fact changed =
+        let exit_info = solve_graph pass graph entry_fact in
+        after_analysis exit_info;
         let exit_ref = ref fact.init_info in
         let pass = with_entry (with_exit pass exit_ref) entry_fact in
         let result = forward_rewrite pass graph changed in
@@ -356,7 +360,7 @@ functor
         in
         rewrite_blocks changed G.empty (G.reverse_postorder_dfs graph)
 
-      let solve_and_rewrite pass graph entry_fact =
-        solve_and_rewrite pass graph entry_fact false
+      let solve_and_rewrite ?after_analysis pass graph entry_fact =
+        solve_and_rewrite ?after_analysis pass graph entry_fact false
     end
   end
