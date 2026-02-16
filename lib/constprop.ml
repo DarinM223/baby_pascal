@@ -99,6 +99,7 @@ type lattice =
 
 type t = {
   mapping : lattice NameMap.t;
+  args : Target.regs;
   executable : bool;
 }
 [@@deriving show, eq]
@@ -106,11 +107,12 @@ type t = {
 let state_fact () =
   let store = IntHashtbl.create hashtbl_size in
   {
-    Flow.init_info = { mapping = NameMap.empty; executable = false };
+    Flow.init_info = { mapping = NameMap.empty; args = []; executable = false };
     add_info =
       (fun a b ->
         {
           mapping = NameMap.union (fun _ a _ -> Some a) a.mapping b.mapping;
+          args = a.args;
           executable = a.executable || b.executable;
         });
     changed = (fun ~before ~after -> not (equal before after));
@@ -174,7 +176,6 @@ let is_side_effectful = function
 
 let constprop (block_args : OperandSet.t NameMap.t) graph =
   let fact = state_fact () in
-  let saved_args = IntHashtbl.create hashtbl_size in
   let converged = ref false in
   let lookup_operand a = function
     | Target.Const c -> Defined c
@@ -208,17 +209,19 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
         | _ -> { a with mapping = NameMap.add arg OverDefined a.mapping }
       in
       if not !converged then
-        Flow.Dataflow (List.fold_left update_block_arg a info.args)
-      else begin
+        let a = List.fold_left update_block_arg a info.args in
         let rewrite_block_arg arg =
           match NameMap.find_opt arg a.mapping with
           | Some (Defined _) -> Name.tombstone
           | _ -> arg
         in
         let args = List.map rewrite_block_arg info.args in
-        IntHashtbl.add saved_args uid (List.map (fun n -> Target.Reg n) args);
-        if args = info.args then Flow.Dataflow a
-        else Flow.Rewrite Cfg.(unfocus @@ label ~args l @@ focus_entry empty)
+        Flow.Dataflow { a with args }
+      else begin
+        if a.args = info.args then Flow.Dataflow a
+        else
+          Flow.Rewrite
+            Cfg.(unfocus @@ label ~args:a.args l @@ focus_entry empty)
       end
   in
   let handle_instruction a = function
@@ -286,6 +289,7 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
         Flow.Rewrite Cfg.(unfocus @@ instruction instr @@ focus_entry empty)
       else Flow.Dataflow a
   in
+  let get_args uid = List.map (fun n -> Target.Reg n) (fact.get uid).args in
   let handle_last self_uid a = function
     | Cfg.Exit -> Flow.Dataflow (fun set -> set self_uid a)
     | Cfg.Branch (i, ((uid, _) as l)) ->
@@ -295,9 +299,7 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
             set self_uid a;
             set uid { a with executable = true })
       else
-        let i, changed =
-          Deadcode.rewrite_branch (IntHashtbl.find saved_args) i
-        in
+        let i, changed = Deadcode.rewrite_branch get_args i in
         let i, changed' = rewrite_uses lookup_operand a i in
         if changed || changed' then
           Flow.Rewrite
@@ -325,9 +327,7 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
         in
         Flow.Dataflow flow
       else
-        let i, changed =
-          Deadcode.rewrite_branch (IntHashtbl.find saved_args) i
-        in
+        let i, changed = Deadcode.rewrite_branch get_args i in
         let i, changed' = rewrite_uses lookup_operand a i in
         if changed || changed' then
           Flow.Rewrite

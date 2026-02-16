@@ -70,8 +70,7 @@ let test_const_prop_args () =
     let open Normalize.Cfg in
     unfocus
     @@ label (1, "")
-    (* todo: remove args from branches to label with args removed *)
-    @@ branch ~args:[ Const 2; Const 1 ] (2, "")
+    @@ branch (2, "")
     @@ label (2, "")
     @@ return ~uses:[ Const 1 ] @@ focus_entry empty
   in
