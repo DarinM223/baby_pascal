@@ -38,17 +38,20 @@ functor
       fact.set G.entry_uid entry_fact;
       iterate 1
 
-    let without_changing_entry (fact : 'a fact) (f : unit -> 'b) : 'b * 'a =
+    let without_changing_node (uid : G.uid) (fact : 'a fact) (f : unit -> 'b) :
+        'b * 'a =
       let restore =
         try
-          let old_fact = fact.get G.entry_uid in
-          fun () -> fact.set G.entry_uid old_fact
+          let old_fact = fact.get uid in
+          fun () -> fact.set uid old_fact
         with Not_found -> fun () -> ()
       in
       let result = f () in
-      let entry_info = fact.get G.entry_uid in
+      let entry_info = fact.get uid in
       restore ();
       (result, entry_info)
+
+    let without_changing_entry fact f = without_changing_node G.entry_uid fact f
 
     let skipping_entry (fact, fns) =
       ( {
@@ -157,7 +160,8 @@ functor
                 | Dataflow _ ->
                   rewrite_blocks changed (G.Blocks.insert (f, t) rewritten) bs
                 | Rewrite g ->
-                  let _, (g, _) =
+                  let (_, (g, _)), _ =
+                    without_changing_node (G.id b) fact @@ fun _ ->
                     solve_and_rewrite (skipping_entry pass) g a changed
                   in
                   begin match f with
@@ -251,7 +255,9 @@ functor
       let rec solve_graph ((fact, _) as pass) graph entry_fact =
         let exit_fact_ref = ref fact.init_info in
         let pass = with_entry (with_exit pass exit_fact_ref) entry_fact in
-        let _ = general_forward pass graph in
+        let _ =
+          without_changing_entry fact @@ fun _ -> general_forward pass graph
+        in
         !exit_fact_ref
 
       and general_forward ((fact, pass_fns) as pass) graph =
@@ -335,10 +341,12 @@ functor
               begin match pass_fns.first_out first with
               | Dataflow a -> propagate (G.First first) a tail rewritten changed
               | Rewrite g ->
-                let a, (g, _) =
+                let (_, (g, _)), _ =
+                  without_changing_node (G.id b) fact @@ fun _ ->
                   solve_and_rewrite (skipping_entry pass) g fact.init_info
                     changed
                 in
+                let a = fact.get (G.id b) in
                 begin match first with
                 | G.Entry ->
                   let g, h = G.splice_head (G.First G.Entry) g in
@@ -353,6 +361,7 @@ functor
                   let g, h =
                     G.(splice_head ~entry:uid (First f) (snd (remove_entry g)))
                   in
+                  let _, g = G.remove_entry g in
                   let rewritten = G.Blocks.union g rewritten in
                   propagate h a tail rewritten true
                 end

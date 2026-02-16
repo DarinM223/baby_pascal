@@ -153,12 +153,16 @@ let apply_cond l r = function
   | Target.NE -> l <> r
 
 let rewrite_uses lookup_operand a instr =
+  let handle_operand op =
+    match lookup_operand a op with
+    | Defined c -> Target.Const c
+    | _ -> op
+  in
   let instr' =
     Target.map_uses
-      (fun op ->
-        match lookup_operand a op with
-        | Defined c -> Const c
-        | _ -> op)
+      (function
+        | Label (l, args) -> Label (l, List.map handle_operand args)
+        | (Const _ | Reg _) as op -> handle_operand op)
       instr
   in
   (instr', not (Target.equal_instr instr' instr))
