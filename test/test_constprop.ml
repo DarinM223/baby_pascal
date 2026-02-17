@@ -80,6 +80,40 @@ let test_const_prop_args () =
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" cfg expected
 
+let test_const_prop_branch () =
+  let cfg =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ label (1, "")
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
+    @@ instruction (bop Ast.Add ~src1:(Const 1) ~src2:(reg "a") ~dest:(reg "b"))
+    @@ cbranch ~ifnot_args:[ Const 1 ]
+         ~args:[ reg "b"; reg "a" ]
+         LT ~ifso:(2, "") ~ifnot:(3, "")
+    @@ label (2, "")
+    @@ instruction (call ~dest:(reg "c") (Const 100) [ Const 1 ])
+    @@ branch ~args:[ reg "c" ] (3, "")
+    @@ label ~args:[ name "d" ] (3, "")
+    @@ return ~uses:[ reg "d" ]
+    @@ focus_entry empty
+  in
+  let expected =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    (* todo: delete empty blocks *)
+    @@ label (1, "")
+    @@ branch (3, "")
+    @@ label (3, "")
+    @@ return ~uses:[ Const 1 ] @@ focus_entry empty
+  in
+  let block_args = Constprop.block_args cfg in
+  let cfg, changed = Constprop.constprop block_args cfg in
+  (check bool) "Graph changed" changed true;
+  (check Normalize.Cfg.(testable pp_graph equal_graph))
+    "Produces proper graph" cfg expected
+
 let _ =
   run "Normalize to zipper cfg"
     [
@@ -88,5 +122,6 @@ let _ =
         [
           test_case "simple" `Quick test_const_prop_simple;
           test_case "block args" `Quick test_const_prop_args;
+          test_case "conditional branch" `Quick test_const_prop_branch;
         ] );
     ]

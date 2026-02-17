@@ -130,7 +130,7 @@ module type S = sig
   val show_block : block -> string
   val equal_block : block -> block -> bool
 
-  type graph = block IntMap.t
+  type graph
   val pp_graph : Format.formatter -> graph -> unit
   val show_graph : graph -> string
   val equal_graph : graph -> graph -> bool
@@ -143,6 +143,9 @@ module type S = sig
   type nodes = zgraph -> zgraph
 
   module Blocks : sig
+    val iter : (uid -> block -> unit) -> graph -> unit
+    val filter : (uid -> block -> bool) -> graph -> graph
+    val fold : (uid -> block -> 'a -> 'a) -> graph -> 'a -> 'a
     val insert : block -> graph -> graph
     val union : graph -> graph -> graph
   end

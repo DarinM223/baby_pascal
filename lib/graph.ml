@@ -118,6 +118,9 @@ functor
       ((head, Last last), graph)
 
     module Blocks = struct
+      let iter = IntMap.iter
+      let filter = IntMap.filter
+      let fold = IntMap.fold
       let insert block =
         match block with
         | Entry, _ -> IntMap.add entry_uid block

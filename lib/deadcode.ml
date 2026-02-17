@@ -1,8 +1,4 @@
-module Cfg = Normalize.Cfg
-module Name = Normalize.Name
-module NameSet = Normalize.NameSet
-module Flow = Normalize.Flow
-module Target = Normalize.Target
+open Normalize
 module IntHashtbl = Hashtbl.Make (Int)
 
 let rewrite_branch lookup_args instr =
@@ -28,9 +24,9 @@ let rewrite_branch lookup_args instr =
 let hashtbl_size = 100
 
 let deadcode graph =
-  let liveness_fact = Construct.name_fact () in
+  let fact = Construct.name_fact () in
   let block_args = IntHashtbl.create hashtbl_size in
-  let handle_first a = function
+  let first_in a = function
     | Cfg.Entry -> Flow.Dataflow a
     | Cfg.Label (((uid, _) as l), info) ->
       let args =
@@ -48,21 +44,19 @@ let deadcode graph =
   let handle_instruction instr a =
     NameSet.union (Target.uses instr) (NameSet.diff a (Target.defs instr))
   in
-  let handle_middle a (Cfg.Instruction instr) =
+  let middle_in a (Cfg.Instruction instr) =
     if NameSet.(is_empty (inter (Target.defs instr) a)) then
       Flow.Rewrite Cfg.empty
     else Flow.Dataflow (handle_instruction instr a)
   in
   let calc_live_out = function
     | Cfg.Exit -> NameSet.empty
-    | Cfg.Branch (instr, (uid, _)) ->
-      handle_instruction instr @@ liveness_fact.get uid
+    | Cfg.Branch (instr, (uid, _)) -> handle_instruction instr (fact.get uid)
     | Cfg.CBranch (instr, (uid1, _), (uid2, _)) ->
-      handle_instruction instr
-      @@ NameSet.union (liveness_fact.get uid1) (liveness_fact.get uid2)
+      handle_instruction instr (NameSet.union (fact.get uid1) (fact.get uid2))
     | Cfg.Return instr -> handle_instruction instr NameSet.empty
   in
-  let handle_last _ last =
+  let last_in _ last =
     match last with
     | Cfg.Exit -> Flow.Dataflow (calc_live_out last)
     | Cfg.Branch (i, l) ->
@@ -78,12 +72,5 @@ let deadcode graph =
       else Flow.Dataflow (calc_live_out last)
     | Cfg.Return _ -> Flow.Dataflow (calc_live_out last)
   in
-  let pass =
-    {
-      Flow.BackwardPass.first_in = handle_first;
-      middle_in = handle_middle;
-      last_in = handle_last;
-    }
-  in
-  let pass = (liveness_fact, pass) in
+  let pass = (fact, { Flow.BackwardPass.first_in; middle_in; last_in }) in
   snd @@ Flow.BackwardPass.solve_and_rewrite pass graph NameSet.empty

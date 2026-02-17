@@ -93,7 +93,7 @@ functor
           | [] -> k (Leaf (Extra.label_of_position node))
           | _ -> go [] children
         in
-        IntMap.iter
+        G.Blocks.iter
           (fun _ block ->
             block |> G.block_label |> Extra.position_of_label |> add_children)
           Extra.graph;
@@ -123,7 +123,7 @@ functor
           in
           if List.length preds >= 2 then List.iter go_pred preds
         in
-        IntMap.iter
+        G.Blocks.iter
           (fun _ block -> go (Extra.position_of_label (G.block_label block)))
           graph;
         fun p ->

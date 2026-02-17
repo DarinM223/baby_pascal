@@ -5,7 +5,6 @@ module NameHashtbl = Hashtbl.Make (struct
   let equal n1 n2 = label n1 = label n2
   let hash n = Hashtbl.hash (label n)
 end)
-module IntMap = Graph_intf.IntMap
 module IntSet = Graph_intf.IntSet
 module Cfg = Normalize.Cfg
 module NameSet = Normalize.NameSet
@@ -81,7 +80,7 @@ let insert_phis (test : Cfg.uid -> Name.t -> bool)
     (module Dom : Dominator.S with type label = Cfg.label) (a_orig : a_orig)
     (graph : Cfg.graph) =
   let defsites : Cfg.uid NameHashtbl.t = NameHashtbl.create 100 in
-  IntMap.iter
+  Cfg.Blocks.iter
     (fun n _ -> NameSet.iter (fun a -> NameHashtbl.add defsites a n) (a_orig n))
     graph;
   let a_phi = NameHashtbl.(create (length defsites)) in

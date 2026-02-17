@@ -1,9 +1,5 @@
-module Cfg = Normalize.Cfg
+open Normalize
 module IntHashtbl = Hashtbl.Make (Int)
-module Flow = Normalize.Flow
-module Target = Normalize.Target
-module Name = Normalize.Name
-module NameSet = Normalize.NameSet
 module NameMap = struct
   include CCMap.Make (struct
     include Name
@@ -16,11 +12,9 @@ module OperandSet = struct
     type t = Cfg.uid * Target.operand
     let compare = compare
   end)
-  let pp =
-    let pp_tuple fmt (uid, op) =
-      Format.fprintf fmt "(%d,%a)" uid Target.pp_operand op
-    in
-    pp pp_tuple
+  let pp_tuple fmt (uid, op) =
+    Format.fprintf fmt "(%d,%a)" uid Target.pp_operand op
+  let pp = pp pp_tuple
 end
 
 let hashtbl_size = 100
@@ -40,7 +34,7 @@ let block_args_fact () =
 let block_args graph =
   let fact = block_args_fact () in
   let args_tbl = IntHashtbl.create hashtbl_size in
-  let handle_first a = function
+  let first_in a = function
     | Cfg.Entry -> a
     | Cfg.Label ((uid, _), info) ->
       IntHashtbl.replace args_tbl uid info.args;
@@ -53,7 +47,7 @@ let block_args graph =
             a)
         a info.args
   in
-  let handle_last uid =
+  let last_in uid =
     let go_use (a : OperandSet.t NameMap.t) = function
       | Target.Label ((uid', _), args) -> begin
         try
@@ -81,11 +75,7 @@ let block_args graph =
     | Cfg.Return _ -> NameMap.empty
   in
   let analysis =
-    {
-      Flow.BackwardAnalysis.first_in = handle_first;
-      middle_in = (fun a _ -> a);
-      last_in = handle_last;
-    }
+    { Flow.BackwardAnalysis.first_in; middle_in = (fun a _ -> a); last_in }
   in
   let analysis = (fact, analysis) in
   let _ = Flow.BackwardAnalysis.run analysis graph in
@@ -169,9 +159,16 @@ let rewrite_uses lookup_operand a instr =
   in
   (instr', not (Target.equal_instr instr' instr))
 
+let fold_conditional = function
+  | Cfg.CBranch
+      (Target.Cbranch (Const i, Const j, op, l1, l1args, l2, l2args), l1', l2')
+    ->
+    if apply_cond i j op then Cfg.Branch (Target.Goto (l1, l1args), l1')
+    else Cfg.Branch (Target.Goto (l2, l2args), l2')
+  | i -> i
+
 let is_side_effectful = function
-  | Target.Call _ -> true
-  | Target.Return _ -> true
+  | Target.(Call _ | Return _) -> true
   | _ -> false
 
 let constprop (block_args : OperandSet.t NameMap.t) graph =
@@ -179,12 +176,16 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
   let converged = ref false in
   let lookup_operand a = function
     | Target.Const c -> Defined c
-    | Target.Reg r -> begin
-      try NameMap.find r a.mapping with Not_found -> NeverDefined
-    end
+    | Target.Reg r ->
+      (try NameMap.find r a.mapping with Not_found -> NeverDefined)
     | _ -> NeverDefined
   in
-  let handle_first = function
+  let add_mapping a res res_value =
+    match res_value with
+    | Some v -> { a with mapping = NameMap.add res v a.mapping }
+    | None -> a
+  in
+  let first_out = function
     | Cfg.Entry -> Flow.Dataflow fact.init_info
     | Cfg.Label (((uid, _) as l), info) ->
       let a = fact.get uid in
@@ -203,10 +204,11 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
         let values =
           call_args |> OperandSet.to_list |> List.fold_left get_values []
         in
-        match remove_consecutive_duplicates values with
-        | [ v ] -> { a with mapping = NameMap.add arg v a.mapping }
-        | [] -> a
-        | _ -> { a with mapping = NameMap.add arg OverDefined a.mapping }
+        add_mapping a arg
+          (match remove_consecutive_duplicates values with
+          | [ v ] -> Some v
+          | [] -> None
+          | _ -> Some OverDefined)
       in
       if not !converged then
         let a = List.fold_left update_block_arg a info.args in
@@ -217,50 +219,32 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
         in
         let args = List.map rewrite_block_arg info.args in
         Flow.Dataflow { a with args }
-      else begin
-        if a.args = info.args then Flow.Dataflow a
-        else
-          Flow.Rewrite
-            Cfg.(unfocus @@ label ~args:a.args l @@ focus_entry empty)
-      end
+      else if a.args = info.args then Flow.Dataflow a
+      else
+        Flow.Rewrite Cfg.(unfocus @@ label ~args:a.args l @@ focus_entry empty)
   in
   let handle_instruction a = function
     | Target.Assign (Reg res, arg) ->
-      let res_value =
-        match lookup_operand a arg with
+      add_mapping a res
+        (match lookup_operand a arg with
         | OverDefined -> Some OverDefined
         | NeverDefined -> None
-        | Defined arg -> Some (Defined arg)
-      in
-      begin match res_value with
-      | Some v -> { a with mapping = NameMap.add res v a.mapping }
-      | None -> a
-      end
+        | Defined arg -> Some (Defined arg))
     | Target.Assign _ ->
       failwith "handle_instruction: assign destination not a name"
     | Target.Uop (Reg res, uop, arg) ->
-      let res_value =
-        match lookup_operand a arg with
+      add_mapping a res
+        (match lookup_operand a arg with
         | OverDefined -> Some OverDefined
         | NeverDefined -> None
-        | Defined arg -> Some (Defined (apply_uop arg uop))
-      in
-      begin match res_value with
-      | Some v -> { a with mapping = NameMap.add res v a.mapping }
-      | None -> a
-      end
+        | Defined arg -> Some (Defined (apply_uop arg uop)))
     | Target.Uop _ -> failwith "handle_instruction: uop destination not a name"
     | Target.Bop (Reg res, bop, lhs, rhs) ->
-      let res_value =
-        match (lookup_operand a lhs, lookup_operand a rhs) with
+      add_mapping a res
+        (match (lookup_operand a lhs, lookup_operand a rhs) with
         | OverDefined, _ | _, OverDefined -> Some OverDefined
         | NeverDefined, _ | _, NeverDefined -> None
-        | Defined l, Defined r -> Some (Defined (apply_bop l r bop))
-      in
-      begin match res_value with
-      | Some v -> { a with mapping = NameMap.add res v a.mapping }
-      | None -> a
-      end
+        | Defined l, Defined r -> Some (Defined (apply_bop l r bop)))
     | Target.Bop _ -> failwith "handle_instruction: bop destination not a name"
     | Target.Call (Reg r, _, _) ->
       { a with mapping = NameMap.add r OverDefined a.mapping }
@@ -272,7 +256,7 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
     | Target.Cbranch _ ->
       failwith "handle_instruction: cbranch instruction unexpected"
   in
-  let handle_middle a instr =
+  let middle_out a (Cfg.Instruction instr) =
     let all_defs_defined () =
       instr |> Target.defs |> NameSet.to_list
       |> List.map (fun n -> lookup_operand a (Reg n))
@@ -290,7 +274,7 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
       else Flow.Dataflow a
   in
   let get_args uid = List.map (fun n -> Target.Reg n) (fact.get uid).args in
-  let handle_last self_uid a = function
+  let last_outs self_uid a = function
     | Cfg.Exit -> Flow.Dataflow (fun set -> set self_uid a)
     | Cfg.Branch (i, ((uid, _) as l)) ->
       if not !converged then
@@ -329,9 +313,9 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
       else
         let i, changed = Deadcode.rewrite_branch get_args i in
         let i, changed' = rewrite_uses lookup_operand a i in
+        let i = fold_conditional (Cfg.CBranch (i, l1, l2)) in
         if changed || changed' then
-          Flow.Rewrite
-            Cfg.(unfocus ((First Entry, Last (CBranch (i, l1, l2))), empty))
+          Flow.Rewrite Cfg.(unfocus ((First Entry, Last i), empty))
         else Flow.Dataflow (fun _ -> ())
     | Cfg.CBranch _ -> failwith "handle_last: expected cbranch"
     | Cfg.Return i ->
@@ -342,16 +326,11 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
           Flow.Rewrite Cfg.(unfocus ((First Entry, Last (Return i)), empty))
         else Flow.Dataflow (fun _ -> ())
   in
-  let pass =
-    {
-      Flow.ForwardPass.first_out = handle_first;
-      middle_out = (fun a (Instruction instr) -> handle_middle a instr);
-      last_outs = handle_last;
-    }
-  in
-  let pass = (fact, pass) in
+  let pass = (fact, { Flow.ForwardPass.first_out; middle_out; last_outs }) in
   (* todo: mark function arguments as overdefined *)
-  snd
-  @@ Flow.ForwardPass.solve_and_rewrite
-       ~after_analysis:(fun _ -> converged := true)
-       pass graph fact.init_info
+  let _, (graph, changed) =
+    Flow.ForwardPass.solve_and_rewrite
+      ~after_analysis:(fun _ -> converged := true)
+      pass graph fact.init_info
+  in
+  (Cfg.Blocks.filter (fun uid _ -> not (fact.skip_block uid)) graph, changed)
