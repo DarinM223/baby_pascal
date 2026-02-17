@@ -102,7 +102,6 @@ let test_const_prop_branch () =
     let open Normalize.Target in
     let open Normalize.Cfg in
     unfocus
-    (* todo: delete empty blocks *)
     @@ label (1, "")
     @@ branch (3, "")
     @@ label (3, "")
@@ -112,7 +111,18 @@ let test_const_prop_branch () =
   let cfg, changed = Constprop.constprop block_args cfg in
   (check bool) "Graph changed" changed true;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" cfg expected;
+  let cfg = Constprop.remove_empty_blocks cfg in
+  let expected =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ branch (3, "")
+    @@ label (3, "")
+    @@ return ~uses:[ Const 1 ] @@ focus_entry empty
+  in
+  (check Normalize.Cfg.(testable pp_graph equal_graph))
+    "Removes empty blocks" cfg expected
 
 let _ =
   run "Normalize to zipper cfg"

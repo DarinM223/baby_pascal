@@ -1,4 +1,5 @@
 open Normalize
+module IntMap = Map.Make (Int)
 module IntHashtbl = Hashtbl.Make (Int)
 module NameMap = struct
   include CCMap.Make (struct
@@ -180,8 +181,7 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
       (try NameMap.find r a.mapping with Not_found -> NeverDefined)
     | _ -> NeverDefined
   in
-  let add_mapping a res res_value =
-    match res_value with
+  let add_mapping a res = function
     | Some v -> { a with mapping = NameMap.add res v a.mapping }
     | None -> a
   in
@@ -334,3 +334,45 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
       pass graph fact.init_info
   in
   (Cfg.Blocks.filter (fun uid _ -> not (fact.skip_block uid)) graph, changed)
+
+let remove_empty_blocks graph =
+  let find_empty _ block acc =
+    match block with
+    | ( Cfg.Label ((uid, _), { args = []; _ }),
+        Cfg.Last (Cfg.Branch (Target.Goto (l, ops), _)) ) ->
+      IntMap.add uid (l, ops) acc
+    | _ -> acc
+  in
+  let empty_blocks = Cfg.Blocks.fold find_empty graph IntMap.empty in
+  let rewrite_block _ block acc =
+    if IntMap.mem (Cfg.id block) empty_blocks then acc
+    else
+      let h, l = Cfg.(goto_end (unzip block)) in
+      let l =
+        match l with
+        | Cfg.Exit -> Cfg.Exit
+        | Cfg.Return i -> Cfg.Return i
+        | Cfg.Branch (_, (uid, _)) -> begin
+          match IntMap.find_opt uid empty_blocks with
+          | Some (lab, ops) -> Cfg.Branch (Target.Goto (lab, ops), lab)
+          | None -> l
+        end
+        | Cfg.CBranch
+            (Target.Cbranch (op1, op2, cond, l1, l1args, l2, l2args), _, _) ->
+          let l1, l1args =
+            match IntMap.find_opt (fst l1) empty_blocks with
+            | Some (l1, l1args) -> (l1, l1args)
+            | None -> (l1, l1args)
+          in
+          let l2, l2args =
+            match IntMap.find_opt (fst l2) empty_blocks with
+            | Some (l2, l2args) -> (l2, l2args)
+            | None -> (l2, l2args)
+          in
+          Cfg.CBranch
+            (Target.Cbranch (op1, op2, cond, l1, l1args, l2, l2args), l1, l2)
+        | Cfg.CBranch _ -> failwith "InValid conditional branch"
+      in
+      Cfg.(Blocks.insert (zip (h, Last l)) acc)
+  in
+  Cfg.Blocks.fold rewrite_block graph Cfg.empty
