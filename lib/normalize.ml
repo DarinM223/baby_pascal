@@ -19,8 +19,120 @@ module NameSet = struct
   let pp = pp Name.pp
 end
 
+module Instruction = struct
+  module Make (T : sig
+    type label [@@deriving show, eq]
+    type operand [@@deriving show, eq]
+    type operands = operand list [@@deriving show, eq]
+    val label : label -> operands -> operand
+    val destruct_label : operand -> (label * operands) option
+    val is_tombstone : operand -> bool
+  end) =
+  struct
+    open T
+    type cond =
+      | LT
+      | LE
+      | GT
+      | GE
+      | EQ
+      | NE
+    [@@deriving show, eq]
+
+    let cond_of_bop = function
+      | Ast.Lt -> LT
+      | Ast.Le -> LE
+      | Ast.Gt -> GT
+      | Ast.Ge -> GE
+      | Ast.Eq -> EQ
+      | Ast.Neq -> NE
+      | _ -> failwith "Invalid binary operator"
+
+    (* destination goes before sources for operands *)
+    type instr =
+      | Assign of operand * operand
+      | Call of operand * operand * operands
+      | Goto of label * operands
+      | Cbranch of
+          operand * operand * cond * label * operands * label * operands
+      | Return of operands
+      | Uop of operand * Ast.uop * operand
+      | Bop of operand * Ast.bop * operand * operand
+    [@@deriving show, eq]
+
+    let srcs = function
+      | Assign (_, o) -> [ o ]
+      | Call (_, o1, o2) -> o1 :: o2
+      | Goto (l, args) -> [ label l args ]
+      | Cbranch (o1, o2, _, l1, l1args, l2, l2args) ->
+        [ label l1 l1args; label l2 l2args; o1; o2 ]
+      | Return o -> o
+      | Uop (_, _, o) -> [ o ]
+      | Bop (_, _, o1, o2) -> [ o1; o2 ]
+    let dests = function
+      | Assign (o, _) -> [ o ]
+      | Call (o, _, _) -> [ o ]
+      | Goto (_, _) -> []
+      | Cbranch (_, _, _, _, _, _, _) -> []
+      | Return _ -> []
+      | Uop (o, _, _) -> [ o ]
+      | Bop (o, _, _, _) -> [ o ]
+
+    let map_uses f =
+      let f op = if is_tombstone op then op else f op in
+      function
+      | Assign (d, s) -> Assign (d, f s)
+      | Call (d, sf, s) ->
+        let sf = f sf in
+        Call (d, sf, List.map f s)
+      | Goto (l, args) -> begin
+        match destruct_label (f (label l args)) with
+        | Some (l, args) -> Goto (l, args)
+        | _ ->
+          failwith "map_uses: goto label transformed into different operand"
+      end
+      | Cbranch (o1, o2, c, l1, l1args, l2, l2args) ->
+        let o1 = f o1 in
+        let o2 = f o2 in
+        let ol1 = destruct_label (f (label l1 l1args)) in
+        let ol2 = destruct_label (f (label l2 l2args)) in
+        begin match (ol1, ol2) with
+        | Some (l1, l1args), Some (l2, l2args) ->
+          Cbranch (o1, o2, c, l1, l1args, l2, l2args)
+        | _ ->
+          failwith "map_uses: cbranch label transformed into different operand"
+        end
+      | Return o -> Return (List.map f o)
+      | Uop (d, op, s) -> Uop (d, op, f s)
+      | Bop (d, op, s1, s2) ->
+        let s1 = f s1 in
+        Bop (d, op, s1, f s2)
+    let map_defs f =
+      let f op = if is_tombstone op then op else f op in
+      function
+      | Assign (d, s) -> Assign (f d, s)
+      | Call (d, sf, s) -> Call (f d, sf, s)
+      | Goto (l, args) -> Goto (l, args)
+      | Cbranch (o1, o2, c, l1, l1args, l2, l2args) ->
+        Cbranch (o1, o2, c, l1, l1args, l2, l2args)
+      | Return o -> Return o
+      | Uop (d, op, s) -> Uop (f d, op, s)
+      | Bop (d, op, s1, s2) -> Bop (f d, op, s1, s2)
+
+    let assign ~dest ~src = Assign (dest, src)
+    let call ~dest f es = Call (dest, f, es)
+    let goto label args = Goto (label, args)
+    let cbranch ~args (cond : cond) l1 l1args l2 l2args =
+      match args with
+      | [ o1; o2 ] -> Cbranch (o1, o2, cond, l1, l1args, l2, l2args)
+      | _ -> failwith "cbranch expects only two arguments currently"
+    let return ~uses = Return uses
+    let uop op ~dest ~src = Uop (dest, op, src)
+    let bop (op : Ast.bop) ~dest ~src1 ~src2 = Bop (dest, op, src1, src2)
+  end
+end
+
 module Target = struct
-  type label = int * string [@@deriving show, eq]
   type reg = Name.t [@@deriving show, eq]
   type regs = reg list [@@deriving show, eq]
   let pp_regs fmt regs =
@@ -32,52 +144,32 @@ module Target = struct
       (List.filter (fun n -> not (Name.is_tombstone n)) a)
       (List.filter (fun n -> not (Name.is_tombstone n)) b)
 
-  type operand =
-    | Const of int
-    | Reg of reg
-    | Label of label * operands
-  and operands = operand list [@@deriving show, eq]
-  let tombstone = Reg Name.tombstone
-  let is_tombstone = function
-    | Reg r -> Name.is_tombstone r
-    | _ -> false
-  let pp_operands fmt operands =
-    pp_operands fmt @@ List.filter (fun o -> not (is_tombstone o)) operands
-  let show_operands operands =
-    show_operands @@ List.filter (fun o -> not (is_tombstone o)) operands
-  let equal_operands a b =
-    equal_operands
-      (List.filter (fun o -> not (is_tombstone o)) a)
-      (List.filter (fun o -> not (is_tombstone o)) b)
-
-  type cond =
-    | LT
-    | LE
-    | GT
-    | GE
-    | EQ
-    | NE
-  [@@deriving show, eq]
-
-  (* destination goes before sources for operands *)
-  type instr =
-    | Assign of operand * operand
-    | Call of operand * operand * operands
-    | Goto of label * operands
-    | Cbranch of operand * operand * cond * label * operands * label * operands
-    | Return of operands
-    | Uop of operand * Ast.uop * operand
-    | Bop of operand * Ast.bop * operand * operand
-  [@@deriving show, eq]
-
-  let cond_of_bop = function
-    | Ast.Lt -> LT
-    | Ast.Le -> LE
-    | Ast.Gt -> GT
-    | Ast.Ge -> GE
-    | Ast.Eq -> EQ
-    | Ast.Neq -> NE
-    | _ -> failwith "Invalid binary operator"
+  module Operand = struct
+    type label = int * string [@@deriving show, eq]
+    type operand =
+      | Const of int
+      | Reg of reg
+      | Label of label * operands
+    and operands = operand list [@@deriving show, eq]
+    let label l ops = Label (l, ops)
+    let destruct_label = function
+      | Label (l, ops) -> Some (l, ops)
+      | _ -> None
+    let tombstone = Reg Name.tombstone
+    let is_tombstone = function
+      | Reg r -> Name.is_tombstone r
+      | _ -> false
+    let pp_operands fmt operands =
+      pp_operands fmt @@ List.filter (fun o -> not (is_tombstone o)) operands
+    let show_operands operands =
+      show_operands @@ List.filter (fun o -> not (is_tombstone o)) operands
+    let equal_operands a b =
+      equal_operands
+        (List.filter (fun o -> not (is_tombstone o)) a)
+        (List.filter (fun o -> not (is_tombstone o)) b)
+  end
+  include Operand
+  include Instruction.Make (Operand)
 
   let rec regset_of_operand = function
     | Const _ -> NameSet.empty
@@ -93,86 +185,12 @@ module Target = struct
   let name (s : string) : Name.t = (s, -1)
   let reg r = Reg (name r)
 
-  let srcs = function
-    | Assign (_, o) -> [ o ]
-    | Call (_, o1, o2) -> o1 :: o2
-    | Goto (l, args) -> [ Label (l, args) ]
-    | Cbranch (o1, o2, _, l1, l1args, l2, l2args) ->
-      [ Label (l1, l1args); Label (l2, l2args); o1; o2 ]
-    | Return o -> o
-    | Uop (_, _, o) -> [ o ]
-    | Bop (_, _, o1, o2) -> [ o1; o2 ]
-  let dests = function
-    | Assign (o, _) -> [ o ]
-    | Call (o, _, _) -> [ o ]
-    | Goto (_, _) -> []
-    | Cbranch (_, _, _, _, _, _, _) -> []
-    | Return _ -> []
-    | Uop (o, _, _) -> [ o ]
-    | Bop (o, _, _, _) -> [ o ]
-
   let uses instr =
     srcs instr |> List.map regset_of_operand
     |> List.fold_left NameSet.union NameSet.empty
   let defs instr =
     dests instr |> List.map regset_of_operand
     |> List.fold_left NameSet.union NameSet.empty
-  let map_uses f =
-    let f = function
-      | Reg reg when Name.is_tombstone reg -> Reg reg
-      | operand -> f operand
-    in
-    function
-    | Assign (d, s) -> Assign (d, f s)
-    | Call (d, sf, s) ->
-      let sf = f sf in
-      Call (d, sf, List.map f s)
-    | Goto (l, args) -> begin
-      match f (Label (l, args)) with
-      | Label (l, args) -> Goto (l, args)
-      | _ -> failwith "map_uses: goto label transformed into different operand"
-    end
-    | Cbranch (o1, o2, c, l1, l1args, l2, l2args) ->
-      let o1 = f o1 in
-      let o2 = f o2 in
-      let ol1 = f (Label (l1, l1args)) in
-      let ol2 = f (Label (l2, l2args)) in
-      begin match (ol1, ol2) with
-      | Label (l1, l1args), Label (l2, l2args) ->
-        Cbranch (o1, o2, c, l1, l1args, l2, l2args)
-      | _ ->
-        failwith "map_uses: cbranch label transformed into different operand"
-      end
-    | Return o -> Return (List.map f o)
-    | Uop (d, op, s) -> Uop (d, op, f s)
-    | Bop (d, op, s1, s2) ->
-      let s1 = f s1 in
-      Bop (d, op, s1, f s2)
-  let map_defs f =
-    let f = function
-      | Reg reg when Name.is_tombstone reg -> Reg reg
-      | operand -> f operand
-    in
-    function
-    | Assign (d, s) -> Assign (f d, s)
-    | Call (d, sf, s) -> Call (f d, sf, s)
-    | Goto (l, args) -> Goto (l, args)
-    | Cbranch (o1, o2, c, l1, l1args, l2, l2args) ->
-      Cbranch (o1, o2, c, l1, l1args, l2, l2args)
-    | Return o -> Return o
-    | Uop (d, op, s) -> Uop (f d, op, s)
-    | Bop (d, op, s1, s2) -> Bop (f d, op, s1, s2)
-
-  let assign ~dest ~src = Assign (dest, src)
-  let call ~dest f es = Call (dest, f, es)
-  let goto label args = Goto (label, args)
-  let cbranch ~args (cond : cond) l1 l1args l2 l2args =
-    match args with
-    | [ o1; o2 ] -> Cbranch (o1, o2, cond, l1, l1args, l2, l2args)
-    | _ -> failwith "cbranch expects only two arguments currently"
-  let return ~uses = Return uses
-  let uop op ~dest ~src = Uop (dest, op, src)
-  let bop (op : Ast.bop) ~dest ~src1 ~src2 = Bop (dest, op, src1, src2)
 end
 
 module Cfg = Graph.Make (Target)
