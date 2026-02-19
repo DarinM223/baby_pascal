@@ -138,12 +138,12 @@ let apply_bop l r = function
   | Ast.Ge -> if l >= r then 1 else 0
 
 let apply_cond l r = function
-  | Target.LT -> l < r
-  | Target.LE -> l <= r
-  | Target.GT -> l > r
-  | Target.GE -> l >= r
-  | Target.EQ -> l = r
-  | Target.NE -> l <> r
+  | Instruction.Cond.LT -> l < r
+  | Instruction.Cond.LE -> l <= r
+  | Instruction.Cond.GT -> l > r
+  | Instruction.Cond.GE -> l >= r
+  | Instruction.Cond.EQ -> l = r
+  | Instruction.Cond.NE -> l <> r
 
 let rewrite_uses lookup_operand a instr =
   let handle_operand op =

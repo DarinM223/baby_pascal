@@ -54,13 +54,11 @@ module Target = struct
       equal_ts f
         (List.filter (fun o -> not (is_tombstone o)) a)
         (List.filter (fun o -> not (is_tombstone o)) b)
-  end
-  include Operand
-  include Instruction.Make (struct
-    include Operand
     type 'a operand = 'a t [@@deriving show, eq]
     type 'a operands = 'a ts [@@deriving show, eq]
-  end)
+  end
+  include Operand
+  include Instruction.Make (Operand)
 
   let rec regset_of_operand = function
     | Const _ -> NameSet.empty

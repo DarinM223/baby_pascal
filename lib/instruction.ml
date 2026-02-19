@@ -1,13 +1,14 @@
-module Make (T : sig
+module type Operand = sig
   type label [@@deriving show, eq]
   type 'a operand [@@deriving show, eq]
   type 'a operands = 'a operand list [@@deriving show, eq]
   val label : label -> 'a operands -> 'a operand
   val destruct_label : 'a operand -> (label * 'a operands) option
   val is_tombstone : 'a operand -> bool
-end) =
-struct
-  type cond =
+end
+
+module Cond = struct
+  type t =
     | LT
     | LE
     | GT
@@ -16,7 +17,7 @@ struct
     | NE
   [@@deriving show, eq]
 
-  let cond_of_bop = function
+  let of_bop = function
     | Ast.Lt -> LT
     | Ast.Le -> LE
     | Ast.Gt -> GT
@@ -24,6 +25,11 @@ struct
     | Ast.Eq -> EQ
     | Ast.Neq -> NE
     | _ -> failwith "Invalid binary operator"
+end
+
+module Make (T : Operand) = struct
+  type cond = Cond.t [@@deriving show, eq]
+  let cond_of_bop = Cond.of_bop
 
   (* destination goes before sources for operands *)
   type instr =
@@ -106,4 +112,22 @@ struct
   let return ~uses = Return uses
   let uop op ~dest ~src = Uop (dest, op, src)
   let bop (op : Ast.bop) ~dest ~src1 ~src2 = Bop (dest, op, src1, src2)
+end
+
+module Convert (X : Operand) (Y : Operand with type label = X.label) = struct
+  module type X' = module type of Make (X)
+  module type Y' = module type of Make (Y)
+
+  module Make (X' : X') (Y' : Y') = struct
+    let convert f = function
+      | X'.Assign (d, o) -> Y'.Assign (f d, f o)
+      | X'.Call (d, fn, os) -> Y'.Call (f d, f fn, List.map f os)
+      | X'.Goto (l, os) -> Y'.Goto (l, List.map f os)
+      | X'.Cbranch (o1, o2, cond, l1, l1args, l2, l2args) ->
+        Y'.Cbranch
+          (f o1, f o2, cond, l1, List.map f l1args, l2, List.map f l2args)
+      | X'.Return os -> Y'.Return (List.map f os)
+      | X'.Uop (d, op, o) -> Y'.Uop (f d, op, f o)
+      | X'.Bop (d, op, o1, o2) -> Y'.Bop (f d, op, f o1, f o2)
+  end
 end

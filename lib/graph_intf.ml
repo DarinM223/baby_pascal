@@ -13,13 +13,7 @@ module type Target = sig
   type operands = operand list
   type instr
 
-  type cond =
-    | LT
-    | LE
-    | GT
-    | GE
-    | EQ
-    | NE
+  type cond = Instruction.Cond.t
 
   val goto : label -> operands -> instr
   val cbranch :
