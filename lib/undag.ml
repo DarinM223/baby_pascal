@@ -23,6 +23,7 @@ module Target = struct
   end
   include Operand
   include Instruction.Make (Operand)
+  let reg r = Reg (Normalize.Target.name r)
 end
 
 module NameSet = Normalize.NameSet
@@ -33,27 +34,33 @@ module Converter =
 module Convert = Converter.Make (Normalize.Target) (Target)
 
 let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
-  let add_uses (uses : NameSet.t) acc =
-    NameSet.fold
-      (fun use acc ->
+  let uses instr =
+    List.filter_map
+      (function
+        | Normalize.Target.Reg r -> Some r
+        | _ -> None)
+      (Normalize.Target.srcs instr)
+  in
+  let add_uses uses acc =
+    List.fold_left
+      (fun acc use ->
         NameMap.update use
           (function
             | None -> Some 1
             | Some c -> Some (c + 1))
           acc)
-      uses acc
+      acc uses
   in
   let rec count_uses acc = function
     | Normalize.Cfg.Last l -> begin
       match l with
       | Normalize.Cfg.Exit -> acc
-      | Normalize.Cfg.Branch (i, _) -> add_uses (Normalize.Target.uses i) acc
-      | Normalize.Cfg.CBranch (i, _, _) ->
-        add_uses (Normalize.Target.uses i) acc
-      | Normalize.Cfg.Return i -> add_uses (Normalize.Target.uses i) acc
+      | Normalize.Cfg.Branch (i, _) -> add_uses (uses i) acc
+      | Normalize.Cfg.CBranch (i, _, _) -> add_uses (uses i) acc
+      | Normalize.Cfg.Return i -> add_uses (uses i) acc
     end
     | Normalize.Cfg.Tail (Instruction i, rest) ->
-      count_uses (add_uses (Normalize.Target.uses i) acc) rest
+      count_uses (add_uses (uses i) acc) rest
   in
   let count = count_uses NameMap.empty tail in
   let clean_regs = List.filter (fun n -> not (Normalize.Name.is_tombstone n)) in
@@ -64,11 +71,14 @@ let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
       Cfg.(Label (l, { local = info.local; args = clean_regs info.args }))
   in
   let rewrite_instruction acc instr =
+    let acc = ref acc in
     let rec convert_operand = function
       | Normalize.Target.Const i -> Target.Const i
       | Normalize.Target.Reg reg -> begin
-        match NameMap.find_opt reg acc with
-        | Some instr -> Target.Instr instr
+        match NameMap.find_opt reg !acc with
+        | Some instr ->
+          acc := NameMap.remove reg !acc;
+          Target.Instr instr
         | None -> Target.Reg reg
       end
       | Normalize.Target.Label (l, ops) ->
@@ -80,23 +90,32 @@ let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
                 else Some (convert_operand op))
               ops )
     in
-    Convert.convert convert_operand instr
+    let instr = Convert.convert convert_operand instr in
+    (instr, !acc)
+  in
+  let dump_mappings =
+    NameMap.fold (fun _ instr tail -> Cfg.Tail (Instruction instr, tail))
   in
   let rec rewrite_tail acc = function
-    | Normalize.Cfg.Last l ->
-      Cfg.Last
-        (match l with
-        | Normalize.Cfg.Exit -> Cfg.Exit
-        | Normalize.Cfg.Branch (i, l) ->
-          Cfg.Branch (rewrite_instruction acc i, l)
-        | Normalize.Cfg.CBranch (i, l1, l2) ->
-          Cfg.CBranch (rewrite_instruction acc i, l1, l2)
-        | Normalize.Cfg.Return i -> Cfg.Return (rewrite_instruction acc i))
+    | Normalize.Cfg.Last l -> begin
+      match l with
+      | Normalize.Cfg.Exit -> Cfg.Last Cfg.Exit
+      | Normalize.Cfg.Branch (i, l) ->
+        let i, acc = rewrite_instruction acc i in
+        dump_mappings acc Cfg.(Last (Branch (i, l)))
+      | Normalize.Cfg.CBranch (i, l1, l2) ->
+        let i, acc = rewrite_instruction acc i in
+        dump_mappings acc Cfg.(Last (CBranch (i, l1, l2)))
+      | Normalize.Cfg.Return i ->
+        let i, acc = rewrite_instruction acc i in
+        dump_mappings acc Cfg.(Last (Return i))
+    end
     | Normalize.Cfg.Tail (Instruction i, rest) ->
-      let rewritten = rewrite_instruction acc i in
+      let rewritten, acc = rewrite_instruction acc i in
       let num_uses =
         NameSet.fold
-          (fun def acc -> acc + NameMap.find def count)
+          (fun def acc ->
+            acc + try NameMap.find def count with Not_found -> 0)
           (Normalize.Target.defs i) 0
       in
       if num_uses <= 1 && not (Constprop.is_side_effectful i) then
@@ -106,7 +125,9 @@ let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
             (Normalize.Target.defs i) acc
         in
         rewrite_tail acc rest
-      else Cfg.Tail (Instruction rewritten, rewrite_tail acc rest)
+      else
+        dump_mappings acc
+        @@ Cfg.Tail (Instruction rewritten, rewrite_tail NameMap.empty rest)
   in
   let tail = rewrite_tail NameMap.empty tail in
   (first, tail)

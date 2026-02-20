@@ -4,7 +4,8 @@
   test_dominator
   test_construct
   test_deadcode
-  test_constprop)
+  test_constprop
+  test_undag)
  (modes
   (byte exe))
  (flags (:standard))
