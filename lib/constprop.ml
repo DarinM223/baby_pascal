@@ -88,6 +88,15 @@ type lattice =
   | OverDefined
 [@@deriving show, eq]
 
+let lattice_union a b =
+  match (a, b) with
+  | NeverDefined, a | a, NeverDefined -> a
+  | Defined _, OverDefined | OverDefined, Defined _ -> OverDefined
+  | Defined i, Defined j ->
+    if i = j then Defined i
+    else failwith "lattice_union: two different defined values"
+  | OverDefined, OverDefined -> OverDefined
+
 type t = {
   mapping : lattice NameMap.t;
   args : Target.regs;
@@ -102,8 +111,18 @@ let state_fact () =
     add_info =
       (fun a b ->
         {
-          mapping = NameMap.union (fun _ a _ -> Some a) a.mapping b.mapping;
-          args = a.args;
+          mapping =
+            NameMap.union
+              (fun _ a b -> Some (lattice_union a b))
+              a.mapping b.mapping;
+          args =
+            begin match (a.args, b.args) with
+            | [], args | args, [] -> args
+            | l, r ->
+              List.map
+                (fun (l, r) -> if Name.is_tombstone l then r else l)
+                (List.combine l r)
+            end;
           executable = a.executable || b.executable;
         });
     changed = (fun ~before ~after -> not (equal before after));
@@ -172,7 +191,8 @@ let is_side_effectful = function
   | Target.(Call _ | Return _) -> true
   | _ -> false
 
-let constprop (block_args : OperandSet.t NameMap.t) graph =
+let constprop (block_args : OperandSet.t NameMap.t)
+    (function_args : Name.t list) graph =
   let fact = state_fact () in
   let converged = ref false in
   let lookup_operand a = function
@@ -185,8 +205,15 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
     | Some v -> { a with mapping = NameMap.add res v a.mapping }
     | None -> a
   in
+  (* mark function arguments as overdefined *)
+  let init_info =
+    List.fold_left
+      (fun acc arg ->
+        { acc with mapping = NameMap.add arg OverDefined acc.mapping })
+      fact.init_info function_args
+  in
   let first_out = function
-    | Cfg.Entry -> Flow.Dataflow fact.init_info
+    | Cfg.Entry -> Flow.Dataflow init_info
     | Cfg.Label (((uid, _) as l), info) ->
       let a = fact.get uid in
       let update_block_arg a arg =
@@ -281,7 +308,7 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
         Flow.Dataflow
           (fun set ->
             set self_uid a;
-            set uid { a with executable = true })
+            set uid { a with args = []; executable = true })
       else
         let i, changed = Deadcode.rewrite_branch get_args i in
         let i, changed' = rewrite_uses lookup_operand a i in
@@ -295,8 +322,8 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
           ((uid2, _) as l2) ) ->
       let set_branches l r set =
         set self_uid a;
-        set uid1 { a with executable = l };
-        set uid2 { a with executable = r }
+        set uid1 { a with args = []; executable = l };
+        set uid2 { a with args = []; executable = r }
       in
       let set_cond_executable b =
         if b then set_branches true false else set_branches false true
@@ -327,11 +354,10 @@ let constprop (block_args : OperandSet.t NameMap.t) graph =
         else Flow.Dataflow (fun _ -> ())
   in
   let pass = (fact, { Flow.ForwardPass.first_out; middle_out; last_outs }) in
-  (* todo: mark function arguments as overdefined *)
   let _, (graph, changed) =
     Flow.ForwardPass.solve_and_rewrite
       ~after_analysis:(fun _ -> converged := true)
-      pass graph fact.init_info
+      pass graph init_info
   in
   (Cfg.Blocks.filter (fun uid _ -> not (fact.skip_block uid)) graph, changed)
 

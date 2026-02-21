@@ -47,7 +47,7 @@ let test_const_prop_simple () =
     unfocus @@ label (1, "") @@ return ~uses:[ Const 2 ] @@ focus_entry empty
   in
   let block_args = Constprop.block_args cfg in
-  let cfg, changed = Constprop.constprop block_args cfg in
+  let cfg, changed = Constprop.constprop block_args [] cfg in
   (check bool) "Graph changed" changed true;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" cfg expected
@@ -75,7 +75,7 @@ let test_const_prop_args () =
     @@ return ~uses:[ Const 1 ] @@ focus_entry empty
   in
   let block_args = Constprop.block_args cfg in
-  let cfg, changed = Constprop.constprop block_args cfg in
+  let cfg, changed = Constprop.constprop block_args [] cfg in
   (check bool) "Graph changed" changed true;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" cfg expected
@@ -108,7 +108,7 @@ let test_const_prop_branch () =
     @@ return ~uses:[ Const 1 ] @@ focus_entry empty
   in
   let block_args = Constprop.block_args cfg in
-  let cfg, changed = Constprop.constprop block_args cfg in
+  let cfg, changed = Constprop.constprop block_args [] cfg in
   (check bool) "Graph changed" changed true;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" cfg expected;
@@ -124,6 +124,35 @@ let test_const_prop_branch () =
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Removes empty blocks" cfg expected
 
+let test_const_prop_function_args () =
+  let cfg =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ label (1, "")
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg "c"))
+    @@ branch ~args:[ reg "b"; reg "c"; reg "a" ] (2, "")
+    @@ label ~args:[ name "d"; name "e"; name "f" ] (2, "")
+    @@ return ~uses:[ reg "e" ]
+    @@ focus_entry empty
+  in
+  let expected =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ label (1, "")
+    @@ branch ~args:[ reg "b"; reg "a" ] (2, "")
+    @@ label ~args:[ name "d"; name "f" ] (2, "")
+    @@ return ~uses:[ Const 1 ] @@ focus_entry empty
+  in
+  let block_args = Constprop.block_args cfg in
+  let cfg, changed =
+    Constprop.constprop block_args Normalize.Target.[ name "a"; name "b" ] cfg
+  in
+  (check bool) "Graph changed" changed true;
+  (check Normalize.Cfg.(testable pp_graph equal_graph))
+    "Produces proper graph" cfg expected
+
 let _ =
   run "Normalize to zipper cfg"
     [
@@ -133,5 +162,6 @@ let _ =
           test_case "simple" `Quick test_const_prop_simple;
           test_case "block args" `Quick test_const_prop_args;
           test_case "conditional branch" `Quick test_const_prop_branch;
+          test_case "function args" `Quick test_const_prop_function_args;
         ] );
     ]
