@@ -35,11 +35,18 @@ module type S = sig
     }
     type 'a t = 'a fact * 'a functions
     val solve_graph : 'a t -> G.graph -> 'a -> 'a
+    val solve_graph_thunk : 'a t -> G.graph -> (unit -> 'a) -> 'a
     val solve_and_rewrite :
       ?after_analysis:('a -> unit) ->
       'a t ->
       G.graph ->
       'a ->
+      'a * (G.graph * bool)
+    val solve_and_rewrite_thunk :
+      ?after_analysis:('a -> unit) ->
+      'a t ->
+      G.graph ->
+      (unit -> 'a) ->
       'a * (G.graph * bool)
   end
 

@@ -302,7 +302,9 @@ let constprop (block_args : OperandSet.t NameMap.t)
     List.map (fun n -> Target.Reg n) (IntHashtbl.find args_tbl uid)
   in
   let last_outs _ a = function
-    | Cfg.Exit -> Flow.Dataflow (fun set -> set Cfg.entry_uid a)
+    | Cfg.Exit ->
+      if not !converged then Flow.Dataflow (fun set -> set Cfg.entry_uid a)
+      else Flow.Dataflow (fun _ -> ())
     | Cfg.Branch (i, ((uid, _) as l)) ->
       if not !converged then
         Flow.Dataflow (fun set -> set uid { a with executable = true })

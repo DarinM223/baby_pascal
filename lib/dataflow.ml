@@ -98,6 +98,13 @@ functor
           | l -> pass_fns.last_in uid l
         in
         (fact, { pass_fns with last_in })
+      let with_exit_thunk ((fact, pass_fns) : 'a t) (exit_thunk : unit -> 'a) :
+          'a t =
+        let last_in uid = function
+          | G.Exit -> Dataflow (exit_thunk ())
+          | l -> pass_fns.last_in uid l
+        in
+        (fact, { pass_fns with last_in })
 
       let rec solve_graph ((fact, _) as pass) graph exit_fact =
         snd
@@ -130,6 +137,11 @@ functor
         in
         let blocks = List.rev (G.reverse_postorder_dfs graph) in
         run fact changed fact.init_info set_block_fact blocks
+
+      let solve_graph_thunk ((fact, _) as pass) graph exit_thunk =
+        snd
+        @@ without_changing_entry fact
+        @@ fun () -> general_backward (with_exit_thunk pass exit_thunk) graph
 
       let rec solve_and_rewrite ?(after_analysis = fun _ -> ()) pass graph
           exit_fact changed =
@@ -205,6 +217,14 @@ functor
 
       let solve_and_rewrite ?after_analysis pass graph entry =
         solve_and_rewrite ?after_analysis pass graph entry false
+      let solve_and_rewrite_thunk ?(after_analysis = fun _ -> ()) pass graph
+          exit_thunk =
+        let entry_info = solve_graph_thunk pass graph exit_thunk in
+        after_analysis entry_info;
+        let result =
+          backward_rewrite (with_exit_thunk pass exit_thunk) graph false
+        in
+        (entry_info, result)
     end
 
     module ForwardAnalysis = struct
@@ -254,7 +274,15 @@ functor
 
       let with_exit (fact, pass_fns) exit_fact_ref =
         let last_outs uid in' = function
-          | G.Exit -> Dataflow (fun _ -> exit_fact_ref := in')
+          | G.Exit -> begin
+            match pass_fns.last_outs uid in' G.Exit with
+            | Dataflow setter ->
+              Dataflow
+                (fun set ->
+                  setter set;
+                  exit_fact_ref := in')
+            | Rewrite _ -> Dataflow (fun _ -> exit_fact_ref := in')
+          end
           | l -> pass_fns.last_outs uid in' l
         in
         (fact, { pass_fns with last_outs })

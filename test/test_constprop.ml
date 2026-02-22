@@ -153,6 +153,32 @@ let test_const_prop_function_args () =
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" cfg expected
 
+let test_const_prop_exit () =
+  let cfg =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ label (1, "")
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
+    @@ instruction (bop Ast.Add ~src1:(Const 1) ~src2:(reg "a") ~dest:(reg "b"))
+    @@ branch ~args:[ reg "b"; reg "a" ] (2, "")
+    @@ label ~args:[ name "c"; name "d" ] (2, "")
+    @@ exit @@ focus_entry empty
+  in
+  let expected =
+    let open Normalize.Cfg in
+    unfocus
+    @@ label (1, "")
+    @@ branch (2, "")
+    @@ label (2, "")
+    @@ exit @@ focus_entry empty
+  in
+  let block_args = Constprop.block_args cfg in
+  let cfg, changed = Constprop.constprop block_args [] cfg in
+  (check bool) "Graph changed" changed true;
+  (check Normalize.Cfg.(testable pp_graph equal_graph))
+    "Produces proper graph" cfg expected
+
 let _ =
   run "Normalize to zipper cfg"
     [
@@ -163,5 +189,6 @@ let _ =
           test_case "block args" `Quick test_const_prop_args;
           test_case "conditional branch" `Quick test_const_prop_branch;
           test_case "function args" `Quick test_const_prop_function_args;
+          test_case "exit" `Quick test_const_prop_exit;
         ] );
     ]
