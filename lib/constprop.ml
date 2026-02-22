@@ -99,7 +99,6 @@ let lattice_union a b =
 
 type t = {
   mapping : lattice NameMap.t;
-  args : Target.regs;
   executable : bool;
 }
 [@@deriving show, eq]
@@ -107,7 +106,7 @@ type t = {
 let state_fact () =
   let store = IntHashtbl.create hashtbl_size in
   {
-    Flow.init_info = { mapping = NameMap.empty; args = []; executable = false };
+    Flow.init_info = { mapping = NameMap.empty; executable = false };
     add_info =
       (fun a b ->
         {
@@ -115,14 +114,6 @@ let state_fact () =
             NameMap.union
               (fun _ a b -> Some (lattice_union a b))
               a.mapping b.mapping;
-          args =
-            begin match (a.args, b.args) with
-            | [], args | args, [] -> args
-            | l, r ->
-              List.map
-                (fun (l, r) -> if Name.is_tombstone l then r else l)
-                (List.combine l r)
-            end;
           executable = a.executable || b.executable;
         });
     changed = (fun ~before ~after -> not (equal before after));
@@ -195,6 +186,7 @@ let constprop (block_args : OperandSet.t NameMap.t)
     (function_args : Name.t list) graph =
   let fact = state_fact () in
   let converged = ref false in
+  let args_tbl = IntHashtbl.create hashtbl_size in
   let lookup_operand a = function
     | Target.Const c -> Defined c
     | Target.Reg r ->
@@ -212,8 +204,9 @@ let constprop (block_args : OperandSet.t NameMap.t)
         { acc with mapping = NameMap.add arg OverDefined acc.mapping })
       fact.init_info function_args
   in
+  fact.set Cfg.entry_uid init_info;
   let first_out = function
-    | Cfg.Entry -> Flow.Dataflow init_info
+    | Cfg.Entry -> Flow.Dataflow (fact.get Cfg.entry_uid)
     | Cfg.Label (((uid, _) as l), info) ->
       let a = fact.get uid in
       let update_block_arg a arg =
@@ -237,7 +230,7 @@ let constprop (block_args : OperandSet.t NameMap.t)
           | [] -> None
           | _ -> Some OverDefined)
       in
-      if not !converged then
+      if not !converged then begin
         let a = List.fold_left update_block_arg a info.args in
         let rewrite_block_arg arg =
           match NameMap.find_opt arg a.mapping with
@@ -245,10 +238,15 @@ let constprop (block_args : OperandSet.t NameMap.t)
           | _ -> arg
         in
         let args = List.map rewrite_block_arg info.args in
-        Flow.Dataflow { a with args }
-      else if a.args = info.args then Flow.Dataflow a
-      else
-        Flow.Rewrite Cfg.(unfocus @@ label ~args:a.args l @@ focus_entry empty)
+        IntHashtbl.add args_tbl uid args;
+        Flow.Dataflow a
+      end
+      else begin
+        match IntHashtbl.find_opt args_tbl uid with
+        | Some args when args <> info.args ->
+          Flow.Rewrite Cfg.(unfocus @@ label ~args l @@ focus_entry empty)
+        | _ -> Flow.Dataflow a
+      end
   in
   let handle_instruction a = function
     | Target.Assign (Reg res, arg) ->
@@ -300,15 +298,14 @@ let constprop (block_args : OperandSet.t NameMap.t)
         Flow.Rewrite Cfg.(unfocus @@ instruction instr @@ focus_entry empty)
       else Flow.Dataflow a
   in
-  let get_args uid = List.map (fun n -> Target.Reg n) (fact.get uid).args in
-  let last_outs self_uid a = function
-    | Cfg.Exit -> Flow.Dataflow (fun set -> set self_uid a)
+  let get_args uid =
+    List.map (fun n -> Target.Reg n) (IntHashtbl.find args_tbl uid)
+  in
+  let last_outs _ a = function
+    | Cfg.Exit -> Flow.Dataflow (fun set -> set Cfg.entry_uid a)
     | Cfg.Branch (i, ((uid, _) as l)) ->
       if not !converged then
-        Flow.Dataflow
-          (fun set ->
-            set self_uid a;
-            set uid { a with args = []; executable = true })
+        Flow.Dataflow (fun set -> set uid { a with executable = true })
       else
         let i, changed = Deadcode.rewrite_branch get_args i in
         let i, changed' = rewrite_uses lookup_operand a i in
@@ -321,9 +318,8 @@ let constprop (block_args : OperandSet.t NameMap.t)
           ((uid1, _) as l1),
           ((uid2, _) as l2) ) ->
       let set_branches l r set =
-        set self_uid a;
-        set uid1 { a with args = []; executable = l };
-        set uid2 { a with args = []; executable = r }
+        set uid1 { a with executable = l };
+        set uid2 { a with executable = r }
       in
       let set_cond_executable b =
         if b then set_branches true false else set_branches false true
@@ -346,7 +342,7 @@ let constprop (block_args : OperandSet.t NameMap.t)
         else Flow.Dataflow (fun _ -> ())
     | Cfg.CBranch _ -> failwith "handle_last: expected cbranch"
     | Cfg.Return i ->
-      if not !converged then Flow.Dataflow (fun set -> set self_uid a)
+      if not !converged then Flow.Dataflow (fun set -> set Cfg.entry_uid a)
       else
         let i, changed = rewrite_uses lookup_operand a i in
         if changed then
@@ -355,9 +351,10 @@ let constprop (block_args : OperandSet.t NameMap.t)
   in
   let pass = (fact, { Flow.ForwardPass.first_out; middle_out; last_outs }) in
   let _, (graph, changed) =
-    Flow.ForwardPass.solve_and_rewrite
+    Flow.ForwardPass.solve_and_rewrite_thunk
       ~after_analysis:(fun _ -> converged := true)
-      pass graph init_info
+      pass graph
+      (fun () -> fact.get Cfg.entry_uid)
   in
   (Cfg.Blocks.filter (fun uid _ -> not (fact.skip_block uid)) graph, changed)
 

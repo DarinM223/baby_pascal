@@ -244,6 +244,13 @@ functor
           | f -> pass_fns.first_out f
         in
         (fact, { pass_fns with first_out })
+      let with_entry_thunk ((fact, pass_fns) : 'a t) (entry_thunk : unit -> 'a)
+          : 'a t =
+        let first_out = function
+          | G.Entry -> Dataflow (entry_thunk ())
+          | f -> pass_fns.first_out f
+        in
+        (fact, { pass_fns with first_out })
 
       let with_exit (fact, pass_fns) exit_fact_ref =
         let last_outs uid in' = function
@@ -285,6 +292,16 @@ functor
         in
         let blocks = G.reverse_postorder_dfs graph in
         run fact changed fact.init_info set_successor_facts blocks
+
+      let solve_graph_thunk ((fact, _) as pass) graph entry_thunk =
+        let exit_fact_ref = ref fact.init_info in
+        let pass =
+          with_entry_thunk (with_exit pass exit_fact_ref) entry_thunk
+        in
+        let _ =
+          without_changing_entry fact @@ fun _ -> general_forward pass graph
+        in
+        !exit_fact_ref
 
       let check_property_match (fact : 'a fact) uid a =
         let a' = fact.get uid in
@@ -371,5 +388,14 @@ functor
 
       let solve_and_rewrite ?after_analysis pass graph entry_fact =
         solve_and_rewrite ?after_analysis pass graph entry_fact false
+
+      let solve_and_rewrite_thunk ?(after_analysis = fun _ -> ())
+          ((fact, _) as pass) graph entry_thunk =
+        let exit_info = solve_graph_thunk pass graph entry_thunk in
+        after_analysis exit_info;
+        let exit_ref = ref fact.init_info in
+        let pass = with_entry_thunk (with_exit pass exit_ref) entry_thunk in
+        let result = forward_rewrite pass graph false in
+        (!exit_ref, result)
     end
   end
