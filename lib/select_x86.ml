@@ -32,17 +32,19 @@ module Target = struct
   type operands = operand list [@@deriving show, eq]
   type instr = {
     instr : string;
-    operands : operands;
+    defs : operands;
+    uses : operands;
   }
   [@@deriving show, eq]
   type cond = Instruction.Cond.t
-  let goto l ops = { instr = "j"; operands = Block l :: ops }
+  let goto l ops = { instr = "j"; defs = []; uses = Block l :: ops }
   let cbranch ~args cond l1 l1args l2 l2args =
     {
       instr = Format.asprintf "cmp %a" Instruction.Cond.pp cond;
-      operands = args @ [ Block l1 ] @ l1args @ [ Block l2 ] @ l2args;
+      uses = args @ [ Block l1 ] @ l1args @ [ Block l2 ] @ l2args;
+      defs = [];
     }
-  let return ~uses = { instr = "ret"; operands = uses }
+  let return ~uses = { instr = "ret"; uses; defs = [] }
 end
 
 module NameHashtbl = Hashtbl.Make (struct
@@ -52,17 +54,38 @@ module NameHashtbl = Hashtbl.Make (struct
 end)
 module Cfg = Graph.Make (Target)
 
+let ( let* ) = ( @@ )
 let hashtbl_size = 100
 
-let rec concat (t1 : Cfg.tail) (t2 : Cfg.tail) : Cfg.tail =
-  match (t1 : Cfg.tail) with
-  | Cfg.Last _ -> t2
-  | Cfg.Tail (m, t) -> Cfg.Tail (m, concat t t2)
-
-let select (_fresh_vreg : Target.reg_class -> Target.reg)
-    (_mapping : Target.reg NameHashtbl.t) (_instr : Undag.Target.instr) :
-    Cfg.tail =
-  failwith ""
+let rec select (fresh_vreg : Target.reg_class -> Target.reg)
+    (mapping : Target.reg NameHashtbl.t) (instr : Undag.Target.instr)
+    (k : Target.operand -> Cfg.tail) : Cfg.tail =
+  let assign_vreg clz = function
+    | Undag.Target.Reg n ->
+      let vreg = fresh_vreg clz in
+      NameHashtbl.add mapping n vreg;
+      vreg
+    | _ -> failwith "assign_vreg: expected destination to be register"
+  in
+  match instr with
+  | Undag.Target.Assign (dest, src) ->
+    let dest = Target.Reg (assign_vreg Target.Int dest) in
+    let* src =
+      match src with
+      | Undag.Target.Instr src -> select fresh_vreg mapping src
+      | Undag.Target.Const i -> fun k -> k (Target.Imm i)
+      | Undag.Target.Reg r ->
+        fun k -> k (Target.Reg (NameHashtbl.find mapping r))
+      | Undag.Target.Label (l, _) -> fun k -> k (Target.Block l)
+    in
+    let instr = { Target.instr = "mov"; defs = [ dest ]; uses = [ src ] } in
+    Cfg.(Tail (Instruction instr, k dest))
+  | Undag.Target.Call (_, _, _) -> failwith ""
+  | Undag.Target.Return _ -> failwith ""
+  | Undag.Target.Uop (_, _, _) -> failwith ""
+  | Undag.Target.Bop (_, _, _, _) -> failwith ""
+  | Undag.Target.Goto (_, _) -> failwith ""
+  | Undag.Target.Cbranch (_, _, _, _, _, _, _) -> failwith ""
 
 let codegen_block ((first, tail) : Undag.Cfg.block) : Cfg.block =
   let fresh_vreg =
@@ -83,18 +106,19 @@ let codegen_block ((first, tail) : Undag.Cfg.block) : Cfg.block =
       in
       Cfg.Label (l, { local = i.local; args = List.map map_vreg i.args })
   in
+  let endd = Cfg.Last Cfg.Exit in
   let rec go_tail (tail : Undag.Cfg.tail) : Cfg.tail =
     match tail with
     | Undag.Cfg.Last last -> begin
       match last with
-      | Undag.Cfg.Exit -> Cfg.Last Cfg.Exit
-      | Undag.Cfg.Branch (i, _) -> select fresh_vreg mapping i
-      | Undag.Cfg.CBranch (i, _, _) -> select fresh_vreg mapping i
-      | Undag.Cfg.Return i -> select fresh_vreg mapping i
+      | Undag.Cfg.Exit -> endd
+      | Undag.Cfg.Branch (i, _) -> select fresh_vreg mapping i (Fun.const endd)
+      | Undag.Cfg.CBranch (i, _, _) ->
+        select fresh_vreg mapping i (Fun.const endd)
+      | Undag.Cfg.Return i -> select fresh_vreg mapping i (Fun.const endd)
     end
     | Undag.Cfg.Tail (Instruction i, rest) ->
-      let tail = select fresh_vreg mapping i in
-      concat tail (go_tail rest)
+      select fresh_vreg mapping i (Fun.const (go_tail rest))
   in
   let tail = go_tail tail in
   (first, tail)
