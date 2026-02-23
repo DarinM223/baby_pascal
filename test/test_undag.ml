@@ -10,7 +10,7 @@ let test_example_1 () =
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
     @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
     @@ instruction (bop Mul ~dest:(reg "d") ~src1:(reg "c") ~src2:(reg "c"))
-    @@ instruction (call ~dest:(reg "e") (Const 100) [])
+    @@ instruction (call ~dest:(reg "e") (Label ((100, "f"), [])) [])
     @@ focus_entry empty
   in
   let block = Normalize.Cfg.(zip (fst (focus_entry cfg))) in
@@ -24,7 +24,7 @@ let test_example_1 () =
             ~src1:(Instr (assign ~src:(Const 1) ~dest:(reg "a")))
             ~src2:(Instr (assign ~src:(Const 2) ~dest:(reg "b"))))
     @@ instruction (bop Mul ~dest:(reg "d") ~src1:(reg "c") ~src2:(reg "c"))
-    @@ instruction (call ~dest:(reg "e") (Const 100) [])
+    @@ instruction (call ~dest:(reg "e") (Label ((100, "f"), [])) [])
     @@ focus_entry empty
   in
   let expected = Undag.Cfg.(zip (fst (focus_entry expected))) in

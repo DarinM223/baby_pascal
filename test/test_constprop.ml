@@ -92,7 +92,7 @@ let test_const_prop_branch () =
          ~args:[ reg "b"; reg "a" ]
          LT ~ifso:(2, "") ~ifnot:(3, "")
     @@ label (2, "")
-    @@ instruction (call ~dest:(reg "c") (Const 100) [ Const 1 ])
+    @@ instruction (call ~dest:(reg "c") (Label ((100, "f"), [])) [ Const 1 ])
     @@ branch ~args:[ reg "c" ] (3, "")
     @@ label ~args:[ name "d" ] (3, "")
     @@ return ~uses:[ reg "d" ]
