@@ -37,6 +37,15 @@ module Target = struct
   }
   [@@deriving show, eq]
   type cond = Instruction.Cond.t
+  let constrained physical_reg = function
+    | Physical p ->
+      if p <> physical_reg then
+        failwith "constrained: physical registers conflict"
+      else Physical p
+    | Virtual (i, clz, _) -> Virtual (i, clz, UsePhysical physical_reg)
+  let reuse idx = function
+    | Physical _ -> failwith "reuse: expected virtual register"
+    | Virtual (i, clz, _) -> Virtual (i, clz, ReuseOperand idx)
   let goto l ops = { instr = "j"; defs = []; uses = Block l :: ops }
   let cbranch ~args cond l1 l1args l2 l2args =
     {
@@ -45,6 +54,14 @@ module Target = struct
       defs = [];
     }
   let return ~uses = { instr = "ret"; uses; defs = [] }
+  let instr instr ~defs ~uses = { instr; defs; uses }
+end
+
+module Regs = struct
+  let rax = (0, Target.Int)
+
+  (* todo: handle overlapping registers *)
+  let al = (1, Target.Int)
 end
 
 module NameHashtbl = Hashtbl.Make (struct
@@ -67,24 +84,32 @@ let rec select (fresh_vreg : Target.reg_class -> Target.reg)
       vreg
     | _ -> failwith "assign_vreg: expected destination to be register"
   in
+  let translate_operand : Undag.Target.operand -> (Target.operand -> 'a) -> 'a =
+    function
+    | Undag.Target.Instr src -> select fresh_vreg mapping src
+    | Undag.Target.Const i -> fun k -> k (Target.Imm i)
+    | Undag.Target.Reg r -> fun k -> k (Target.Reg (NameHashtbl.find mapping r))
+    | Undag.Target.Label (l, _) -> fun k -> k (Target.Block l)
+  in
+  let ( @> ) i t = Cfg.Tail (Instruction i, t) in
   match instr with
   | Undag.Target.Assign (dest, src) ->
-    let dest = Target.Reg (assign_vreg Target.Int dest) in
-    let* src =
-      match src with
-      | Undag.Target.Instr src -> select fresh_vreg mapping src
-      | Undag.Target.Const i -> fun k -> k (Target.Imm i)
-      | Undag.Target.Reg r ->
-        fun k -> k (Target.Reg (NameHashtbl.find mapping r))
-      | Undag.Target.Label (l, _) -> fun k -> k (Target.Block l)
-    in
-    let instr = { Target.instr = "mov"; defs = [ dest ]; uses = [ src ] } in
-    Cfg.(Tail (Instruction instr, k dest))
-  | Undag.Target.Call (_, _, _) -> failwith ""
-  | Undag.Target.Return _ -> failwith ""
-  | Undag.Target.Uop (_, _, _) -> failwith ""
+    let dest = Target.(Reg (assign_vreg Int dest)) in
+    let* src = translate_operand src in
+    Target.instr "mov" ~defs:[ dest ] ~uses:[ src ] @> k dest
+  | Undag.Target.Uop (dest, Not, src) ->
+    let rax = Target.(Reg (constrained Regs.rax (fresh_vreg Int))) in
+    let reuse = Target.(Reg (reuse 0 (fresh_vreg Int))) in
+    let dest = Target.(Reg (constrained Regs.al (assign_vreg Int dest))) in
+    let* src = translate_operand src in
+    Target.instr "xor" ~defs:[ reuse ] ~uses:[ rax; rax ]
+    @> Target.instr "test" ~defs:[] ~uses:[ src; src ]
+    @> Target.instr "sete" ~defs:[ dest ] ~uses:[]
+    @> k dest
   | Undag.Target.Bop (_, _, _, _) -> failwith ""
-  | Undag.Target.Goto (_, _) -> failwith ""
+  | Undag.Target.Return _ -> failwith ""
+  | Undag.Target.Call (_, _, _) -> failwith ""
+  | Undag.Target.Goto (l, _args) -> Cfg.Last (Cfg.Branch (Target.goto l [], l))
   | Undag.Target.Cbranch (_, _, _, _, _, _, _) -> failwith ""
 
 let codegen_block ((first, tail) : Undag.Cfg.block) : Cfg.block =
