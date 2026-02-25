@@ -37,6 +37,9 @@ module Target = struct
   }
   [@@deriving show, eq]
   type cond = Instruction.Cond.t
+  let index = function
+    | Physical (i, _) -> i
+    | Virtual (i, _, _) -> i
   let constrained physical_reg = function
     | Physical p ->
       if p <> physical_reg then
@@ -46,6 +49,9 @@ module Target = struct
   let reuse idx = function
     | Physical _ -> failwith "reuse: expected virtual register"
     | Virtual (i, clz, _) -> Virtual (i, clz, ReuseOperand idx)
+  let reuse_op idx = function
+    | Reg r -> Reg (reuse idx r)
+    | _ -> failwith "reuse_op: expected register"
   let goto l ops = { instr = "j"; defs = []; uses = Block l :: ops }
   let cbranch ~args cond l1 l1args l2 l2args =
     {
@@ -55,6 +61,7 @@ module Target = struct
     }
   let return ~uses = { instr = "ret"; uses; defs = [] }
   let instr instr ~defs ~uses = { instr; defs; uses }
+  let mov ~dest ~src = instr "movq" ~defs:[ dest ] ~uses:[ src ]
 end
 
 module Regs = struct
@@ -69,13 +76,15 @@ module NameHashtbl = Hashtbl.Make (struct
   let equal = equal
   let hash = Hashtbl.hash
 end)
+module IntHashtbl = Hashtbl.Make (Int)
 module Cfg = Graph.Make (Target)
 
 let ( let* ) = ( @@ )
 let hashtbl_size = 100
+let local_hashtbl_size = 10
 
 let rec select (fresh_vreg : Target.reg_class -> Target.reg)
-    (mapping : Target.reg NameHashtbl.t) (instr : Undag.Target.instr)
+    (mapping : Target.reg NameHashtbl.t) (instruction : Undag.Target.instr)
     (k : Target.operand -> Cfg.tail) : Cfg.tail =
   let assign_vreg clz = function
     | Undag.Target.Reg n ->
@@ -102,34 +111,58 @@ let rec select (fresh_vreg : Target.reg_class -> Target.reg)
     go [] l k
   in
   let ( @> ) i t = Cfg.Tail (Instruction i, t) in
-  match instr with
+  match instruction with
   | Undag.Target.Assign (dest, src) ->
-    let dest = Target.(Reg (assign_vreg Int dest)) in
+    let open Target in
+    let dest = Reg (assign_vreg Int dest) in
     let* src = translate_operand src in
-    Target.instr "mov" ~defs:[ dest ] ~uses:[ src ] @> k dest
+    mov ~dest ~src @> k dest
   | Undag.Target.Uop (dest, Not, src) ->
-    let rax = Target.(Reg (constrained Regs.rax (fresh_vreg Int))) in
-    let reuse = Target.(Reg (reuse 0 (fresh_vreg Int))) in
-    let dest = Target.(Reg (constrained Regs.al (assign_vreg Int dest))) in
+    let open Target in
+    let dest = Reg (assign_vreg Int dest) in
+    let tmp = Reg (fresh_vreg Int) in
     let* src = translate_operand src in
-    Target.instr "xorq" ~defs:[ reuse ] ~uses:[ rax; rax ]
-    @> Target.instr "testq" ~defs:[] ~uses:[ src; src ]
-    @> Target.instr "sete" ~defs:[ dest ] ~uses:[]
+    mov ~dest:tmp ~src:(Imm 0)
+    @> instr "testq" ~defs:[] ~uses:[ src; src ]
+    @> instr "setz" ~defs:[ reuse_op 0 dest ] ~uses:[ tmp ]
     @> k dest
   | Undag.Target.Bop (dest, bop, src1, src2) ->
-    let dest = Target.(Reg (reuse 0 (assign_vreg Int dest))) in
+    let open Target in
     let* src1 = translate_operand src1 in
     let* src2 = translate_operand src2 in
+    let reuse_bop i =
+      let dest = Reg (assign_vreg Int dest) in
+      let tmp = Reg (fresh_vreg Int) in
+      mov ~dest:tmp ~src:src1
+      @> instr i ~defs:[ reuse_op 0 dest ] ~uses:[ tmp; src2 ]
+      @> k dest
+    in
     begin match bop with
-    | Ast.Add ->
-      Target.instr "addq" ~defs:[ dest ] ~uses:[ src1; src2 ] @> k dest
-    | Ast.Sub ->
-      Target.instr "subq" ~defs:[ dest ] ~uses:[ src1; src2 ] @> k dest
-    | Ast.Mul ->
-      Target.instr "mulq" ~defs:[ dest ] ~uses:[ src1; src2 ] @> k dest
-    | Ast.And -> failwith ""
-    | Ast.Or -> failwith ""
-    | Ast.Eq -> failwith ""
+    | Ast.Add -> reuse_bop "addq"
+    | Ast.Sub -> reuse_bop "subq"
+    | Ast.Mul -> reuse_bop "mulq"
+    | Ast.And ->
+      let dest = Reg (assign_vreg Int dest) in
+      let tmp1 = Reg (fresh_vreg Int) in
+      let tmp2 = Reg (fresh_vreg Int) in
+      mov ~dest:tmp1 ~src:src1 @> mov ~dest:tmp2 ~src:src2
+      @> instr "testq" ~defs:[] ~uses:[ tmp1; tmp1 ]
+      @> instr "cmovz" ~defs:[ reuse_op 0 dest ] ~uses:[ tmp2; tmp1 ]
+      @> k dest
+    | Ast.Or ->
+      let dest = Reg (assign_vreg Int dest) in
+      let tmp1 = Reg (fresh_vreg Int) in
+      let tmp2 = Reg (fresh_vreg Int) in
+      mov ~dest:tmp1 ~src:src1 @> mov ~dest:tmp2 ~src:src2
+      @> instr "testq" ~defs:[] ~uses:[ tmp1; tmp1 ]
+      @> instr "cmovnz" ~defs:[ reuse_op 0 dest ] ~uses:[ tmp2; tmp1 ]
+      @> k dest
+    | Ast.Eq ->
+      let dest = Reg (assign_vreg Int dest) in
+      let tmp = Reg (fresh_vreg Int) in
+      mov ~dest:tmp ~src:src1
+      @> instr "subq" ~defs:[ reuse_op 0 dest ] ~uses:[ tmp; src2 ]
+      @> k dest
     | Ast.Neq -> failwith ""
     | Ast.Lt -> failwith ""
     | Ast.Le -> failwith ""
