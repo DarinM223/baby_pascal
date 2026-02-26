@@ -145,6 +145,16 @@ let rec select (fresh_vreg : Target.reg_class -> Target.reg)
       @> instr i ~defs:[ reuse_op tmp dest ] ~uses:[ tmp; src2 ]
       @> k dest
     in
+    let reuse_cond i =
+      let tmp1 = Reg (fresh_vreg Int) in
+      let tmp2 = Reg (fresh_vreg Int) in
+      let tmp3 = Reg (fresh_vreg Int) in
+      mov ~dest:tmp1 ~src:src1
+      @> mov ~dest:tmp2 ~src:(Imm 0)
+      @> instr "cmp" ~defs:[ reuse_op tmp1 tmp3 ] ~uses:[ tmp1; src2 ]
+      @> instr i ~defs:[ reuse_op tmp2 dest ] ~uses:[ tmp2 ]
+      @> k dest
+    in
     begin match bop with
     | Ast.Add -> reuse_bop "addq"
     | Ast.Sub -> reuse_bop "subq"
@@ -161,16 +171,12 @@ let rec select (fresh_vreg : Target.reg_class -> Target.reg)
       @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
       @> instr "cmovz" ~defs:[ reuse_op tmp dest ] ~uses:[ tmp; src2 ]
       @> k dest
-    | Ast.Eq ->
-      let tmp = Reg (fresh_vreg Int) in
-      mov ~dest:tmp ~src:src1
-      @> instr "subq" ~defs:[ reuse_op tmp dest ] ~uses:[ tmp; src2 ]
-      @> k dest
-    | Ast.Neq -> failwith ""
-    | Ast.Lt -> failwith ""
-    | Ast.Le -> failwith ""
-    | Ast.Gt -> failwith ""
-    | Ast.Ge -> failwith ""
+    | Ast.Eq -> reuse_cond "setz"
+    | Ast.Neq -> reuse_cond "setnz"
+    | Ast.Lt -> reuse_cond "setl"
+    | Ast.Le -> reuse_cond "setle"
+    | Ast.Gt -> reuse_cond "setg"
+    | Ast.Ge -> reuse_cond "setge"
     end
   | Undag.Target.Return ops ->
     let* ops = translate_operands ops in
