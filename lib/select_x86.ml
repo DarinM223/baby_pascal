@@ -31,7 +31,7 @@ module Target = struct
         displacement : int;
       }
     | StackSlot of int
-    | Block of label
+    | Label of label
   [@@deriving show, eq]
   type operands = operand list [@@deriving show, eq]
   type instr = {
@@ -61,23 +61,31 @@ module Target = struct
     match (op, dest) with
     | Reg reg, Reg dest -> Reg (reuse reg dest)
     | _ -> failwith "reuse_op: expected register"
-  let goto l ops = { instr = "j"; defs = []; uses = Block l :: ops }
+  let goto l ops = { instr = "j"; defs = []; uses = Label l :: ops }
   let cbranch ~args cond l1 l1args l2 l2args =
     {
       instr = Format.asprintf "cmp %a" Instruction.Cond.pp cond;
-      uses = args @ [ Block l1 ] @ l1args @ [ Block l2 ] @ l2args;
+      uses = args @ [ Label l1 ] @ l1args @ [ Label l2 ] @ l2args;
       defs = [];
     }
   let return ~uses = { instr = "ret"; uses; defs = [] }
   let instr instr ~defs ~uses = { instr; defs; uses }
   let mov ~dest ~src = instr "movq" ~defs:[ dest ] ~uses:[ src ]
+  let pcopy ~dests ~srcs = instr "pcopy" ~defs:dests ~uses:srcs
 end
 
 module Regs = struct
+  (* todo: handle overlapping subregisters *)
   let rax = (0, Target.Int)
-
-  (* todo: handle overlapping registers *)
-  let al = (1, Target.Int)
+  let rbx = (1, Target.Int)
+  let rcx = (2, Target.Int)
+  let rdx = (3, Target.Int)
+  let rsi = (4, Target.Int)
+  let rdi = (5, Target.Int)
+  let rsp = (6, Target.Int)
+  let rbp = (7, Target.Int)
+  let r8 = (8, Target.Int)
+  let r9 = (9, Target.Int)
 end
 
 module NameHashtbl = Hashtbl.Make (struct
@@ -91,22 +99,37 @@ module Cfg = Graph.Make (Target)
 let ( let* ) = ( @@ )
 let hashtbl_size = 100
 
-let rec select (fresh_vreg : Target.reg_class -> Target.reg)
-    (mapping : Target.reg NameHashtbl.t) (instruction : Undag.Target.instr)
-    (k : Target.operand -> Cfg.tail) : Cfg.tail =
+type state = {
+  fresh_vreg : Target.reg_class -> Target.reg;
+  mapping : Target.operand NameHashtbl.t;
+  new_stack_slot : unit -> Target.operand;
+}
+
+let call_conv_int { fresh_vreg; new_stack_slot; _ } = function
+  | 0 -> Target.(Reg (constrained Regs.rdi (fresh_vreg Int)))
+  | 1 -> Target.(Reg (constrained Regs.rsi (fresh_vreg Int)))
+  | 2 -> Target.(Reg (constrained Regs.rdx (fresh_vreg Int)))
+  | 3 -> Target.(Reg (constrained Regs.rcx (fresh_vreg Int)))
+  | 4 -> Target.(Reg (constrained Regs.r8 (fresh_vreg Int)))
+  | 5 -> Target.(Reg (constrained Regs.r9 (fresh_vreg Int)))
+  | _ -> new_stack_slot ()
+
+let rec select ({ fresh_vreg; mapping; _ } as state)
+    (instruction : Undag.Target.instr) (k : Target.operand -> Cfg.tail) :
+    Cfg.tail =
   let assign_vreg clz = function
     | Undag.Target.Reg n ->
-      let vreg = fresh_vreg clz in
+      let vreg = Target.Reg (fresh_vreg clz) in
       NameHashtbl.add mapping n vreg;
       vreg
     | _ -> failwith "assign_vreg: expected destination to be register"
   in
   let translate_operand : Undag.Target.operand -> (Target.operand -> 'a) -> 'a =
     function
-    | Undag.Target.Instr src -> select fresh_vreg mapping src
+    | Undag.Target.Instr src -> select state src
     | Undag.Target.Const i -> fun k -> k (Target.Imm i)
-    | Undag.Target.Reg r -> fun k -> k (Target.Reg (NameHashtbl.find mapping r))
-    | Undag.Target.Label (l, _) -> fun k -> k (Target.Block l)
+    | Undag.Target.Reg r -> fun k -> k (NameHashtbl.find mapping r)
+    | Undag.Target.Label (l, _) -> fun k -> k (Target.Label l)
   in
   let translate_operands l k =
     let rec go acc l k =
@@ -122,12 +145,12 @@ let rec select (fresh_vreg : Target.reg_class -> Target.reg)
   match instruction with
   | Undag.Target.Assign (dest, src) ->
     let open Target in
-    let dest = Reg (assign_vreg Int dest) in
+    let dest = assign_vreg Int dest in
     let* src = translate_operand src in
     mov ~dest ~src @> k dest
   | Undag.Target.Uop (dest, Not, src) ->
     let open Target in
-    let dest = Reg (assign_vreg Int dest) in
+    let dest = assign_vreg Int dest in
     let tmp = Reg (fresh_vreg Int) in
     let* src = translate_operand src in
     mov ~dest:tmp ~src:(Imm 0)
@@ -136,7 +159,7 @@ let rec select (fresh_vreg : Target.reg_class -> Target.reg)
     @> k dest
   | Undag.Target.Bop (dest, bop, src1, src2) ->
     let open Target in
-    let dest = Reg (assign_vreg Int dest) in
+    let dest = assign_vreg Int dest in
     let* src1 = translate_operand src1 in
     let* src2 = translate_operand src2 in
     let reuse_bop i =
@@ -188,7 +211,22 @@ let rec select (fresh_vreg : Target.reg_class -> Target.reg)
       @> Cfg.Last (Cfg.Return (Target.return ~uses:[ rax ]))
     | _ -> failwith "can only return one thing currently"
     end
-  | Undag.Target.Call (_, _, _) -> failwith ""
+  | Undag.Target.Call (dest, f, args) ->
+    let open Target in
+    let dest = assign_vreg Int dest in
+    let rax = Reg (constrained Regs.rax (fresh_vreg Int)) in
+    let* f = translate_operand f in
+    let f =
+      match f with
+      | Label l -> l
+      | _ -> failwith "call: expected function to be label"
+    in
+    let* args = translate_operands args in
+    let dests = List.(init (length args) (call_conv_int state)) in
+    pcopy ~dests ~srcs:args
+    (* todo: add caller save registers to call defs *)
+    @> instr "call" ~defs:[] ~uses:[ Label f ]
+    @> mov ~dest ~src:rax @> k dest
   | Undag.Target.Goto (l, args) ->
     let* args = translate_operands args in
     Cfg.Last (Cfg.Branch (Target.goto l args, l))
@@ -209,13 +247,16 @@ let codegen_block ((first, tail) : Undag.Cfg.block) : Cfg.block =
       Target.Virtual { id = !c; reg_class = clz; reg_constr = Any }
   in
   let mapping = NameHashtbl.create hashtbl_size in
+  (* todo: implement this *)
+  let new_stack_slot () = Target.StackSlot 0 in
+  let state = { fresh_vreg; mapping; new_stack_slot } in
   let first =
     match first with
     | Undag.Cfg.Entry -> Cfg.Entry
     | Undag.Cfg.Label (l, i) ->
       let map_vreg n =
         let vreg = fresh_vreg Target.Int in
-        NameHashtbl.add mapping n vreg;
+        NameHashtbl.add mapping n (Target.Reg vreg);
         vreg
       in
       Cfg.Label (l, { local = i.local; args = List.map map_vreg i.args })
@@ -226,13 +267,12 @@ let codegen_block ((first, tail) : Undag.Cfg.block) : Cfg.block =
     | Undag.Cfg.Last last -> begin
       match last with
       | Undag.Cfg.Exit -> endd
-      | Undag.Cfg.Branch (i, _) -> select fresh_vreg mapping i (Fun.const endd)
-      | Undag.Cfg.CBranch (i, _, _) ->
-        select fresh_vreg mapping i (Fun.const endd)
-      | Undag.Cfg.Return i -> select fresh_vreg mapping i (Fun.const endd)
+      | Undag.Cfg.Branch (i, _) -> select state i (Fun.const endd)
+      | Undag.Cfg.CBranch (i, _, _) -> select state i (Fun.const endd)
+      | Undag.Cfg.Return i -> select state i (Fun.const endd)
     end
     | Undag.Cfg.Tail (Instruction i, rest) ->
-      select fresh_vreg mapping i (Fun.const (go_tail rest))
+      select state i (Fun.const (go_tail rest))
   in
   let tail = go_tail tail in
   (first, tail)
