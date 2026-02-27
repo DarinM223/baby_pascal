@@ -86,6 +86,14 @@ module Regs = struct
   let rbp = (7, Target.Int)
   let r8 = (8, Target.Int)
   let r9 = (9, Target.Int)
+  let r10 = (10, Target.Int)
+  let r11 = (11, Target.Int)
+  let r12 = (12, Target.Int)
+  let r13 = (13, Target.Int)
+  let r14 = (14, Target.Int)
+  let r15 = (15, Target.Int)
+
+  let caller_save = [ rax; rcx; rdx; rsi; rdi; r8; r9; r10; r11 ]
 end
 
 module NameHashtbl = Hashtbl.Make (struct
@@ -99,22 +107,40 @@ module Cfg = Graph.Make (Target)
 let ( let* ) = ( @@ )
 let hashtbl_size = 100
 
-type state = {
-  fresh_vreg : Target.reg_class -> Target.reg;
-  mapping : Target.operand NameHashtbl.t;
-  new_stack_slot : unit -> Target.operand;
-}
+module State = struct
+  type t = {
+    fresh_vreg : Target.reg_class -> Target.reg;
+    mapping : Target.operand NameHashtbl.t;
+    stack_offset : int ref;
+    new_stack_slot : int -> Target.operand;
+  }
 
-let call_conv_int { fresh_vreg; new_stack_slot; _ } = function
+  let init () =
+    let fresh_vreg =
+      let c = ref (-1) in
+      fun clz ->
+        incr c;
+        Target.Virtual { id = !c; reg_class = clz; reg_constr = Any }
+    in
+    let stack_offset = ref 0 in
+    let mapping = NameHashtbl.create hashtbl_size in
+    let new_stack_slot size =
+      stack_offset := !stack_offset + size;
+      Target.StackSlot !stack_offset
+    in
+    { fresh_vreg; mapping; stack_offset; new_stack_slot }
+end
+
+let call_conv_int { State.fresh_vreg; new_stack_slot; _ } = function
   | 0 -> Target.(Reg (constrained Regs.rdi (fresh_vreg Int)))
   | 1 -> Target.(Reg (constrained Regs.rsi (fresh_vreg Int)))
   | 2 -> Target.(Reg (constrained Regs.rdx (fresh_vreg Int)))
   | 3 -> Target.(Reg (constrained Regs.rcx (fresh_vreg Int)))
   | 4 -> Target.(Reg (constrained Regs.r8 (fresh_vreg Int)))
   | 5 -> Target.(Reg (constrained Regs.r9 (fresh_vreg Int)))
-  | _ -> new_stack_slot ()
+  | _ -> new_stack_slot 8
 
-let rec select ({ fresh_vreg; mapping; _ } as state)
+let rec select ({ State.fresh_vreg; mapping; _ } as state)
     (instruction : Undag.Target.instr) (k : Target.operand -> Cfg.tail) :
     Cfg.tail =
   let assign_vreg clz = function
@@ -223,9 +249,11 @@ let rec select ({ fresh_vreg; mapping; _ } as state)
     in
     let* args = translate_operands args in
     let dests = List.(init (length args) (call_conv_int state)) in
+    let defs =
+      List.map (fun r -> Reg (constrained r (fresh_vreg Int))) Regs.caller_save
+    in
     pcopy ~dests ~srcs:args
-    (* todo: add caller save registers to call defs *)
-    @> instr "call" ~defs:[] ~uses:[ Label f ]
+    @> instr "call" ~defs ~uses:[ Label f ]
     @> mov ~dest ~src:rax @> k dest
   | Undag.Target.Goto (l, args) ->
     let* args = translate_operands args in
@@ -239,17 +267,8 @@ let rec select ({ fresh_vreg; mapping; _ } as state)
       (Cfg.CBranch
          (Target.cbranch ~args:[ src1; src2 ] cond l1 l1args l2 l2args, l1, l2))
 
-let codegen_block ((first, tail) : Undag.Cfg.block) : Cfg.block =
-  let fresh_vreg =
-    let c = ref (-1) in
-    fun clz ->
-      incr c;
-      Target.Virtual { id = !c; reg_class = clz; reg_constr = Any }
-  in
-  let mapping = NameHashtbl.create hashtbl_size in
-  (* todo: implement this *)
-  let new_stack_slot () = Target.StackSlot 0 in
-  let state = { fresh_vreg; mapping; new_stack_slot } in
+let codegen_block ({ State.fresh_vreg; mapping; _ } as state)
+    ((first, tail) : Undag.Cfg.block) : Cfg.block =
   let first =
     match first with
     | Undag.Cfg.Entry -> Cfg.Entry
