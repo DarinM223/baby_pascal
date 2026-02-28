@@ -5,7 +5,8 @@
   test_construct
   test_deadcode
   test_constprop
-  test_undag)
+  test_undag
+  test_select_x86)
  (modes
   (byte exe))
  (flags (:standard))

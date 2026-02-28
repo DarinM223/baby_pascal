@@ -3,8 +3,8 @@ module Target = struct
   type reg_class =
     | Int
     | Float
-  [@@deriving show, eq]
-  type physical_reg = int * reg_class [@@deriving show, eq]
+  [@@deriving eq]
+  type physical_reg = int * reg_class * string [@@deriving eq]
   type reg_constr =
     | Any
     | OnReg
@@ -19,7 +19,32 @@ module Target = struct
   and reg =
     | Physical of physical_reg
     | Virtual of virtual_reg
-  [@@deriving show, eq]
+  [@@deriving eq]
+  let pp_reg_class fmt = function
+    | Int -> Format.fprintf fmt ""
+    | Float -> Format.fprintf fmt "f"
+  let show_reg_class = Format.asprintf "%a" pp_reg_class
+  let rec pp_reg_constr fmt = function
+    | Any -> Format.fprintf fmt "any"
+    | OnReg -> Format.fprintf fmt "reg"
+    | OnStack -> Format.fprintf fmt "stack"
+    | UsePhysical r -> Format.fprintf fmt "(%%%a)" pp_reg (Physical r)
+    | ReuseOperand r ->
+      let id =
+        match r with
+        | Physical (id, _, _) -> id
+        | Virtual v -> v.id
+      in
+      Format.fprintf fmt "(reuse=%%%d)" id
+
+  and pp_reg fmt = function
+    | Physical (_, _, s) -> Format.fprintf fmt "%s" s
+    | Virtual v ->
+      Format.fprintf fmt "%d%a%a" v.id pp_reg_class v.reg_class pp_reg_constr
+        v.reg_constr
+  let show_reg_constr = Format.asprintf "%a" pp_reg_constr
+  let show_reg = Format.asprintf "%a" pp_reg
+
   type regs = reg list [@@deriving show, eq]
   type operand =
     | Imm of int
@@ -32,17 +57,39 @@ module Target = struct
       }
     | StackSlot of int
     | Label of label
-  [@@deriving show, eq]
+  [@@deriving eq]
+  let pp_operand fmt = function
+    | Imm i -> Format.fprintf fmt "$%d" i
+    | Reg r -> Format.fprintf fmt "%%%a" pp_reg r
+    | MemAddr addr ->
+      Format.fprintf fmt "%d(%%%a,%%%a,%d)" addr.displacement pp_reg addr.base
+        pp_reg addr.index addr.scale
+    | StackSlot offset -> Format.fprintf fmt "%d(%%rsp)" offset
+    | Label l -> Format.fprintf fmt "%s" (snd l)
+  let show_operand = Format.asprintf "%a" pp_operand
+
   type operands = operand list [@@deriving show, eq]
+  type pcopy = (operand * operand) list [@@deriving show, eq]
   type instr = {
     instr : string;
     defs : operands;
     uses : operands;
   }
-  [@@deriving show, eq]
+  [@@deriving eq]
+  let pp_instr fmt i =
+    match i.instr with
+    | "pcopy" ->
+      Format.fprintf fmt "pcopy %a" pp_pcopy (List.combine i.defs i.uses)
+    | _ ->
+      let pp_sep fmt () = Format.fprintf fmt ", " in
+      let pp_operands = Format.pp_print_list ~pp_sep pp_operand in
+      Format.fprintf fmt "%s %a, %a" i.instr pp_operands i.defs pp_operands
+        i.uses
+  let show_instr = Format.asprintf "%a" pp_instr
+
   type cond = Instruction.Cond.t
   let index = function
-    | Physical (id, _) -> id
+    | Physical (id, _, _) -> id
     | Virtual v -> v.id
   let constrained physical_reg = function
     | Physical p ->
@@ -76,22 +123,22 @@ end
 
 module Regs = struct
   (* todo: handle overlapping subregisters *)
-  let rax = (0, Target.Int)
-  let rbx = (1, Target.Int)
-  let rcx = (2, Target.Int)
-  let rdx = (3, Target.Int)
-  let rsi = (4, Target.Int)
-  let rdi = (5, Target.Int)
-  let rsp = (6, Target.Int)
-  let rbp = (7, Target.Int)
-  let r8 = (8, Target.Int)
-  let r9 = (9, Target.Int)
-  let r10 = (10, Target.Int)
-  let r11 = (11, Target.Int)
-  let r12 = (12, Target.Int)
-  let r13 = (13, Target.Int)
-  let r14 = (14, Target.Int)
-  let r15 = (15, Target.Int)
+  let rax = (0, Target.Int, "rax")
+  let rbx = (1, Target.Int, "rbx")
+  let rcx = (2, Target.Int, "rcx")
+  let rdx = (3, Target.Int, "rdx")
+  let rsi = (4, Target.Int, "rsi")
+  let rdi = (5, Target.Int, "rdi")
+  let rsp = (6, Target.Int, "rsp")
+  let rbp = (7, Target.Int, "rbp")
+  let r8 = (8, Target.Int, "r8")
+  let r9 = (9, Target.Int, "r9")
+  let r10 = (10, Target.Int, "r10")
+  let r11 = (11, Target.Int, "r11")
+  let r12 = (12, Target.Int, "r12")
+  let r13 = (13, Target.Int, "r13")
+  let r14 = (14, Target.Int, "r14")
+  let r15 = (15, Target.Int, "r15")
 
   let caller_save = [ rax; rcx; rdx; rsi; rdi; r8; r9; r10; r11 ]
 end
