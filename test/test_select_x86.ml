@@ -1,14 +1,14 @@
 open Alcotest
 open Baby_pascal
-open Select_x86
 
 let test_print () =
+  let open X86 in
   let open Target in
   let v1 = Virtual { id = 1; reg_class = Int; reg_constr = Any } in
   let v2 = Virtual { id = 2; reg_class = Int; reg_constr = Any } in
   let v3 = Virtual { id = 3; reg_class = Int; reg_constr = Any } in
   let instr =
-    Target.instr "addq"
+    instr "addq"
       ~defs:[ Reg (reuse v1 v3) ]
       ~uses:[ Reg v1; Reg (constrained Regs.rax v2) ]
   in
@@ -17,7 +17,7 @@ let test_print () =
   let v2 = Virtual { id = 2; reg_class = Float; reg_constr = OnReg } in
   let v3 = Virtual { id = 3; reg_class = Float; reg_constr = OnReg } in
   let instr =
-    Target.mov ~dest:(Reg v1)
+    mov ~dest:(Reg v1)
       ~src:(MemAddr { base = v2; index = v3; scale = 10; displacement = 15 })
   in
   (check string) "mov" (show_instr instr) "movq %1fstack, 15(%2freg,%3freg,10)";
@@ -26,12 +26,43 @@ let test_print () =
   let v3 = Virtual { id = 3; reg_class = Int; reg_constr = Any } in
   let v4 = Virtual { id = 4; reg_class = Int; reg_constr = Any } in
   let instr =
-    Target.pcopy
+    pcopy
       ~dests:[ Reg (constrained Regs.rdi v3); Reg (constrained Regs.rsi v4) ]
       ~srcs:[ Reg v1; Reg v2 ]
   in
   (check string) "pcopy" (show_instr instr)
     "pcopy [(%3(%rdi), %1any); (%4(%rsi), %2any)]"
+
+let _fibonacci fn v =
+  let open Ast in
+  If
+    ( Bop (Le, Var v, Int 1),
+      [ Assign (fn, Var v) ],
+      [
+        Assign
+          ( fn,
+            Bop
+              ( Add,
+                Call (fn, [ Bop (Sub, Var v, Int 1) ]),
+                Call (fn, [ Bop (Sub, Var v, Int 2) ]) ) );
+      ] )
+
+let _nested_loops =
+  let open Ast in
+  [
+    Assign ("i", Int 0);
+    While
+      ( Bop (Lt, Var "i", Int 100),
+        [
+          Assign ("j", Var "i");
+          While
+            ( Bop (Lt, Var "j", Int 100),
+              [
+                Assign ("j", Bop (Add, Var "j", Int 1));
+                Assign ("i", Bop (Add, Var "i", Int 1));
+              ] );
+        ] );
+  ]
 
 let _ =
   run "Test undag to list of trees"
