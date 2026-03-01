@@ -31,6 +31,13 @@ module State = struct
       Target.StackSlot !stack_offset
     in
     { fresh_vreg; mapping; stack_offset; new_stack_slot }
+
+  let assign_vreg { fresh_vreg; mapping; _ } clz = function
+    | Undag.Target.Reg n ->
+      let vreg = fresh_vreg clz in
+      NameHashtbl.add mapping n (Reg vreg);
+      vreg
+    | _ -> failwith "assign_vreg: expected destination to be register"
 end
 
 let call_conv_int { State.fresh_vreg; new_stack_slot; _ } = function
@@ -45,13 +52,7 @@ let call_conv_int { State.fresh_vreg; new_stack_slot; _ } = function
 let rec select ({ State.fresh_vreg; mapping; _ } as state)
     (instruction : Undag.Target.instr) (k : Target.operand -> Cfg.tail) :
     Cfg.tail =
-  let assign_vreg clz = function
-    | Undag.Target.Reg n ->
-      let vreg = Target.Reg (fresh_vreg clz) in
-      NameHashtbl.add mapping n vreg;
-      vreg
-    | _ -> failwith "assign_vreg: expected destination to be register"
-  in
+  let assign_vreg clz reg = Target.Reg (State.assign_vreg state clz reg) in
   let translate_operand : Undag.Target.operand -> (Target.operand -> 'a) -> 'a =
     function
     | Undag.Target.Instr src -> select state src
@@ -169,17 +170,12 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
       (Cfg.CBranch
          (Target.cbranch ~args:[ src1; src2 ] cond l1 l1args l2 l2args, l1, l2))
 
-let codegen_block ({ State.fresh_vreg; mapping; _ } as state)
-    ((first, tail) : Undag.Cfg.block) : Cfg.block =
+let codegen_block state ((first, tail) : Undag.Cfg.block) : Cfg.block =
   let first =
     match first with
     | Undag.Cfg.Entry -> Cfg.Entry
     | Undag.Cfg.Label (l, i) ->
-      let map_vreg n =
-        let vreg = fresh_vreg Target.Int in
-        NameHashtbl.add mapping n (Target.Reg vreg);
-        vreg
-      in
+      let map_vreg n = State.assign_vreg state Target.Int (Reg n) in
       Cfg.Label (l, { local = i.local; args = List.map map_vreg i.args })
   in
   let endd = Cfg.Last Cfg.Exit in
@@ -197,6 +193,27 @@ let codegen_block ({ State.fresh_vreg; mapping; _ } as state)
   in
   let tail = go_tail tail in
   (first, tail)
+
+let codegen_function ~args (graph : Undag.Cfg.graph) : Cfg.graph =
+  let state = State.init () in
+  let srcs = List.init (List.length args) (call_conv_int state) in
+  let dests =
+    List.map
+      (fun arg -> Target.Reg (State.assign_vreg state Int (Reg arg)))
+      args
+  in
+  let pcopy = X86.Cfg.Instruction (Target.pcopy ~dests ~srcs) in
+  let graph =
+    List.fold_left
+      (fun acc block -> X86.Cfg.Blocks.insert (codegen_block state block) acc)
+      X86.Cfg.empty
+      (Undag.Cfg.reverse_postorder_dfs graph)
+  in
+  let zblock, graph = X86.Cfg.focus_entry graph in
+  match zblock with
+  | First Entry, tail ->
+    X86.Cfg.unfocus ((First Entry, Tail (pcopy, tail)), graph)
+  | _ -> failwith "codegen_function: expected zipper to be at entry"
 
 let%expect_test "Fibonacci code generation" =
   let fibonacci fn v =
@@ -233,38 +250,31 @@ let%expect_test "Fibonacci code generation" =
       (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
       cfg Undag.Cfg.empty
   in
-  let state = State.init () in
-  NameHashtbl.add state.mapping ("v", 0)
-    X86.Target.(Reg (constrained X86.Regs.rdi (state.fresh_vreg Int)));
-  let cfg =
-    List.fold_left
-      (fun acc block -> X86.Cfg.Blocks.insert (codegen_block state block) acc)
-      X86.Cfg.empty
-      (Undag.Cfg.reverse_postorder_dfs cfg)
-  in
+  let cfg = codegen_function ~args:[ ("v", 0) ] cfg in
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      cmp Instruction.Cond.LE %0(%rdi), $1, label2, label3
-    label1(local=false)(33any):
-      movq %34(%rax), %33any
-      ret %34(%rax)
+      pcopy [(%1any, %0(%rdi))]
+      cmp Instruction.Cond.LE %1any, $1, label2, label3
+    label1(local=false)(34any):
+      movq %35(%rax), %34any
+      ret %35(%rax)
     label2(local=false)():
-      movq %1any, %0(%rdi)
-      j label1, %1any
+      movq %2any, %1any
+      j label1, %2any
     label3(local=false)():
-      movq %5any, %0(%rdi)
-      subq %4(reuse=%5), %5any, $1
-      pcopy [(%6(%rdi), %4(reuse=%5))]
-      call %7(%rax), %8(%rcx), %9(%rdx), %10(%rsi), %11(%rdi), %12(%r8), %13(%r9), %14(%r10), %15(%r11), fibonacci
-      movq %2any, %3(%rax)
-      movq %19any, %0(%rdi)
-      subq %18(reuse=%19), %19any, $2
-      pcopy [(%20(%rdi), %18(reuse=%19))]
-      call %21(%rax), %22(%rcx), %23(%rdx), %24(%rsi), %25(%rdi), %26(%r8), %27(%r9), %28(%r10), %29(%r11), fibonacci
-      movq %16any, %17(%rax)
-      movq %32any, %2any
-      addq %31(reuse=%32), %32any, %16any
-      movq %30any, %31(reuse=%32)
-      j label1, %30any
+      movq %6any, %1any
+      subq %5(reuse=%6), %6any, $1
+      pcopy [(%7(%rdi), %5(reuse=%6))]
+      call %8(%rax), %9(%rcx), %10(%rdx), %11(%rsi), %12(%rdi), %13(%r8), %14(%r9), %15(%r10), %16(%r11), fibonacci
+      movq %3any, %4(%rax)
+      movq %20any, %1any
+      subq %19(reuse=%20), %20any, $2
+      pcopy [(%21(%rdi), %19(reuse=%20))]
+      call %22(%rax), %23(%rcx), %24(%rdx), %25(%rsi), %26(%rdi), %27(%r8), %28(%r9), %29(%r10), %30(%r11), fibonacci
+      movq %17any, %18(%rax)
+      movq %33any, %3any
+      addq %32(reuse=%33), %33any, %17any
+      movq %31any, %32(reuse=%33)
+      j label1, %31any
     |}]
