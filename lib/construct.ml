@@ -163,6 +163,8 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
         Target.map_uses
           (function
             | Reg reg -> Reg (replace_use reg)
+            (* ignore global labels *)
+            | Label (((-1, _) as l), args) -> Label (l, args)
             | Label (((uid, _) as l), args) -> begin
               let first =
                 if Some l = label then first

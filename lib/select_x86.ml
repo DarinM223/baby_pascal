@@ -193,7 +193,78 @@ let codegen_block ({ State.fresh_vreg; mapping; _ } as state)
       | Undag.Cfg.Return i -> select state i (Fun.const endd)
     end
     | Undag.Cfg.Tail (Instruction i, rest) ->
-      select state i (Fun.const (go_tail rest))
+      select state i (fun _ -> go_tail rest)
   in
   let tail = go_tail tail in
   (first, tail)
+
+let%expect_test "Fibonacci code generation" =
+  let fibonacci fn v =
+    let open Ast in
+    If
+      ( Bop (Le, Var v, Int 1),
+        [ Assign (fn, Var v) ],
+        [
+          Assign
+            ( fn,
+              Bop
+                ( Add,
+                  Call (fn, [ Bop (Sub, Var v, Int 1) ]),
+                  Call (fn, [ Bop (Sub, Var v, Int 2) ]) ) );
+        ] )
+  in
+  let ast = fibonacci "fibonacci" "v" in
+  let module Fresh = Normalize.Fresh () in
+  let cfg = Normalize.normalize Fresh.fresh [ ast ] in
+  let cfg = Normalize.set_return "fibonacci" cfg in
+  let extra = Normalize.Cfg.precalculate_edges cfg in
+  let module Extra =
+    (val extra
+        : Graph.Extra with type graph = Normalize.Cfg.graph
+         and type label = Normalize.Target.label)
+  in
+  let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
+  let a_orig = Construct.calc_a_orig cfg in
+  let live = Construct.calc_live cfg in
+  let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
+  let cfg = Construct.rename_variables (module Dom) cfg in
+  let cfg =
+    Normalize.Cfg.Blocks.fold
+      (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
+      cfg Undag.Cfg.empty
+  in
+  let state = State.init () in
+  NameHashtbl.add state.mapping ("v", 0)
+    X86.Target.(Reg (constrained X86.Regs.rdi (state.fresh_vreg Int)));
+  let cfg =
+    List.fold_left
+      (fun acc block -> X86.Cfg.Blocks.insert (codegen_block state block) acc)
+      X86.Cfg.empty
+      (Undag.Cfg.reverse_postorder_dfs cfg)
+  in
+  Format.printf "%a" X86.Printer.pp_graph cfg;
+  [%expect
+    {|
+      cmp Instruction.Cond.LE %0(%rdi), $1, label2, label3
+    label1(local=false)(33any):
+      movq %34(%rax), %33any
+      ret %34(%rax)
+    label2(local=false)():
+      movq %1any, %0(%rdi)
+      j label1, %1any
+    label3(local=false)():
+      movq %5any, %0(%rdi)
+      subq %4(reuse=%5), %5any, $1
+      pcopy [(%6(%rdi), %4(reuse=%5))]
+      call %7(%rax), %8(%rcx), %9(%rdx), %10(%rsi), %11(%rdi), %12(%r8), %13(%r9), %14(%r10), %15(%r11), fibonacci
+      movq %2any, %3(%rax)
+      movq %19any, %0(%rdi)
+      subq %18(reuse=%19), %19any, $2
+      pcopy [(%20(%rdi), %18(reuse=%19))]
+      call %21(%rax), %22(%rcx), %23(%rdx), %24(%rsi), %25(%rdi), %26(%r8), %27(%r9), %28(%r10), %29(%r11), fibonacci
+      movq %16any, %17(%rax)
+      movq %32any, %2any
+      addq %31(reuse=%32), %32any, %16any
+      movq %30any, %31(reuse=%32)
+      j label1, %30any
+    |}]

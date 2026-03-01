@@ -16,7 +16,8 @@ let test_example_1 () =
             [ Assign ("result", Int 60) ] );
       ]
   in
-  let result = Normalize.normalize expr in
+  let module Fresh = Normalize.Fresh () in
+  let result = Normalize.normalize Fresh.fresh expr in
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in

@@ -84,8 +84,15 @@ end
 
 module Cfg = Graph.Make (Target)
 module Flow = Dataflow.Make (Cfg)
+module Fresh () = struct
+  let c = ref (-1)
+  let fresh () =
+    incr c;
+    Target.name ("tmp" ^ string_of_int !c)
+  let reset () = c := -1
+end
 
-let normalize (stmts : Ast.stmt list) : Cfg.graph =
+let normalize (fresh : unit -> Target.reg) (stmts : Ast.stmt list) : Cfg.graph =
   let ( let* ) = ( @@ ) in
   let new_label : unit -> Cfg.label =
     let c = ref 0 in
@@ -93,12 +100,6 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
       incr c;
       let i = !c in
       (i, "label" ^ string_of_int i)
-  in
-  let fresh : unit -> Target.reg =
-    let c = ref (-1) in
-    fun () ->
-      incr c;
-      Target.name ("tmp" ^ string_of_int !c)
   in
   let rec go_expr exp (k : Target.operand -> Cfg.nodes) : Cfg.nodes =
     match exp with
@@ -116,7 +117,7 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
       Fun.compose
         (Cfg.instruction (Target.bop bop ~src1:e1 ~src2:e2 ~dest:tmp))
         (k tmp)
-    | Ast.Call (f, es) -> go_call (Target.reg f) es k
+    | Ast.Call (f, es) -> go_call (Target.Label ((-1, f), [])) es k
   and short_circuit t f = function
     | Ast.Bool b -> Cfg.branch (if b then t else f)
     | Ast.Uop (Ast.Not, e) -> short_circuit f t e
@@ -171,7 +172,7 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
         Cfg.label begin_label @@ short_circuit t next test @@ Cfg.label t
         @@ List.fold_right (go_stmt begin_label) body
         @@ Cfg.branch begin_label @@ zgraph
-    | Ast.Call (f, es) -> go_call (Target.reg f) es Fun.(const id)
+    | Ast.Call (f, es) -> go_call (Target.Label ((-1, f), [])) es Fun.(const id)
   in
   Cfg.unfocus
   @@ List.fold_right
@@ -180,3 +181,11 @@ let normalize (stmts : Ast.stmt list) : Cfg.graph =
          go_stmt next stmt @@ Cfg.label next @@ acc)
        stmts
        Cfg.(focus_entry empty)
+
+let set_return fn_name (graph : Cfg.graph) : Cfg.graph =
+  let zblock, rest = Cfg.focus_exit graph in
+  match zblock with
+  | head, Last Exit ->
+    Cfg.unfocus
+      ((head, Last (Return (Target.return ~uses:[ Target.reg fn_name ]))), rest)
+  | _ -> graph

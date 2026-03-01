@@ -142,7 +142,8 @@ let test_figure_19_4 () =
         Assign ("result", Var "j");
       ]
   in
-  let cfg = Normalize.normalize ast in
+  let module Fresh = Normalize.Fresh () in
+  let cfg = Normalize.normalize Fresh.fresh ast in
   let extra = Normalize.Cfg.precalculate_edges cfg in
   let module Extra =
     (val extra
@@ -213,7 +214,8 @@ let test_pruned () =
         Assign ("result", Var "z");
       ]
   in
-  let cfg = Normalize.normalize ast in
+  let module Fresh = Normalize.Fresh () in
+  let cfg = Normalize.normalize Fresh.fresh ast in
   let extra = Normalize.Cfg.precalculate_edges cfg in
   let module Extra =
     (val extra

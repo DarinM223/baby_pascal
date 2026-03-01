@@ -1,7 +1,8 @@
 (library
  (name baby_pascal)
+ (inline_tests)
  (preprocess
-  (pps ppx_deriving.std))
+  (pps ppx_deriving.std ppx_expect))
  (flags
   (:standard -w +A-4-41-39-40-42-70))
  (libraries containers))

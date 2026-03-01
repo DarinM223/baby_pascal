@@ -13,6 +13,7 @@ depends: [
   "ocaml"
   "dune" {>= "3.7"}
   "ppx_deriving"
+  "ppx_expect"
   "containers"
   "alcotest"
   "odoc" {with-doc}

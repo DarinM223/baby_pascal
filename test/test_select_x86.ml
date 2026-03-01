@@ -33,20 +33,6 @@ let test_print () =
   (check string) "pcopy" (show_instr instr)
     "pcopy [(%3(%rdi), %1any); (%4(%rsi), %2any)]"
 
-let _fibonacci fn v =
-  let open Ast in
-  If
-    ( Bop (Le, Var v, Int 1),
-      [ Assign (fn, Var v) ],
-      [
-        Assign
-          ( fn,
-            Bop
-              ( Add,
-                Call (fn, [ Bop (Sub, Var v, Int 1) ]),
-                Call (fn, [ Bop (Sub, Var v, Int 2) ]) ) );
-      ] )
-
 let _nested_loops =
   let open Ast in
   [

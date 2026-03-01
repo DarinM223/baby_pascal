@@ -83,8 +83,8 @@ module Target = struct
     | _ ->
       let pp_sep fmt () = Format.fprintf fmt ", " in
       let pp_operands = Format.pp_print_list ~pp_sep pp_operand in
-      Format.fprintf fmt "%s %a, %a" i.instr pp_operands i.defs pp_operands
-        i.uses
+      Format.fprintf fmt "%s %a" i.instr pp_operands (i.defs@
+        i.uses)
   let show_instr = Format.asprintf "%a" pp_instr
 
   type cond = Instruction.Cond.t
@@ -145,44 +145,46 @@ end
 
 module Cfg = Graph.Make (Target)
 
-module Format = struct
+module Printer = struct
+  type label = Cfg.label
+  let pp_label fmt (_, l) = Format.fprintf fmt "%s" l
   type first = Cfg.first =
     | Entry
-    | Label of Cfg.label * Cfg.info
+    | Label of label * Cfg.info
   type middle = Cfg.middle = Instruction of Target.instr
   type last = Cfg.last =
     | Exit
-    | Branch of Target.instr * Cfg.label
-    | CBranch of Target.instr * Cfg.label * Cfg.label
+    | Branch of Target.instr * label
+    | CBranch of Target.instr * label * label
     | Return of Target.instr
   let pp_sep fmt () = Format.fprintf fmt ", "
   let pp_first fmt = function
     | Entry -> ()
     | Label (l, info) ->
-      Format.fprintf fmt "%a(local=%b, %a):" Target.pp_label l info.local
+      Format.fprintf fmt "%a(local=%b)(%a):" pp_label l info.local
         (Format.pp_print_list ~pp_sep Target.pp_reg)
         info.args
   let pp_middle fmt (Instruction instr) =
     Format.fprintf fmt "%a" Target.pp_instr instr
   let pp_last fmt = function
-    | Exit -> Format.fprintf fmt "  exit\n"
+    | Exit -> Format.fprintf fmt "exit"
     | Branch (i, _) | CBranch (i, _, _) | Return i ->
-      Format.fprintf fmt "  %a\n" Target.pp_instr i
+      Format.fprintf fmt "%a" Target.pp_instr i
 
   type head = Cfg.head =
     | First of first
     | Head of head * middle
   let rec pp_head fmt = function
-    | First f -> Format.fprintf fmt "%a\n" pp_first f
-    | Head (h, m) -> Format.fprintf fmt "%a  %a\n" pp_head h pp_middle m
+    | First f -> Format.fprintf fmt "%a@\n" pp_first f
+    | Head (h, m) -> Format.fprintf fmt "%a  %a@\n" pp_head h pp_middle m
   type tail = Cfg.tail =
     | Last of last
     | Tail of middle * tail
   let rec pp_tail fmt = function
-    | Last l -> Format.fprintf fmt "%a\n" pp_last l
-    | Tail (m, t) -> Format.fprintf fmt "%a\n  %a" pp_middle m pp_tail t
+    | Last l -> Format.fprintf fmt "%a@\n" pp_last l
+    | Tail (m, t) -> Format.fprintf fmt "%a@\n  %a" pp_middle m pp_tail t
   type block = first * tail
-  let pp_block fmt (f, t) = Format.fprintf fmt "%a%a" pp_first f pp_tail t
+  let pp_block fmt (f, t) = Format.fprintf fmt "%a@\n  %a" pp_first f pp_tail t
   let pp_graph fmt =
     Cfg.Blocks.iter (fun _ block -> Format.fprintf fmt "%a" pp_block block)
 end
