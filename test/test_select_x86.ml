@@ -33,23 +33,6 @@ let test_print () =
   (check string) "pcopy" (show_instr instr)
     "pcopy [(%3(%rdi), %1any); (%4(%rsi), %2any)]"
 
-let _nested_loops =
-  let open Ast in
-  [
-    Assign ("i", Int 0);
-    While
-      ( Bop (Lt, Var "i", Int 100),
-        [
-          Assign ("j", Var "i");
-          While
-            ( Bop (Lt, Var "j", Int 100),
-              [
-                Assign ("j", Bop (Add, Var "j", Int 1));
-                Assign ("i", Bop (Add, Var "i", Int 1));
-              ] );
-        ] );
-  ]
-
 let _ =
   run "Test undag to list of trees"
     [

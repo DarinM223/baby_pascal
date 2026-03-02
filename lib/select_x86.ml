@@ -211,9 +211,28 @@ let codegen_function ~args (graph : Undag.Cfg.graph) : Cfg.graph =
   in
   let zblock, graph = X86.Cfg.focus_entry graph in
   match zblock with
-  | First Entry, tail ->
+  | First Entry, tail when not (List.is_empty args) ->
     X86.Cfg.unfocus ((First Entry, Tail (pcopy, tail)), graph)
-  | _ -> failwith "codegen_function: expected zipper to be at entry"
+  | _ -> X86.Cfg.unfocus (zblock, graph)
+
+let codegen_test_helper args cfg =
+  let extra = Normalize.Cfg.precalculate_edges cfg in
+  let module Extra =
+    (val extra
+        : Graph.Extra with type graph = Normalize.Cfg.graph
+         and type label = Normalize.Target.label)
+  in
+  let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
+  let a_orig = Construct.calc_a_orig cfg in
+  let live = Construct.calc_live cfg in
+  let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
+  let cfg = Construct.rename_variables (module Dom) cfg in
+  let cfg =
+    Normalize.Cfg.Blocks.fold
+      (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
+      cfg Undag.Cfg.empty
+  in
+  codegen_function ~args:(List.map (fun arg -> (arg, 0)) args) cfg
 
 let%expect_test "Fibonacci code generation" =
   let fibonacci fn v =
@@ -231,26 +250,9 @@ let%expect_test "Fibonacci code generation" =
         ] )
   in
   let ast = fibonacci "fibonacci" "v" in
-  let module Fresh = Normalize.Fresh () in
-  let cfg = Normalize.normalize Fresh.fresh [ ast ] in
-  let cfg = Normalize.set_return "fibonacci" cfg in
-  let extra = Normalize.Cfg.precalculate_edges cfg in
-  let module Extra =
-    (val extra
-        : Graph.Extra with type graph = Normalize.Cfg.graph
-         and type label = Normalize.Target.label)
-  in
-  let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
-  let a_orig = Construct.calc_a_orig cfg in
-  let live = Construct.calc_live cfg in
-  let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
-  let cfg = Construct.rename_variables (module Dom) cfg in
-  let cfg =
-    Normalize.Cfg.Blocks.fold
-      (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
-      cfg Undag.Cfg.empty
-  in
-  let cfg = codegen_function ~args:[ ("v", 0) ] cfg in
+  let module F = Normalize.Fresh () in
+  let cfg = Normalize.(set_return "fibonacci" (normalize F.fresh [ ast ])) in
+  let cfg = codegen_test_helper [ "v" ] cfg in
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
@@ -277,4 +279,50 @@ let%expect_test "Fibonacci code generation" =
       addq %32(reuse=%33), %33any, %17any
       movq %31any, %32(reuse=%33)
       j label1, %31any
+    |}]
+
+let%expect_test "Nested loops code generation" =
+  let ast =
+    let open Ast in
+    [
+      Assign ("i", Int 0);
+      While
+        ( Bop (Lt, Var "i", Int 100),
+          [
+            Assign ("j", Var "i");
+            While
+              ( Bop (Lt, Var "j", Int 100),
+                [
+                  Assign ("j", Bop (Add, Var "j", Int 1));
+                  Assign ("i", Bop (Add, Var "i", Int 1));
+                ] );
+          ] );
+    ]
+  in
+  let module F = Normalize.Fresh () in
+  let cfg = Normalize.normalize F.fresh ast in
+  let cfg = codegen_test_helper [] cfg in
+  Format.printf "%a" X86.Printer.pp_graph cfg;
+  [%expect {|
+      movq %0any, $0
+      j label6
+    label1(local=false)():
+      exit
+    label2(local=false)(1any):
+      cmp Instruction.Cond.LT %1any, $100, label3, label1
+    label3(local=false)():
+      movq %2any, %1any
+      j label4, %1any, %2any
+    label4(local=false)(3any, 4any):
+      cmp Instruction.Cond.LT %4any, $100, label5, label2, %3any
+    label5(local=false)():
+      movq %7any, %3any
+      addq %6(reuse=%7), %7any, $1
+      movq %5any, %6(reuse=%7)
+      movq %10any, %4any
+      addq %9(reuse=%10), %10any, $1
+      movq %8any, %9(reuse=%10)
+      j label4, %5any, %8any
+    label6(local=false)():
+      j label2, %0any
     |}]
