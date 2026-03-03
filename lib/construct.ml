@@ -241,7 +241,7 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
     k graph
   and walk graph tree k =
     match tree with
-    | Dom.Node (l, children) -> rename graph l children k
-    | Dom.Leaf l -> rename graph l [] k
+    | Dom.Node (_, l, children) -> rename graph l children k
+    | Dom.Leaf (_, l) -> rename graph l [] k
   in
   walk graph (Lazy.force Dom.dominator_tree) (fun a -> a)

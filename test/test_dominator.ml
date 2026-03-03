@@ -32,19 +32,22 @@ let test_dom () =
   let expected =
     let open Dom in
     Node
-      ( None,
+      ( 0,
+        None,
         [
           Node
-            ( Some (2, ""),
+            ( 1,
+              Some (2, ""),
               [
                 Node
-                  ( Some (3, ""),
+                  ( 2,
+                    Some (3, ""),
                     [
-                      Leaf (Some (5, ""));
-                      Leaf (Some (6, ""));
-                      Leaf (Some (7, ""));
+                      Leaf (3, Some (5, ""));
+                      Leaf (3, Some (6, ""));
+                      Leaf (3, Some (7, ""));
                     ] );
-                Leaf (Some (4, ""));
+                Leaf (2, Some (4, ""));
               ] );
         ] )
   in
@@ -56,11 +59,31 @@ let test_dom () =
   let expected =
     Dom.(
       Node
-        ( Some (3, ""),
-          [ Leaf (Some (5, "")); Leaf (Some (6, "")); Leaf (Some (7, "")) ] ))
+        ( 2,
+          Some (3, ""),
+          [
+            Leaf (3, Some (5, ""));
+            Leaf (3, Some (6, ""));
+            Leaf (3, Some (7, ""));
+          ] ))
   in
   (check Dom.(testable pp_tree equal_tree))
     "Produces proper dominator subtree" tree expected;
+  (check bool) "Entry dominates middle node"
+    (Dom.dominates
+       (Extra.position_of_label None)
+       (Extra.position_of_label (Some (3, ""))))
+    true;
+  (check bool) "Middle node dominates leaf node"
+    (Dom.dominates
+       (Extra.position_of_label (Some (2, "")))
+       (Extra.position_of_label (Some (5, ""))))
+    true;
+  (check bool) "Different child doesn't dominate leaf node"
+    (Dom.dominates
+       (Extra.position_of_label (Some (4, "")))
+       (Extra.position_of_label (Some (5, ""))))
+    false;
   let df = Lazy.force Dom.dominator_frontier in
   let labels =
     [

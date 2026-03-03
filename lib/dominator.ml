@@ -7,9 +7,10 @@ functor
   ->
   struct
     include Extra
+    type level = int [@@deriving show, eq]
     type tree =
-      | Leaf of label option
-      | Node of label option * tree list
+      | Leaf of level * label option
+      | Node of level * label option * tree list
     [@@deriving show, eq]
 
     type node_type =
@@ -68,13 +69,13 @@ functor
     let dominator_tree_at =
       lazy begin
         let children_mapping = Array.make Extra.size IntSet.empty in
-        let node_mapping = Array.make Extra.size (Leaf None) in
+        let node_mapping = Array.make Extra.size (Leaf (0, None)) in
         let add_children block =
           let parent = Extra.int_of_position (idom block) in
           children_mapping.(parent) <-
             IntSet.add (Extra.int_of_position block) children_mapping.(parent)
         in
-        let rec build_tree node k =
+        let rec build_tree level node k =
           let children =
             children_mapping.(Extra.int_of_position node)
             |> IntSet.to_list
@@ -84,25 +85,55 @@ functor
           let rec go acc children =
             match children with
             | [] ->
-              let tree = Node (Extra.label_of_position node, List.rev acc) in
+              let tree =
+                Node (level, Extra.label_of_position node, List.rev acc)
+              in
               node_mapping.(Extra.int_of_position node) <- tree;
               k tree
-            | c :: cs -> build_tree c (fun tree -> go (tree :: acc) cs)
+            | c :: cs ->
+              build_tree (level + 1) c (fun tree -> go (tree :: acc) cs)
           in
           match children with
-          | [] -> k (Leaf (Extra.label_of_position node))
+          | [] ->
+            let tree = Leaf (level, Extra.label_of_position node) in
+            node_mapping.(Extra.int_of_position node) <- tree;
+            k tree
           | _ -> go [] children
         in
         G.Blocks.iter
           (fun _ block ->
             block |> G.block_label |> Extra.position_of_label |> add_children)
           Extra.graph;
-        build_tree
+        build_tree 0
           (Extra.position_of_label None)
           (Fun.const (fun p -> node_mapping.(Extra.int_of_position p)))
       end
     let dominator_tree =
       Lazy.map (fun f -> f (Extra.position_of_label None)) dominator_tree_at
+
+    let dominator_tree_level block =
+      match Lazy.force dominator_tree_at block with
+      | Leaf (level, _) -> level
+      | Node (level, _, _) -> level
+
+    let dominates b1 b2 =
+      b2 = b1
+      || b1 = idom b2
+      || b2 = idom b1
+      ||
+      let b1_level = dominator_tree_level b1 in
+      if b1_level = 0 then true
+      else if b1_level >= dominator_tree_level b2 then false
+      else
+        let idom_node = ref (idom b2) in
+        let b2 = ref b2 in
+        try
+          while dominator_tree_level !idom_node >= b1_level do
+            b2 := !idom_node;
+            idom_node := idom !idom_node
+          done;
+          !b2 = b1
+        with _ -> !b2 = b1
 
     let dominator_frontier =
       lazy begin

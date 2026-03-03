@@ -3,15 +3,18 @@ module IntMap = Map.Make (Int)
 
 module type S = sig
   include Graph.Extra
+  type level = int
   type tree =
-    | Leaf of label option
-    | Node of label option * tree list
+    | Leaf of level * label option
+    | Node of level * label option * tree list
   val pp_tree : Format.formatter -> tree -> unit
   val show_tree : tree -> string
   val equal_tree : tree -> tree -> bool
 
   val idom : position -> position
+  val dominates : position -> position -> bool
   val dominator_tree : tree Lazy.t
+  val dominator_tree_level : position -> level
   val dominator_tree_at : (position -> tree) Lazy.t
   val dominator_frontier : (position -> position list) Lazy.t
 end
