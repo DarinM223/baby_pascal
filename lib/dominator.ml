@@ -13,6 +13,13 @@ functor
       | Node of level * label option * tree list
     [@@deriving show, eq]
 
+    let tree_label = function
+      | Leaf (_, label) -> label
+      | Node (_, label, _) -> label
+    let tree_children = function
+      | Leaf _ -> []
+      | Node (_, _, children) -> children
+
     type node_type =
       | Undefined
       | Defined of Extra.position

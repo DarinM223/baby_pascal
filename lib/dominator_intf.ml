@@ -10,6 +10,8 @@ module type S = sig
   val pp_tree : Format.formatter -> tree -> unit
   val show_tree : tree -> string
   val equal_tree : tree -> tree -> bool
+  val tree_label : tree -> label option
+  val tree_children : tree -> tree list
 
   val idom : position -> position
   val dominates : position -> position -> bool

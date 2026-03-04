@@ -50,6 +50,9 @@ functor
 
     type nodes = zgraph -> zgraph
 
+    let idd = function
+      | None -> entry_uid
+      | Some (uid, _) -> uid
     let id = function
       | Entry, _ -> entry_uid
       | Label ((uid, _), _), _ -> uid

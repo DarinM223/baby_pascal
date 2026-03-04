@@ -145,6 +145,7 @@ module type S = sig
   end
 
   val exit_uid : graph -> uid
+  val idd : label option -> uid
   val id : block -> uid
   val block_label : block -> label option
   val empty : graph
