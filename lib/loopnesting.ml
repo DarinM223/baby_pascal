@@ -1,5 +1,11 @@
-module LabelSet = Set.Make (Int)
-module LabelMap = Map.Make (Int)
+module LabelSet = struct
+  include CCSet.Make (Int)
+  let pp = pp Format.pp_print_int
+end
+module LabelMap = struct
+  include CCMap.Make (Int)
+  let pp pp_v = pp Format.pp_print_int pp_v
+end
 module type S = sig
   val loop_headers : LabelSet.t
   val loop_nodes : LabelSet.t LabelMap.t
@@ -23,7 +29,7 @@ struct
     in
     G.Blocks.fold add_headers Dom.graph LabelSet.empty
 
-  let loop_nodes = failwith ""
+  let loop_nodes = LabelMap.empty
 
-  let loop_nest_successors = failwith ""
+  let loop_nest_successors = LabelMap.empty
 end

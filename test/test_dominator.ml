@@ -79,6 +79,11 @@ let test_dom () =
        (Extra.position_of_label (Some (2, "")))
        (Extra.position_of_label (Some (5, ""))))
     true;
+  (check bool) "Child doesn't dominate parent"
+    (Dom.dominates
+       (Extra.position_of_label (Some (5, "")))
+       (Extra.position_of_label (Some (3, ""))))
+    false;
   (check bool) "Different child doesn't dominate leaf node"
     (Dom.dominates
        (Extra.position_of_label (Some (4, "")))

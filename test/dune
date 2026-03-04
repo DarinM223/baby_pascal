@@ -3,6 +3,7 @@
   test_normalize
   test_dominator
   test_construct
+  test_loopnesting
   test_deadcode
   test_constprop
   test_undag

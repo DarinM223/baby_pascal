@@ -119,21 +119,22 @@ functor
     let dominates b1 b2 =
       b2 = b1
       || b1 = idom b2
-      || b2 = idom b1
       ||
-      let b1_level = dominator_tree_level b1 in
-      if b1_level = 0 then true
-      else if b1_level >= dominator_tree_level b2 then false
+      if b2 = idom b1 then false
       else
-        let idom_node = ref (idom b2) in
-        let b2 = ref b2 in
-        try
-          while dominator_tree_level !idom_node >= b1_level do
-            b2 := !idom_node;
-            idom_node := idom !idom_node
-          done;
-          !b2 = b1
-        with _ -> !b2 = b1
+        let b1_level = dominator_tree_level b1 in
+        if b1_level = 0 then true
+        else if b1_level >= dominator_tree_level b2 then false
+        else
+          let idom_node = ref (idom b2) in
+          let b2 = ref b2 in
+          try
+            while dominator_tree_level !idom_node >= b1_level do
+              b2 := !idom_node;
+              idom_node := idom !idom_node
+            done;
+            !b2 = b1
+          with _ -> !b2 = b1
 
     let dominator_frontier =
       lazy begin
