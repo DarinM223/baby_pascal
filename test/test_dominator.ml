@@ -22,11 +22,7 @@ let test_dom () =
     @@ focus_entry empty
   in
   let extra = Normalize.Cfg.precalculate_edges cfg in
-  let module Extra =
-    (val extra
-        : Graph.Extra with type graph = Normalize.Cfg.graph
-         and type label = Normalize.Target.label)
-  in
+  let module Extra = (val extra) in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
   let tree = Lazy.force Dom.dominator_tree in
   let expected =

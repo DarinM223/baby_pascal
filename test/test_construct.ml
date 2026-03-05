@@ -28,11 +28,7 @@ let test_figure_19_2 () =
     @@ exit @@ focus_entry empty
   in
   let extra = Normalize.Cfg.precalculate_edges cfg in
-  let module Extra =
-    (val extra
-        : Graph.Extra with type graph = Normalize.Cfg.graph
-         and type label = Normalize.Target.label)
-  in
+  let module Extra = (val extra) in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
   let a_orig = Construct.calc_a_orig cfg in
   let cfg = Construct.insert_phis_minimal (module Dom) a_orig cfg in
@@ -84,11 +80,7 @@ let test_figure_19_3 () =
     @@ exit @@ focus_entry empty
   in
   let extra = Normalize.Cfg.precalculate_edges cfg in
-  let module Extra =
-    (val extra
-        : Graph.Extra with type graph = Normalize.Cfg.graph
-         and type label = Normalize.Target.label)
-  in
+  let module Extra = (val extra) in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
   let a_orig = Construct.calc_a_orig cfg in
   let cfg = Construct.insert_phis_minimal (module Dom) a_orig cfg in
@@ -145,11 +137,7 @@ let test_figure_19_4 () =
   let module Fresh = Normalize.Fresh () in
   let cfg = Normalize.normalize Fresh.fresh ast in
   let extra = Normalize.Cfg.precalculate_edges cfg in
-  let module Extra =
-    (val extra
-        : Graph.Extra with type graph = Normalize.Cfg.graph
-         and type label = Normalize.Target.label)
-  in
+  let module Extra = (val extra) in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
   let a_orig = Construct.calc_a_orig cfg in
   let live = Construct.calc_live cfg in
@@ -217,11 +205,7 @@ let test_pruned () =
   let module Fresh = Normalize.Fresh () in
   let cfg = Normalize.normalize Fresh.fresh ast in
   let extra = Normalize.Cfg.precalculate_edges cfg in
-  let module Extra =
-    (val extra
-        : Graph.Extra with type graph = Normalize.Cfg.graph
-         and type label = Normalize.Target.label)
-  in
+  let module Extra = (val extra) in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
   let a_orig = Construct.calc_a_orig cfg in
   let live = Construct.calc_live cfg in

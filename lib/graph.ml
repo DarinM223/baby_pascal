@@ -328,5 +328,6 @@ functor
       end in
       (module Extra : Extra
         with type label = Target.label
-         and type graph = graph)
+         and type graph = graph
+         and type position = int)
   end

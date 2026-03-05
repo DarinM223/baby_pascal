@@ -193,7 +193,10 @@ module type S = sig
 
   val precalculate_edges :
     graph ->
-    (module Extra with type label = Target.label and type graph = graph)
+    (module Extra
+       with type label = Target.label
+        and type graph = graph
+        and type position = int)
 end
 
 module type Maker = functor (Target : Target with type label = int * string) ->

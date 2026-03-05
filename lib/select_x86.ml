@@ -217,11 +217,7 @@ let codegen_function ~args (graph : Undag.Cfg.graph) : Cfg.graph =
 
 let codegen_test_helper args cfg =
   let extra = Normalize.Cfg.precalculate_edges cfg in
-  let module Extra =
-    (val extra
-        : Graph.Extra with type graph = Normalize.Cfg.graph
-         and type label = Normalize.Target.label)
-  in
+  let module Extra = (val extra) in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
   let a_orig = Construct.calc_a_orig cfg in
   let live = Construct.calc_live cfg in
@@ -303,7 +299,8 @@ let%expect_test "Nested loops code generation" =
   let cfg = Normalize.normalize F.fresh ast in
   let cfg = codegen_test_helper [] cfg in
   Format.printf "%a" X86.Printer.pp_graph cfg;
-  [%expect {|
+  [%expect
+    {|
       movq %0any, $0
       j label6
     label1(local=false)():

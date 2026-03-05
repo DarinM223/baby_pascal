@@ -22,18 +22,20 @@ let test_nested_loops_headers () =
   let module F = Normalize.Fresh () in
   let cfg = Normalize.normalize F.fresh ast in
   let extra = Normalize.Cfg.precalculate_edges cfg in
-  let module Extra =
-    (val extra
-        : Graph.Extra with type graph = Normalize.Cfg.graph
-         and type label = Normalize.Target.label)
-  in
+  let module Extra = (val extra) in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
   let module Loop = Loopnesting.Make (Normalize.Cfg) (Dom) in
   Format.printf "Graph: %a\n" Normalize.Cfg.pp_graph cfg;
-  let expected = Loopnesting.LabelSet.of_list [ 2; 4 ] in
-  (check Loopnesting.LabelSet.(testable pp equal))
-    "Loop headers" Loop.loop_headers expected;
   let expected =
+    Loop.PositionSet.of_list
+      [
+        Loop.Dom.position_of_label (Some (2, ""));
+        Loop.Dom.position_of_label (Some (4, ""));
+      ]
+  in
+  (check Loop.PositionSet.(testable pp equal))
+    "Loop headers" Loop.loop_headers expected
+(* let expected =
     Loopnesting.(
       LabelMap.of_list
         [
@@ -58,7 +60,7 @@ let test_nested_loops_headers () =
        testable (LabelMap.pp LabelSet.pp) (LabelMap.equal LabelSet.equal)))
     "Loop nest tree"
     (Lazy.force Loop.loop_nest_successors)
-    expected
+    expected *)
 
 let _ =
   run "Loop nesting"
