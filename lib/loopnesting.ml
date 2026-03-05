@@ -46,14 +46,14 @@ struct
             G.(successors (last (fst (focus (idd child) Dom.graph))))
             |> List.map (fun l -> Some l)
           in
-          if List.mem top succs then
-            let loop_nodes = add_label top child loop_nodes in
-            dfs (loop_nodes, loop_nest_successors) child stack
-          else if LabelSet.mem (G.idd child) loop_headers then
+          if LabelSet.mem (G.idd child) loop_headers then
             let loop_nest_successors =
               add_label top child loop_nest_successors
             in
             dfs (loop_nodes, loop_nest_successors) child (child :: top :: stack)
+          else if List.mem top succs then
+            let loop_nodes = add_label top child loop_nodes in
+            dfs (loop_nodes, loop_nest_successors) child stack
           else
             let loop_nodes = add_label top child loop_nodes in
             dfs (loop_nodes, loop_nest_successors) child (top :: stack)

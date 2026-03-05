@@ -32,7 +32,33 @@ let test_nested_loops_headers () =
   Format.printf "Graph: %a\n" Normalize.Cfg.pp_graph cfg;
   let expected = Loopnesting.LabelSet.of_list [ 2; 4 ] in
   (check Loopnesting.LabelSet.(testable pp equal))
-    "Loop headers" Loop.loop_headers expected
+    "Loop headers" Loop.loop_headers expected;
+  let expected =
+    Loopnesting.(
+      LabelMap.of_list
+        [
+          (0, LabelSet.of_list [ 6 ]);
+          (2, LabelSet.of_list [ 1; 3 ]);
+          (4, LabelSet.of_list [ 5 ]);
+        ])
+  in
+  (check
+     Loopnesting.(
+       testable (LabelMap.pp LabelSet.pp) (LabelMap.equal LabelSet.equal)))
+    "Loop nodes"
+    (Lazy.force Loop.loop_nodes)
+    expected;
+  let expected =
+    Loopnesting.(
+      LabelMap.of_list
+        [ (0, LabelSet.of_list [ 2 ]); (2, LabelSet.of_list [ 4 ]) ])
+  in
+  (check
+     Loopnesting.(
+       testable (LabelMap.pp LabelSet.pp) (LabelMap.equal LabelSet.equal)))
+    "Loop nest tree"
+    (Lazy.force Loop.loop_nest_successors)
+    expected
 
 let _ =
   run "Loop nesting"
