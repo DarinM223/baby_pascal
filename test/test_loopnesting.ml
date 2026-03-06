@@ -1,6 +1,21 @@
 open Alcotest
 open Baby_pascal
 
+(*
+   0
+   |
+   6
+   |
+   2 <-+
+  / \  |
+ 1   3 |
+      \|
+       4 <-+
+       |   |
+       |  /
+       | /
+       5
+*)
 let test_nested_loops_headers () =
   let ast =
     let open Ast in
@@ -34,33 +49,39 @@ let test_nested_loops_headers () =
       ]
   in
   (check Loop.PositionSet.(testable pp equal))
-    "Loop headers" Loop.loop_headers expected
-(* let expected =
-    Loopnesting.(
-      LabelMap.of_list
-        [
-          (0, LabelSet.of_list [ 6 ]);
-          (2, LabelSet.of_list [ 1; 3 ]);
-          (4, LabelSet.of_list [ 5 ]);
-        ])
+    "Loop headers" Loop.loop_headers expected;
+  let nodes =
+    [|
+      None;
+      Some (6, "");
+      Some (2, "");
+      Some (3, "");
+      Some (4, "");
+      Some (5, "");
+      Some (1, "");
+    |]
   in
-  (check
-     Loopnesting.(
-       testable (LabelMap.pp LabelSet.pp) (LabelMap.equal LabelSet.equal)))
-    "Loop nodes"
-    (Lazy.force Loop.loop_nodes)
-    expected;
+  for i = 0 to 6 do
+    (check int) "Labels match with positions"
+      (Dom.position_of_label nodes.(i))
+      i
+  done;
   let expected =
-    Loopnesting.(
-      LabelMap.of_list
-        [ (0, LabelSet.of_list [ 2 ]); (2, LabelSet.of_list [ 4 ]) ])
+    Loop.PositionSet.
+      [|
+        of_list [ 0; 1; 2; 6 ];
+        empty;
+        of_list [ 3; 4 ];
+        empty;
+        singleton 5;
+        empty;
+        empty;
+      |]
   in
-  (check
-     Loopnesting.(
-       testable (LabelMap.pp LabelSet.pp) (LabelMap.equal LabelSet.equal)))
-    "Loop nest tree"
-    (Lazy.force Loop.loop_nest_successors)
-    expected *)
+  (check (array Loop.PositionSet.(testable pp equal)))
+    "Loop nodes"
+    (Iarray.to_array Loop.loop_nodes)
+    expected
 
 let _ =
   run "Loop nesting"
