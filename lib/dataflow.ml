@@ -18,7 +18,7 @@ functor
       | Dataflow of 'a
       | Rewrite of G.graph
 
-    let update (fact : 'a fact) (changed : bool ref) (uid : G.uid) (a : 'a) =
+    let update fact changed uid a =
       let old_a = fact.get uid in
       let new_a = fact.add_info a old_a in
       if fact.changed ~before:old_a ~after:new_a then begin

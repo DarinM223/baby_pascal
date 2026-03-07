@@ -16,6 +16,7 @@ module type S = sig
 
   val run :
     'a fact -> bool ref -> 'a -> (G.block -> unit) -> G.block list -> int
+  val update : 'a fact -> bool ref -> int -> 'a -> unit
 
   module BackwardAnalysis : sig
     type 'a functions = {

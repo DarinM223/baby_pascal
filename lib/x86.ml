@@ -83,8 +83,7 @@ module Target = struct
     | _ ->
       let pp_sep fmt () = Format.fprintf fmt ", " in
       let pp_operands = Format.pp_print_list ~pp_sep pp_operand in
-      Format.fprintf fmt "%s %a" i.instr pp_operands (i.defs@
-        i.uses)
+      Format.fprintf fmt "%s %a" i.instr pp_operands (i.defs @ i.uses)
   let show_instr = Format.asprintf "%a" pp_instr
 
   type cond = Instruction.Cond.t
@@ -144,6 +143,7 @@ module Regs = struct
 end
 
 module Cfg = Graph.Make (Target)
+module Flow = Dataflow.Make (Cfg)
 
 module Printer = struct
   type label = Cfg.label

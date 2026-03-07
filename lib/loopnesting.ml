@@ -13,6 +13,7 @@ module type S = sig
     val pp : t CCSet.printer
   end
   val loop_headers : PositionSet.t
+  val loop_header : Dom.position -> Dom.position
   val loop_nodes : PositionSet.t iarray
 end
 module Make
@@ -97,5 +98,6 @@ module Make
       let header = header.(w) in
       children.(header) <- PositionSet.add w children.(header)
     done
+  let loop_header p = header.(p)
   let loop_nodes = Iarray.of_array children
 end

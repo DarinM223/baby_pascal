@@ -27,7 +27,7 @@ let name_fact () =
     changed = (fun ~before ~after -> NameSet.(cardinal after > cardinal before));
     skip_block = Fun.const false;
     get = IntHashtbl.find store;
-    set = IntHashtbl.add store;
+    set = IntHashtbl.replace store;
   }
 
 let calc_a_orig graph : a_orig =

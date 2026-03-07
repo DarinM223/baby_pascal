@@ -29,7 +29,7 @@ let block_args_fact () =
       (fun ~before ~after -> not (NameMap.equal OperandSet.equal before after));
     skip_block = Fun.const false;
     get = IntHashtbl.find store;
-    set = IntHashtbl.add store;
+    set = IntHashtbl.replace store;
   }
 
 let block_args graph =
@@ -121,7 +121,7 @@ let state_fact () =
       (fun uid ->
         uid <> Cfg.entry_uid && not (IntHashtbl.find store uid).executable);
     get = IntHashtbl.find store;
-    set = IntHashtbl.add store;
+    set = IntHashtbl.replace store;
   }
 
 let rec remove_consecutive_duplicates = function
