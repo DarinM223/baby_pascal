@@ -1,7 +1,9 @@
+let hashtbl_size = 100
 let m = 10_000
 
 module IntHashtbl = Hashtbl.Make (Int)
-module NameMap = Constprop.NameMap
+module IntSet = Set.Make (Int)
+module IntMap = Map.Make (Int)
 
 let count_instructions (tail : X86.Cfg.tail) =
   let rec go acc = function
@@ -11,19 +13,16 @@ let count_instructions (tail : X86.Cfg.tail) =
   go 1 tail
 
 type state = {
-  distances : int NameMap.t;
+  distances : int IntMap.t;
   (* temporary for each block *)
-  first_use : int NameMap.t;
+  first_use : int IntMap.t;
   count : int;
 }
-let add_lengths length state =
-  { state with distances = NameMap.map (fun d -> d + length) state.distances }
-let hashtbl_size = 100
 let fact () =
   let store = IntHashtbl.create hashtbl_size in
   (* if variable doesn't exist in distances map it has distance of infinity *)
   let init_info =
-    { distances = NameMap.empty; first_use = NameMap.empty; count = 0 }
+    { distances = IntMap.empty; first_use = IntMap.empty; count = 0 }
   in
   {
     X86.Flow.init_info;
@@ -32,7 +31,7 @@ let fact () =
         {
           init_info with
           distances =
-            NameMap.union
+            IntMap.union
               (fun _ v1 v2 -> Some (min v1 v2))
               a.distances b.distances;
         });
@@ -46,7 +45,8 @@ let next_use_distances
     (module Loop : Loopnesting.S
       with type Dom.label = X86.Cfg.label
        and type Dom.position = int
-       and type Dom.uid = X86.Cfg.uid) (graph : X86.Cfg.graph) : X86.Cfg.graph =
+       and type Dom.uid = X86.Cfg.uid) (graph : X86.Cfg.graph) :
+    X86.Cfg.uid -> int IntMap.t =
   (* edges leading out of loops:
      if u in loop_headers then header(v) != u else header(v) != header(u) *)
   (* each block has a unique length because critical edges are assumed
@@ -64,31 +64,51 @@ let next_use_distances
       m
     | _ -> 0
   in
-  (* track current instruction number starting from 0
-     then distance is num_instructions[block] - instruction number *)
-  let _block_num_instructions =
+  (* track current instruction number offset starting from 0
+     then distance is num_instructions[block] - offset *)
+  let block_num_instructions =
     Array.init Loop.Dom.size @@ fun p ->
     let uid = X86.Cfg.idd (Loop.Dom.label_of_position p) in
     let (_, tail), _ = X86.Cfg.focus uid graph in
     count_instructions tail
   in
   let fact = fact () in
-  let handle_instruction _a _i = failwith "" in
-  let first_in = failwith "" in
-  let middle_in = failwith "" in
-  let last_in uid = function
-    | X86.Printer.Exit -> fact.init_info
-    | X86.Printer.Branch (i, (uid', _)) ->
-      let block_length = block_lengths.(Loop.Dom.position_of_uid uid) in
-      handle_instruction i @@ add_lengths block_length @@ fact.get uid'
-    | X86.Printer.CBranch (i, (uid1, _), (uid2, _)) ->
-      let block_length = block_lengths.(Loop.Dom.position_of_uid uid) in
-      handle_instruction i @@ add_lengths block_length
-      @@ fact.add_info (fact.get uid1) (fact.get uid2)
-    | X86.Printer.Return i -> handle_instruction fact.init_info i
+  let handle_instruction i a =
+    let handle_use acc = function
+      | X86.Target.Reg r -> IntMap.add (X86.Target.index r) a.count acc
+      | _ -> acc
+    in
+    let first_use = List.fold_left handle_use a.first_use i.X86.Target.uses in
+    { a with first_use; count = a.count + 1 }
+  in
+  let first_in a first =
+    let pos =
+      match first with
+      | X86.Cfg.Entry -> Loop.Dom.position_of_uid X86.Cfg.entry_uid
+      | X86.Cfg.Label ((uid, _), _) -> Loop.Dom.position_of_uid uid
+    in
+    let l = block_lengths.(pos) in
+    let num_instructions = block_num_instructions.(pos) in
+    let distances =
+      a.distances
+      |> IntMap.map (fun dist -> dist + num_instructions)
+      |> IntMap.fold
+           (fun v offset -> IntMap.add v (num_instructions - offset))
+           a.first_use
+      |> IntMap.map (fun dist -> dist + l)
+    in
+    { fact.init_info with distances }
+  in
+  let middle_in a (X86.Cfg.Instruction i) = handle_instruction i a in
+  let last_in _ = function
+    | X86.Cfg.Exit -> { fact.init_info with count = 1 }
+    | X86.Cfg.Branch (i, (uid', _)) -> handle_instruction i @@ fact.get uid'
+    | X86.Cfg.CBranch (i, (uid1, _), (uid2, _)) ->
+      handle_instruction i @@ fact.add_info (fact.get uid1) (fact.get uid2)
+    | X86.Cfg.Return i -> handle_instruction i fact.init_info
   in
   let analysis =
     (fact, { X86.Flow.BackwardAnalysis.first_in; middle_in; last_in })
   in
   let _ = X86.Flow.BackwardAnalysis.run analysis graph in
-  failwith ""
+  fun uid -> (fact.get uid).distances
