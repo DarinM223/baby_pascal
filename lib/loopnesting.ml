@@ -22,7 +22,8 @@ module Make
       Dominator.S
         with type label = G.label
          and type graph = G.graph
-         and type position = int) : S with module Dom = Dom = struct
+         and type position = int
+         and type uid = G.uid) : S with module Dom = Dom = struct
   module Dom = Dom
   module PositionSet = struct
     include CCSet.Make (struct

@@ -282,6 +282,7 @@ functor
         type label = Target.label
         type position = int [@@deriving show, eq]
         type graph = block IntMap.t
+        type uid = int
         let pp_label = pp_label
         let equal_label = equal_label
         let position_of_int p = p
@@ -290,7 +291,7 @@ functor
         let label_of_position =
           let arr = Array.of_list (List.map block_label rpo) in
           fun pos -> arr.(pos)
-        let position_of_label =
+        let position_of_label, position_of_uid =
           let table = IntHashtbl.create size in
           List.iteri
             (fun i (first, _) ->
@@ -301,9 +302,10 @@ functor
               in
               IntHashtbl.add table uid i)
             rpo;
-          function
-          | Some (uid, _) -> IntHashtbl.find table uid
-          | None -> IntHashtbl.find table entry_uid
+          ( (function
+            | Some (uid, _) -> IntHashtbl.find table uid
+            | None -> IntHashtbl.find table entry_uid),
+            IntHashtbl.find table )
 
         let successors =
           let block_succs block =
@@ -329,5 +331,6 @@ functor
       (module Extra : Extra
         with type label = Target.label
          and type graph = graph
-         and type position = int)
+         and type position = int
+         and type uid = uid)
   end

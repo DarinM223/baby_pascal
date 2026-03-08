@@ -39,6 +39,7 @@ module type Extra = sig
   type label
   type position
   type graph
+  type uid
   val pp_label : Format.formatter -> label -> unit
   val equal_label : label -> label -> bool
   val position_of_int : int -> position
@@ -48,6 +49,7 @@ module type Extra = sig
   val size : int
   val label_of_position : position -> label option
   val position_of_label : label option -> position
+  val position_of_uid : uid -> position
   val successors : position -> position list
   val predecessors : position -> position list
   val graph : graph
@@ -196,7 +198,8 @@ module type S = sig
     (module Extra
        with type label = Target.label
         and type graph = graph
-        and type position = int)
+        and type position = int
+        and type uid = uid)
 end
 
 module type Maker = functor (Target : Target with type label = int * string) ->
