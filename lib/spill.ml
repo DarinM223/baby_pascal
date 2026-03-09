@@ -118,23 +118,36 @@ module Liveness = struct
     type t = {
       mapping : IntSet.t;
       max_register_pressure : int;
+      used : IntSet.t;
     }
   end
   type t = {
     live_in : X86.Cfg.uid -> IntSet.t;
     live_out : X86.Cfg.uid -> IntSet.t;
+    used_in_block : X86.Cfg.uid -> IntSet.t;
     max_register_pressure : X86.Cfg.uid -> int;
   }
   let fact () =
     let store = IntHashtbl.create hashtbl_size in
     {
       X86.Flow.init_info =
-        { State.mapping = IntSet.empty; max_register_pressure = 0 };
+        {
+          State.mapping = IntSet.empty;
+          used = IntSet.empty;
+          max_register_pressure = 0;
+        };
       add_info =
-        (fun a b -> { a with mapping = IntSet.union a.mapping b.mapping });
+        (fun a b ->
+          {
+            a with
+            mapping = IntSet.union a.mapping b.mapping;
+            used = IntSet.union a.used b.used;
+          });
       changed =
         (fun ~before ~after ->
-          IntSet.(cardinal after.mapping > cardinal before.mapping));
+          IntSet.(
+            cardinal after.mapping > cardinal before.mapping
+            || cardinal after.used > cardinal before.used));
       skip_block = Fun.const false;
       get = IntHashtbl.find store;
       set = IntHashtbl.replace store;
@@ -152,6 +165,7 @@ module Liveness = struct
     let defs instr = convert_operands instr.X86.Target.defs in
     let update_mapping mapping a =
       {
+        a with
         mapping;
         State.max_register_pressure =
           max a.State.max_register_pressure (IntSet.cardinal mapping);
@@ -160,7 +174,7 @@ module Liveness = struct
     let handle_instruction instr a =
       update_mapping
         (IntSet.union (uses instr) (IntSet.diff a.State.mapping (defs instr)))
-        a
+        { a with used = IntSet.union (uses instr) a.used }
     in
     let calc_live_out = function
       | X86.Cfg.Exit -> fact.init_info
@@ -187,6 +201,48 @@ module Liveness = struct
       live_out =
         (fun uid ->
           (calc_live_out X86.Cfg.(last @@ fst @@ focus uid graph)).mapping);
+      used_in_block = (fun uid -> (fact.get uid).used);
       max_register_pressure = (fun uid -> (fact.get uid).max_register_pressure);
     }
+end
+
+module InitWEntry
+    (Extra :
+      Graph.Extra with type label = X86.Cfg.label and type graph = X86.Cfg.graph)
+    (M : sig
+      val k : int
+      val next_use_distances : X86.Cfg.uid -> int IntMap.t
+    end) =
+struct
+  let compare dists a b =
+    match (IntMap.find_opt a dists, IntMap.find_opt b dists) with
+    | None, None -> 0
+    | None, _ -> 1
+    | _, None -> -1
+    | Some dist1, Some dist2 -> dist1 - dist2
+
+  let init_usual (wexit : X86.Cfg.uid -> IntSet.t) (block : Extra.position) =
+    let freq = IntHashtbl.create hashtbl_size in
+    let take = ref IntSet.empty in
+    let cand = ref IntSet.empty in
+    let preds_length = List.length (Extra.predecessors block) in
+    List.iter
+      (fun pred ->
+        let pred = X86.Cfg.idd @@ Extra.label_of_position pred in
+        IntSet.iter
+          (fun var ->
+            IntHashtbl.replace freq var (IntHashtbl.find freq var + 1);
+            cand := IntSet.add var !cand;
+            if IntHashtbl.find freq var = preds_length then begin
+              cand := IntSet.remove var !cand;
+              take := IntSet.add var !take
+            end)
+          (wexit pred))
+      (Extra.predecessors block);
+    let dists =
+      M.next_use_distances @@ X86.Cfg.idd @@ Extra.label_of_position block
+    in
+    let cand = List.sort (compare dists) (IntSet.to_list !cand) in
+    IntSet.union !take
+      (IntSet.of_list (List.take (M.k - IntSet.cardinal !take) cand))
 end
