@@ -112,3 +112,81 @@ let next_use_distances
   in
   let _ = X86.Flow.BackwardAnalysis.run analysis graph in
   fun uid -> (fact.get uid).distances
+
+module Liveness = struct
+  module State = struct
+    type t = {
+      mapping : IntSet.t;
+      max_register_pressure : int;
+    }
+  end
+  type t = {
+    live_in : X86.Cfg.uid -> IntSet.t;
+    live_out : X86.Cfg.uid -> IntSet.t;
+    max_register_pressure : X86.Cfg.uid -> int;
+  }
+  let fact () =
+    let store = IntHashtbl.create hashtbl_size in
+    {
+      X86.Flow.init_info =
+        { State.mapping = IntSet.empty; max_register_pressure = 0 };
+      add_info =
+        (fun a b -> { a with mapping = IntSet.union a.mapping b.mapping });
+      changed =
+        (fun ~before ~after ->
+          IntSet.(cardinal after.mapping > cardinal before.mapping));
+      skip_block = Fun.const false;
+      get = IntHashtbl.find store;
+      set = IntHashtbl.replace store;
+    }
+  let calc graph : t =
+    let fact = fact () in
+    let convert_operands ops =
+      ops
+      |> List.filter_map (function
+        | X86.Target.Reg r -> Some (X86.Target.index r)
+        | _ -> None)
+      |> IntSet.of_list
+    in
+    let uses instr = convert_operands instr.X86.Target.uses in
+    let defs instr = convert_operands instr.X86.Target.defs in
+    let update_mapping mapping a =
+      {
+        mapping;
+        State.max_register_pressure =
+          max a.State.max_register_pressure (IntSet.cardinal mapping);
+      }
+    in
+    let handle_instruction instr a =
+      update_mapping
+        (IntSet.union (uses instr) (IntSet.diff a.State.mapping (defs instr)))
+        a
+    in
+    let calc_live_out = function
+      | X86.Cfg.Exit -> fact.init_info
+      | X86.Cfg.Branch (_, (uid, _)) ->
+        update_mapping (fact.get uid).mapping fact.init_info
+      | X86.Cfg.CBranch (instr, (uid1, _), (uid2, _)) ->
+        handle_instruction instr
+        @@ update_mapping
+             (IntSet.union (fact.get uid1).mapping (fact.get uid2).mapping)
+        @@ fact.init_info
+      | X86.Cfg.Return instr -> handle_instruction instr fact.init_info
+    in
+    let analysis =
+      {
+        X86.Flow.BackwardAnalysis.first_in = (fun a _ -> a);
+        middle_in = (fun a (Instruction instr) -> handle_instruction instr a);
+        last_in = Fun.const calc_live_out;
+      }
+    in
+    let analysis = (fact, analysis) in
+    let _ = X86.Flow.BackwardAnalysis.run analysis graph in
+    {
+      live_in = (fun uid -> (fact.get uid).mapping);
+      live_out =
+        (fun uid ->
+          (calc_live_out X86.Cfg.(last @@ fst @@ focus uid graph)).mapping);
+      max_register_pressure = (fun uid -> (fact.get uid).max_register_pressure);
+    }
+end
