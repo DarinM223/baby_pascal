@@ -207,8 +207,11 @@ module Liveness = struct
 end
 
 module InitWEntry
-    (Extra :
-      Graph.Extra with type label = X86.Cfg.label and type graph = X86.Cfg.graph)
+    (Loop :
+      Loopnesting.S
+        with type Dom.label = X86.Cfg.label
+         and type Dom.position = int
+         and type Dom.uid = X86.Cfg.uid)
     (M : sig
       val k : int
       val next_use_distances : X86.Cfg.uid -> int IntMap.t
@@ -221,14 +224,15 @@ struct
     | _, None -> -1
     | Some dist1, Some dist2 -> dist1 - dist2
 
-  let init_usual (wexit : X86.Cfg.uid -> IntSet.t) (block : Extra.position) =
+  let uid p = X86.Cfg.idd @@ Loop.Dom.label_of_position p
+
+  let init_usual (wexit : X86.Cfg.uid -> IntSet.t) (block : Loop.Dom.position) =
     let freq = IntHashtbl.create hashtbl_size in
     let take = ref IntSet.empty in
     let cand = ref IntSet.empty in
-    let preds_length = List.length (Extra.predecessors block) in
+    let preds_length = List.length (Loop.Dom.predecessors block) in
     List.iter
       (fun pred ->
-        let pred = X86.Cfg.idd @@ Extra.label_of_position pred in
         IntSet.iter
           (fun var ->
             IntHashtbl.replace freq var (IntHashtbl.find freq var + 1);
@@ -237,12 +241,44 @@ struct
               cand := IntSet.remove var !cand;
               take := IntSet.add var !take
             end)
-          (wexit pred))
-      (Extra.predecessors block);
-    let dists =
-      M.next_use_distances @@ X86.Cfg.idd @@ Extra.label_of_position block
-    in
+          (wexit (uid pred)))
+      (Loop.Dom.predecessors block);
+    let dists = M.next_use_distances (uid block) in
     let cand = List.sort (compare dists) (IntSet.to_list !cand) in
-    IntSet.union !take
-      (IntSet.of_list (List.take (M.k - IntSet.cardinal !take) cand))
+    IntSet.(union !take (of_list (List.take (M.k - cardinal !take) cand)))
+
+  let rec get_loop_nodes (node : Loop.Dom.position) : Loop.PositionSet.t =
+    let nodes = Iarray.get Loop.loop_nodes node in
+    let add_loop_node node acc =
+      if Loop.PositionSet.mem node Loop.loop_headers then
+        Loop.PositionSet.(union (get_loop_nodes node) (add node acc))
+      else Loop.PositionSet.add node acc
+    in
+    Loop.PositionSet.fold add_loop_node nodes (Loop.PositionSet.singleton node)
+
+  let init_loop_header (live : Liveness.t) (block : Loop.Dom.position) =
+    let loop = get_loop_nodes block in
+    let alive = live.live_in (uid block) in
+    let used_in_loop =
+      Loop.PositionSet.fold
+        (fun node -> IntSet.union (live.used_in_block (uid node)))
+        loop IntSet.empty
+    in
+    let cand = IntSet.inter alive used_in_loop in
+    let dists = M.next_use_distances (uid block) in
+    let max_pressure =
+      Loop.PositionSet.fold
+        (fun node -> max (live.max_register_pressure (uid node)))
+        loop 0
+    in
+    if IntSet.cardinal cand < M.k then
+      let live_through = IntSet.diff alive cand in
+      let free_loop = M.k - max_pressure + IntSet.cardinal live_through in
+      let live_through =
+        List.sort (compare dists) (IntSet.to_list live_through)
+      in
+      IntSet.(union cand (of_list (List.take free_loop live_through)))
+    else
+      let cand = List.sort (compare dists) (IntSet.to_list cand) in
+      IntSet.of_list (List.take M.k cand)
 end
