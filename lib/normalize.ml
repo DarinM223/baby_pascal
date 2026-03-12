@@ -66,25 +66,25 @@ module Target = struct
   module RegSet = NameSet
 
   let rec regset_of_operand = function
-    | Const _ -> NameSet.empty
+    | Const _ -> RegSet.empty
     | Label (_, args) ->
       args
       |> List.filter (fun n -> not (is_tombstone n))
       |> List.fold_left
-           (fun acc o -> NameSet.union acc (regset_of_operand o))
-           NameSet.empty
+           (fun acc o -> RegSet.union acc (regset_of_operand o))
+           RegSet.empty
     | Reg reg ->
-      if Name.is_tombstone reg then NameSet.empty else NameSet.singleton reg
+      if Reg.is_tombstone reg then RegSet.empty else RegSet.singleton reg
 
   let name (s : string) : Name.t = (s, -1)
   let reg r = Reg (name r)
 
   let uses instr =
     srcs instr |> List.map regset_of_operand
-    |> List.fold_left NameSet.union NameSet.empty
+    |> List.fold_left RegSet.union RegSet.empty
   let defs instr =
     dests instr |> List.map regset_of_operand
-    |> List.fold_left NameSet.union NameSet.empty
+    |> List.fold_left RegSet.union RegSet.empty
 end
 
 module Cfg = Graph.Make (Target)

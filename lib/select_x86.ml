@@ -53,14 +53,14 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
     (instruction : Undag.Target.instr) (k : Target.operand -> Cfg.tail) :
     Cfg.tail =
   let assign_vreg clz reg = Target.Reg (State.assign_vreg state clz reg) in
-  let translate_operand : Undag.Target.operand -> (Target.operand -> 'a) -> 'a =
-    function
+  let rec translate_operand :
+      Undag.Target.operand -> (Target.operand -> 'a) -> 'a = function
     | Undag.Target.Instr src -> select state src
     | Undag.Target.Const i -> fun k -> k (Target.Imm i)
     | Undag.Target.Reg r -> fun k -> k (NameHashtbl.find mapping r)
-    | Undag.Target.Label (l, _) -> fun k -> k (Target.Label l)
-  in
-  let translate_operands l k =
+    | Undag.Target.Label (l, args) ->
+      fun k -> translate_operands args (fun args -> k (Target.Label (l, args)))
+  and translate_operands l k =
     let rec go acc l k =
       match l with
       | x :: xs ->
@@ -147,7 +147,7 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
     let* f = translate_operand f in
     let f =
       match f with
-      | Label l -> l
+      | Label (l, []) -> l
       | _ -> failwith "call: expected function to be label"
     in
     let* args = translate_operands args in
@@ -156,7 +156,7 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
       List.map (fun r -> Reg (constrained r (fresh_vreg Int))) Regs.caller_save
     in
     pcopy ~dests ~srcs:args
-    @> instr "call" ~defs ~uses:[ Label f ]
+    @> instr "call" ~defs ~uses:[ Label (f, []) ]
     @> mov ~dest ~src:rax @> k dest
   | Undag.Target.Goto (l, args) ->
     let* args = translate_operands args in
@@ -259,7 +259,7 @@ let%expect_test "Fibonacci code generation" =
       ret %35(%rax)
     label2(local=false)():
       movq %2any, %1any
-      j label1, %2any
+      j label1(%2any)
     label3(local=false)():
       movq %6any, %1any
       subq %5(reuse=%6), %6any, $1
@@ -274,7 +274,7 @@ let%expect_test "Fibonacci code generation" =
       movq %33any, %3any
       addq %32(reuse=%33), %33any, %17any
       movq %31any, %32(reuse=%33)
-      j label1, %31any
+      j label1(%31any)
     |}]
 
 let%expect_test "Nested loops code generation" =
@@ -309,9 +309,9 @@ let%expect_test "Nested loops code generation" =
       cmp Instruction.Cond.LT %1any, $100, label3, label1
     label3(local=false)():
       movq %2any, %1any
-      j label4, %1any, %2any
+      j label4(%1any, %2any)
     label4(local=false)(3any, 4any):
-      cmp Instruction.Cond.LT %4any, $100, label5, label2, %3any
+      cmp Instruction.Cond.LT %4any, $100, label5, label2(%3any)
     label5(local=false)():
       movq %7any, %3any
       addq %6(reuse=%7), %7any, $1
@@ -319,7 +319,7 @@ let%expect_test "Nested loops code generation" =
       movq %10any, %4any
       addq %9(reuse=%10), %10any, $1
       movq %8any, %9(reuse=%10)
-      j label4, %5any, %8any
+      j label4(%5any, %8any)
     label6(local=false)():
-      j label2, %0any
+      j label2(%0any)
     |}]
