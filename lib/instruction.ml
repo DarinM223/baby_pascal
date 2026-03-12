@@ -27,7 +27,23 @@ module Cond = struct
     | _ -> failwith "Invalid binary operator"
 end
 
+module type Target = sig
+  type label
+  type cond = Cond.t [@@deriving show, eq]
+  type operand
+  type operands = operand list
+  type instr
+  val label : label -> operands -> operand
+  val destruct_label : operand -> (label * operands) option
+  val is_tombstone : operand -> bool
+  val srcs : instr -> operands
+  val dests : instr -> operands
+  val map_uses : (operand -> operand) -> instr -> instr
+  val map_defs : (operand -> operand) -> instr -> instr
+end
+
 module Make (T : Operand) = struct
+  type label = T.label
   type cond = Cond.t [@@deriving show, eq]
   let cond_of_bop = Cond.of_bop
 
@@ -43,6 +59,10 @@ module Make (T : Operand) = struct
     | Bop of operand * Ast.bop * operand * operand
   and operand = instr T.operand
   and operands = instr T.operands [@@deriving show, eq]
+
+  let label = T.label
+  let destruct_label = T.destruct_label
+  let is_tombstone = T.is_tombstone
 
   let srcs = function
     | Assign (_, o) -> [ o ]

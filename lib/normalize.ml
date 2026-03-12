@@ -59,6 +59,11 @@ module Target = struct
   end
   include Operand
   include Instruction.Make (Operand)
+  module Reg = struct
+    include Name
+    let to_operand r = Reg r
+  end
+  module RegSet = NameSet
 
   let rec regset_of_operand = function
     | Const _ -> NameSet.empty

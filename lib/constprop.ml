@@ -309,7 +309,7 @@ let constprop (block_args : OperandSet.t NameMap.t)
       if not !converged then
         Flow.Dataflow (fun set -> set uid { a with executable = true })
       else
-        let i, changed = Deadcode.rewrite_branch get_args i in
+        let i, changed = Deadcode.M.rewrite_branch get_args i in
         let i, changed' = rewrite_uses lookup_operand a i in
         if changed || changed' then
           Flow.Rewrite
@@ -336,7 +336,7 @@ let constprop (block_args : OperandSet.t NameMap.t)
         in
         Flow.Dataflow flow
       else
-        let i, changed = Deadcode.rewrite_branch get_args i in
+        let i, changed = Deadcode.M.rewrite_branch get_args i in
         let i, changed' = rewrite_uses lookup_operand a i in
         let i = fold_conditional (Cfg.CBranch (i, l1, l2)) in
         if changed || changed' then

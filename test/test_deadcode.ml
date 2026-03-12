@@ -22,7 +22,7 @@ let test_simple () =
     @@ return ~uses:[ reg "b" ]
     @@ focus_entry empty
   in
-  let cfg, changed = Deadcode.deadcode cfg in
+  let cfg, changed = Deadcode.M.deadcode cfg in
   (check bool) "Graph changed" changed true;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" cfg expected
@@ -63,7 +63,7 @@ let test_branch () =
     @@ return ~uses:[ reg "d" ]
     @@ focus_entry empty
   in
-  let cfg, changed = Deadcode.deadcode cfg in
+  let cfg, changed = Deadcode.M.deadcode cfg in
   (check bool) "Graph changed" changed true;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" cfg expected
@@ -97,7 +97,7 @@ let test_block_args () =
     @@ label (3, "")
     @@ exit @@ focus_entry empty
   in
-  let cfg, changed = Deadcode.deadcode cfg in
+  let cfg, changed = Deadcode.M.deadcode cfg in
   (check bool) "Graph changed" changed true;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" cfg expected
