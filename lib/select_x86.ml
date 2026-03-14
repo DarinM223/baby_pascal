@@ -13,15 +13,20 @@ module State = struct
   type t = {
     fresh_vreg : Target.reg_class -> Target.reg;
     mapping : Target.operand NameHashtbl.t;
+    curr_block : Cfg.uid ref;
+    vreg_block : Cfg.uid IntHashtbl.t;
     stack_offset : int ref;
     new_stack_slot : int -> Target.operand;
   }
 
   let init () =
+    let curr_block = ref Cfg.entry_uid in
+    let vreg_block = IntHashtbl.create hashtbl_size in
     let fresh_vreg =
       let c = ref (-1) in
       fun clz ->
         incr c;
+        IntHashtbl.replace vreg_block !c !curr_block;
         Target.Virtual { id = !c; reg_class = clz; reg_constr = Any }
     in
     let stack_offset = ref 0 in
@@ -30,7 +35,14 @@ module State = struct
       stack_offset := !stack_offset + size;
       Target.StackSlot !stack_offset
     in
-    { fresh_vreg; mapping; stack_offset; new_stack_slot }
+    {
+      fresh_vreg;
+      mapping;
+      curr_block;
+      vreg_block;
+      stack_offset;
+      new_stack_slot;
+    }
 
   let assign_vreg { fresh_vreg; mapping; _ } clz = function
     | Undag.Target.Reg n ->
@@ -194,8 +206,8 @@ let codegen_block state ((first, tail) : Undag.Cfg.block) : Cfg.block =
   let tail = go_tail tail in
   (first, tail)
 
-let codegen_function ~args (graph : Undag.Cfg.graph) : Cfg.graph =
-  let state = State.init () in
+let codegen_function ~args (state : State.t) (graph : Undag.Cfg.graph) :
+    Cfg.graph =
   let srcs = List.init (List.length args) (call_conv_int state) in
   let dests =
     List.map
@@ -205,7 +217,9 @@ let codegen_function ~args (graph : Undag.Cfg.graph) : Cfg.graph =
   let pcopy = X86.Cfg.Instruction (Target.pcopy ~dests ~srcs) in
   let graph =
     List.fold_left
-      (fun acc block -> X86.Cfg.Blocks.insert (codegen_block state block) acc)
+      (fun acc block ->
+        state.curr_block := Undag.Cfg.id block;
+        X86.Cfg.Blocks.insert (codegen_block state block) acc)
       X86.Cfg.empty
       (Undag.Cfg.reverse_postorder_dfs graph)
   in
@@ -228,7 +242,9 @@ let codegen_test_helper args cfg =
       (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
       cfg Undag.Cfg.empty
   in
-  codegen_function ~args:(List.map (fun arg -> (arg, 0)) args) cfg
+  codegen_function
+    ~args:(List.map (fun arg -> (arg, 0)) args)
+    (State.init ()) cfg
 
 let%expect_test "Fibonacci code generation" =
   let fibonacci fn v =
