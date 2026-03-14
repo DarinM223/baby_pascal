@@ -85,6 +85,9 @@ module Target = struct
       | Tombstone -> true
       | _ -> false
     let tombstone = Tombstone
+    let of_operand = function
+      | Reg r -> Some r
+      | _ -> None
     let to_operand r = Reg r
     let compare = compare
   end

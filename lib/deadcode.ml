@@ -10,6 +10,7 @@ module type Target = sig
   module Reg : sig
     type t = reg
     val tombstone : t
+    val of_operand : operand -> t option
     val to_operand : t -> operand
   end
   module RegSet : Set.S with type elt = reg

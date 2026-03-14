@@ -1,7 +1,9 @@
 module IntMap = Map.Make (Int)
 module Make
-    (G : Graph.S)
-    (Dom : Dominator.S with type label = G.label and type uid = G.uid) =
+    (Target : Deadcode.Target)
+    (G :
+      module type of Graph.Make (Target))
+        (Dom : Dominator.S with type label = G.label and type uid = G.uid) =
 struct
   module RegSet = Set.Make (struct
     type t = G.Target.reg
