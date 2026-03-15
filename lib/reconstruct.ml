@@ -13,10 +13,8 @@ struct
     let compare = compare
   end)
 
-  let compute_reaching_def =
-    (* cache reaching def for block *)
-    let _def_cache = Array.make Dom.size None in
-    failwith ""
+  (* todo: cache reaching def for block *)
+  let compute_reaching_def all_defs head = failwith ""
 
   let reconstruct (fresh : unit -> G.Target.reg) (old_defs : Target.RegSet.t)
       (cloned_defs : Target.RegSet.t) (def_blocks : G.uid list)
@@ -46,16 +44,25 @@ struct
     let phis, graph =
       List.fold_left place_phi (Target.RegSet.empty, graph) iter_df_bbs
     in
-    let _all_defs = Target.RegSet.(union old_defs (union cloned_defs phis)) in
-    let _phi_worklist = PhiSet.empty in
+    let all_defs = Target.RegSet.(union old_defs (union cloned_defs phis)) in
+    let phi_worklist = ref PhiSet.empty in
     let blocks = G.reverse_postorder_dfs graph in
     let go_block graph block =
-      (* todo: go over instructions in block,
-         if instruction has use in old_defs, compute reaching def *)
       let zblock = G.unzip block in
-      let handle_instruction _head instr =
-        let _defs = Target.RegSet.inter (Target.uses instr) old_defs in
-        failwith ""
+      let handle_instruction head instr =
+        let go_use op =
+          match Target.Reg.of_operand op with
+          | Some reg when Target.RegSet.mem reg old_defs ->
+            let reaching_def, is_phi = compute_reaching_def all_defs head in
+            begin match is_phi with
+            | Some (phi, phi_block_uid) ->
+              phi_worklist := PhiSet.add (phi, phi_block_uid) !phi_worklist
+            | _ -> ()
+            end;
+            Target.Reg.to_operand reaching_def
+          | _ -> op
+        in
+        Target.map_uses go_use instr
       in
       let rec go = function
         | head, G.Tail (Instruction i, t) ->
@@ -74,6 +81,26 @@ struct
       let zblock = go zblock in
       G.unfocus (zblock, graph)
     in
-    let _graph = List.fold_left go_block graph blocks in
-    failwith "still learning to code"
+    let graph = List.fold_left go_block graph blocks in
+    let rec phi_reaching_def phi_worklist graph =
+      if PhiSet.is_empty phi_worklist then graph
+      else
+        let phi, phi_block_uid = PhiSet.min_elt phi_worklist in
+        let phi_worklist = PhiSet.remove (phi, phi_block_uid) phi_worklist in
+        let fold_pred (phi_worklist, graph) pred =
+          let block, _ = G.(focus (idd (Dom.label_of_position pred)) graph) in
+          let head, tail = G.goto_end block in
+          let reaching_def, is_phi = compute_reaching_def all_defs head in
+          (* todo: add reaching_def to tail where phi arg is in phi_block_uid *)
+          match is_phi with
+          | Some tup -> (PhiSet.add tup phi_worklist, graph)
+          | None -> (phi_worklist, graph)
+        in
+        let phi_worklist, graph =
+          List.fold_left fold_pred (phi_worklist, graph)
+            Dom.(predecessors (position_of_uid phi_block_uid))
+        in
+        phi_reaching_def phi_worklist graph
+    in
+    phi_reaching_def !phi_worklist graph
 end
