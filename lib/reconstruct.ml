@@ -14,7 +14,7 @@ struct
   end)
 
   (* todo: cache reaching def for block *)
-  let compute_reaching_def all_defs head = failwith ""
+  let compute_reaching_def _all_defs _head = failwith ""
 
   let reconstruct (fresh : unit -> G.Target.reg) (old_defs : Target.RegSet.t)
       (cloned_defs : Target.RegSet.t) (def_blocks : G.uid list)
@@ -88,10 +88,33 @@ struct
         let phi, phi_block_uid = PhiSet.min_elt phi_worklist in
         let phi_worklist = PhiSet.remove (phi, phi_block_uid) phi_worklist in
         let fold_pred (phi_worklist, graph) pred =
-          let block, _ = G.(focus (idd (Dom.label_of_position pred)) graph) in
-          let head, tail = G.goto_end block in
+          let block, graph =
+            G.(focus (idd (Dom.label_of_position pred)) graph)
+          in
+          let head, last = G.goto_end block in
           let reaching_def, is_phi = compute_reaching_def all_defs head in
-          (* todo: add reaching_def to tail where phi arg is in phi_block_uid *)
+          (* add reaching_def to last where phi arg is in phi_block_uid *)
+          let args =
+            match G.(first (fst (focus phi_block_uid graph))) with
+            | G.Entry -> []
+            | G.Label (_, info) -> info.args
+          in
+          let go_use op =
+            match Target.destruct_label op with
+            | Some (((uid, _) as l), ops)
+              when uid = phi_block_uid && List.(length ops <> length args) ->
+              Target.(label l (Reg.to_operand reaching_def :: ops))
+            | _ -> op
+          in
+          let last =
+            match last with
+            | G.Exit -> G.Exit
+            | G.Branch (i, l) -> G.Branch (Target.map_uses go_use i, l)
+            | G.CBranch (i, l1, l2) ->
+              G.CBranch (Target.map_uses go_use i, l1, l2)
+            | G.Return i -> G.Return i
+          in
+          let graph = G.unfocus ((head, G.Last last), graph) in
           match is_phi with
           | Some tup -> (PhiSet.add tup phi_worklist, graph)
           | None -> (phi_worklist, graph)
