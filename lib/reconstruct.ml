@@ -14,7 +14,34 @@ struct
   end)
 
   (* todo: cache reaching def for block *)
-  let compute_reaching_def _all_defs _head = failwith ""
+  let compute_reaching_def all_defs graph head =
+    let rec go = function
+      | G.First f ->
+        let uid =
+          match f with
+          | G.Entry -> G.entry_uid
+          | G.Label ((uid, _), _) -> uid
+        in
+        let defs =
+          match f with
+          | G.Entry -> Target.RegSet.empty
+          | G.Label (_, info) ->
+            Target.RegSet.(inter (of_list info.args) all_defs)
+        in
+        if Target.RegSet.is_empty defs then
+          (* walk up dominator tree *)
+          let parent =
+            Dom.(G.idd (label_of_position (idom (position_of_uid uid))))
+          in
+          let head, _ = G.(goto_end (fst (focus parent graph))) in
+          go head
+        else (Target.RegSet.min_elt defs, Some uid)
+      | G.Head (head, Instruction instr) ->
+        let defs = Target.(RegSet.inter (defs instr) all_defs) in
+        if Target.RegSet.is_empty defs then go head
+        else (Target.RegSet.min_elt defs, None)
+    in
+    go head
 
   let reconstruct (fresh : unit -> G.Target.reg) (old_defs : Target.RegSet.t)
       (cloned_defs : Target.RegSet.t) (def_blocks : G.uid list)
@@ -53,10 +80,13 @@ struct
         let go_use op =
           match Target.Reg.of_operand op with
           | Some reg when Target.RegSet.mem reg old_defs ->
-            let reaching_def, is_phi = compute_reaching_def all_defs head in
+            let reaching_def, is_phi =
+              compute_reaching_def all_defs graph head
+            in
             begin match is_phi with
-            | Some (phi, phi_block_uid) ->
-              phi_worklist := PhiSet.add (phi, phi_block_uid) !phi_worklist
+            | Some phi_block_uid ->
+              phi_worklist :=
+                PhiSet.add (reaching_def, phi_block_uid) !phi_worklist
             | _ -> ()
             end;
             Target.Reg.to_operand reaching_def
@@ -92,7 +122,7 @@ struct
             G.(focus (idd (Dom.label_of_position pred)) graph)
           in
           let head, last = G.goto_end block in
-          let reaching_def, is_phi = compute_reaching_def all_defs head in
+          let reaching_def, is_phi = compute_reaching_def all_defs graph head in
           (* add reaching_def to last where phi arg is in phi_block_uid *)
           let args =
             match G.(first (fst (focus phi_block_uid graph))) with
@@ -116,7 +146,8 @@ struct
           in
           let graph = G.unfocus ((head, G.Last last), graph) in
           match is_phi with
-          | Some tup -> (PhiSet.add tup phi_worklist, graph)
+          | Some block_uid ->
+            (PhiSet.add (reaching_def, block_uid) phi_worklist, graph)
           | None -> (phi_worklist, graph)
         in
         let phi_worklist, graph =
