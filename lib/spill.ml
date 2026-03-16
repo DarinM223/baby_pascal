@@ -114,17 +114,18 @@ let next_use_distances
   fun uid -> (fact.get uid).distances
 
 module Liveness = struct
+  module RegSet = X86.Target.RegSet
   module State = struct
     type t = {
-      mapping : IntSet.t;
+      mapping : RegSet.t;
       max_register_pressure : int;
-      used : IntSet.t;
+      used : RegSet.t;
     }
   end
   type t = {
-    live_in : X86.Cfg.uid -> IntSet.t;
-    live_out : X86.Cfg.uid -> IntSet.t;
-    used_in_block : X86.Cfg.uid -> IntSet.t;
+    live_in : X86.Cfg.uid -> RegSet.t;
+    live_out : X86.Cfg.uid -> RegSet.t;
+    used_in_block : X86.Cfg.uid -> RegSet.t;
     max_register_pressure : X86.Cfg.uid -> int;
   }
   let fact () =
@@ -132,20 +133,20 @@ module Liveness = struct
     {
       X86.Flow.init_info =
         {
-          State.mapping = IntSet.empty;
-          used = IntSet.empty;
+          State.mapping = RegSet.empty;
+          used = RegSet.empty;
           max_register_pressure = 0;
         };
       add_info =
         (fun a b ->
           {
             a with
-            mapping = IntSet.union a.mapping b.mapping;
-            used = IntSet.union a.used b.used;
+            mapping = RegSet.union a.mapping b.mapping;
+            used = RegSet.union a.used b.used;
           });
       changed =
         (fun ~before ~after ->
-          IntSet.(
+          RegSet.(
             cardinal after.mapping > cardinal before.mapping
             || cardinal after.used > cardinal before.used));
       skip_block = Fun.const false;
@@ -157,9 +158,9 @@ module Liveness = struct
     let convert_operands ops =
       ops
       |> List.filter_map (function
-        | X86.Target.Reg r -> Some (X86.Target.index r)
+        | X86.Target.Reg r -> Some r
         | _ -> None)
-      |> IntSet.of_list
+      |> RegSet.of_list
     in
     let uses instr = convert_operands instr.X86.Target.uses in
     let defs instr = convert_operands instr.X86.Target.defs in
@@ -168,13 +169,15 @@ module Liveness = struct
         a with
         mapping;
         State.max_register_pressure =
-          max a.State.max_register_pressure (IntSet.cardinal mapping);
+          max a.State.max_register_pressure (RegSet.cardinal mapping);
       }
     in
     let handle_instruction instr a =
+      let instr_uses = uses instr in
+      let instr_defs = defs instr in
       update_mapping
-        (IntSet.union (uses instr) (IntSet.diff a.State.mapping (defs instr)))
-        { a with used = IntSet.union (uses instr) a.used }
+        RegSet.(union instr_uses (diff a.State.mapping instr_defs))
+        { a with used = RegSet.union instr_uses a.used }
     in
     let calc_live_out = function
       | X86.Cfg.Exit -> fact.init_info
@@ -183,7 +186,7 @@ module Liveness = struct
       | X86.Cfg.CBranch (instr, (uid1, _), (uid2, _)) ->
         handle_instruction instr
         @@ update_mapping
-             (IntSet.union (fact.get uid1).mapping (fact.get uid2).mapping)
+             (RegSet.union (fact.get uid1).mapping (fact.get uid2).mapping)
         @@ fact.init_info
       | X86.Cfg.Return instr -> handle_instruction instr fact.init_info
     in
@@ -218,34 +221,39 @@ module InitWEntry
     end) =
 struct
   let compare dists a b =
-    match (IntMap.find_opt a dists, IntMap.find_opt b dists) with
+    match
+      X86.Target.
+        (IntMap.find_opt (index a) dists, IntMap.find_opt (index b) dists)
+    with
     | None, None -> 0
     | None, _ -> 1
     | _, None -> -1
     | Some dist1, Some dist2 -> dist1 - dist2
 
   let uid p = X86.Cfg.idd @@ Loop.Dom.label_of_position p
+  module RegSet = X86.Target.RegSet
 
-  let init_usual (wexit : X86.Cfg.uid -> IntSet.t) (block : Loop.Dom.position) =
+  let init_usual (wexit : X86.Cfg.uid -> RegSet.t) (block : Loop.Dom.position) =
     let freq = IntHashtbl.create hashtbl_size in
-    let take = ref IntSet.empty in
-    let cand = ref IntSet.empty in
+    let take = ref RegSet.empty in
+    let cand = ref RegSet.empty in
     let preds_length = List.length (Loop.Dom.predecessors block) in
     List.iter
       (fun pred ->
-        IntSet.iter
+        RegSet.iter
           (fun var ->
-            IntHashtbl.replace freq var (IntHashtbl.find freq var + 1);
-            cand := IntSet.add var !cand;
-            if IntHashtbl.find freq var = preds_length then begin
-              cand := IntSet.remove var !cand;
-              take := IntSet.add var !take
+            let var_idx = X86.Target.index var in
+            IntHashtbl.replace freq var_idx (IntHashtbl.find freq var_idx + 1);
+            cand := RegSet.add var !cand;
+            if IntHashtbl.find freq var_idx = preds_length then begin
+              cand := RegSet.remove var !cand;
+              take := RegSet.add var !take
             end)
           (wexit (uid pred)))
       (Loop.Dom.predecessors block);
     let dists = M.next_use_distances (uid block) in
-    let cand = List.sort (compare dists) (IntSet.to_list !cand) in
-    IntSet.(union !take (of_list (List.take (M.k - cardinal !take) cand)))
+    let cand = List.sort (compare dists) (RegSet.to_list !cand) in
+    RegSet.(union !take (of_list (List.take (M.k - cardinal !take) cand)))
 
   let rec get_loop_nodes (node : Loop.Dom.position) : Loop.PositionSet.t =
     let nodes = Iarray.get Loop.loop_nodes node in
@@ -261,24 +269,54 @@ struct
     let alive = live.live_in (uid block) in
     let used_in_loop =
       Loop.PositionSet.fold
-        (fun node -> IntSet.union (live.used_in_block (uid node)))
-        loop IntSet.empty
+        (fun node -> RegSet.union (live.used_in_block (uid node)))
+        loop RegSet.empty
     in
-    let cand = IntSet.inter alive used_in_loop in
+    let cand = RegSet.inter alive used_in_loop in
     let dists = M.next_use_distances (uid block) in
     let max_pressure =
       Loop.PositionSet.fold
         (fun node -> max (live.max_register_pressure (uid node)))
         loop 0
     in
-    if IntSet.cardinal cand < M.k then
-      let live_through = IntSet.diff alive cand in
-      let free_loop = M.k - max_pressure + IntSet.cardinal live_through in
+    if RegSet.cardinal cand < M.k then
+      let live_through = RegSet.diff alive cand in
+      let free_loop = M.k - max_pressure + RegSet.cardinal live_through in
       let live_through =
-        List.sort (compare dists) (IntSet.to_list live_through)
+        List.sort (compare dists) (RegSet.to_list live_through)
       in
-      IntSet.(union cand (of_list (List.take free_loop live_through)))
+      RegSet.(union cand (of_list (List.take free_loop live_through)))
     else
-      let cand = List.sort (compare dists) (IntSet.to_list cand) in
-      IntSet.of_list (List.take M.k cand)
+      let cand = List.sort (compare dists) (RegSet.to_list cand) in
+      RegSet.of_list (List.take M.k cand)
+
+  type min_state = {
+    w : RegSet.t;
+    s : RegSet.t;
+  }
+
+  let spill (state : Select_x86.State.t) v =
+    let slot = state.new_stack_slot 8 in
+    X86.Target.mov ~dest:slot ~src:(X86.Target.Reg v)
+
+  let limit (next_use_distances : int IntMap.t) ({ w; s } : min_state)
+      ((head, tail) : X86.Cfg.zblock) (m : int) : X86.Cfg.zblock * min_state =
+    let w =
+      List.take m (List.sort (compare next_use_distances) (RegSet.to_list w))
+    in
+    let head, s =
+      List.fold_left
+        (fun (head, s) v ->
+          let head =
+            if
+              (not (RegSet.mem v s))
+              && IntMap.mem (X86.Target.index v) next_use_distances
+            then failwith ""
+            else head
+          in
+          (head, RegSet.remove v s))
+        (head, s) (List.rev w)
+    in
+    let w = RegSet.of_list w in
+    ((head, tail), { w; s })
 end
