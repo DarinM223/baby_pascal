@@ -295,12 +295,26 @@ struct
     s : RegSet.t;
   }
 
-  let spill (state : Select_x86.State.t) v =
-    let slot = state.new_stack_slot 8 in
+  type spill_state = {
+    select_state : Select_x86.State.t;
+    spill_mapping : X86.Target.operand IntHashtbl.t;
+    copies : X86.Target.reg IntHashtbl.t;
+  }
+
+  let spill (state : spill_state) v =
+    let slot = state.select_state.new_stack_slot 8 in
+    IntHashtbl.replace state.spill_mapping (X86.Target.index v) slot;
     X86.Target.mov ~dest:slot ~src:(X86.Target.Reg v)
 
-  let limit (next_use_distances : int IntMap.t) ({ w; s } : min_state)
-      ((head, tail) : X86.Cfg.zblock) (m : int) : X86.Cfg.zblock * min_state =
+  let reload (state : spill_state) v =
+    let slot = IntHashtbl.find state.spill_mapping (X86.Target.index v) in
+    let v' = state.select_state.fresh_vreg Int in
+    IntHashtbl.add state.copies (X86.Target.index v) v';
+    X86.Target.mov ~dest:(X86.Target.Reg v') ~src:slot
+
+  let limit (state : spill_state) (next_use_distances : int IntMap.t)
+      ({ w; s } : min_state) ((head, tail) : X86.Cfg.zblock) (m : int) :
+      X86.Cfg.zblock * min_state =
     let w =
       List.take m (List.sort (compare next_use_distances) (RegSet.to_list w))
     in
@@ -311,7 +325,7 @@ struct
             if
               (not (RegSet.mem v s))
               && IntMap.mem (X86.Target.index v) next_use_distances
-            then failwith ""
+            then X86.Cfg.Head (head, Instruction (spill state v))
             else head
           in
           (head, RegSet.remove v s))
