@@ -313,8 +313,8 @@ struct
     X86.Target.mov ~dest:(X86.Target.Reg v') ~src:slot
 
   let limit (state : spill_state) (next_use_distances : int IntMap.t)
-      ({ w; s } : min_state) ((head, tail) : X86.Cfg.zblock) (m : int) :
-      X86.Cfg.zblock * min_state =
+      ({ w; s } : min_state) (head : X86.Cfg.head) (m : int) :
+      X86.Cfg.head * min_state =
     let w =
       List.take m (List.sort (compare next_use_distances) (RegSet.to_list w))
     in
@@ -332,5 +332,53 @@ struct
         (head, s) (List.rev w)
     in
     let w = RegSet.of_list w in
-    ((head, tail), { w; s })
+    (head, { w; s })
+
+  let min_algorithm (state : spill_state) (block : X86.Cfg.block)
+      ({ w; s } : min_state) : X86.Cfg.block * min_state =
+    let next_use_distances = M.next_use_distances (X86.Cfg.id block) in
+    let rec go w s = function
+      | head, X86.Cfg.Tail (Instruction instr, tail) ->
+        let r = RegSet.diff (X86.Target.uses instr) w in
+        (* todo: just use RegSet.union r ? *)
+        let w, s =
+          RegSet.fold
+            (fun use (w, s) -> (RegSet.add use w, RegSet.add use s))
+            r (w, s)
+        in
+        let head, { w; s } = limit state next_use_distances { w; s } head M.k in
+        let head = X86.Cfg.Head (head, Instruction instr) in
+        let head, { w; s } =
+          limit state next_use_distances { w; s } head
+            (M.k - RegSet.cardinal (X86.Target.defs instr))
+        in
+        let w = RegSet.union w (X86.Target.defs instr) in
+        (* add reloads for vars in r *)
+        let head =
+          RegSet.fold
+            (fun var head ->
+              X86.Cfg.Head (head, Instruction (reload state var)))
+            r head
+        in
+        go w s (head, tail)
+      | head, X86.Cfg.Last l ->
+        let handle_instruction instr =
+          let r = RegSet.diff (X86.Target.uses instr) w in
+          let w, s =
+            RegSet.fold
+              (fun use (w, s) -> (RegSet.add use w, RegSet.add use s))
+              r (w, s)
+          in
+          limit state next_use_distances { w; s } head M.k
+        in
+        let head, min_state =
+          match l with
+          | X86.Cfg.Exit -> (head, { w; s })
+          | X86.Cfg.Branch (i, _) -> handle_instruction i
+          | X86.Cfg.CBranch (i, _, _) -> handle_instruction i
+          | X86.Cfg.Return i -> handle_instruction i
+        in
+        (X86.Cfg.zip (head, X86.Cfg.Last l), min_state)
+    in
+    go w s (X86.Cfg.unzip block)
 end
