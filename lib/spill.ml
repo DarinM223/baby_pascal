@@ -209,7 +209,7 @@ module Liveness = struct
     }
 end
 
-module InitWEntry
+module Make
     (Loop :
       Loopnesting.S
         with type Dom.label = X86.Cfg.label
@@ -218,6 +218,7 @@ module InitWEntry
     (M : sig
       val k : int
       val next_use_distances : X86.Cfg.uid -> int IntMap.t
+      val liveness : Liveness.t
     end) =
 struct
   let compare dists a b =
@@ -233,7 +234,8 @@ struct
   let uid p = X86.Cfg.idd @@ Loop.Dom.label_of_position p
   module RegSet = X86.Target.RegSet
 
-  let init_usual (wexit : X86.Cfg.uid -> RegSet.t) (block : Loop.Dom.position) =
+  let init_usual (wexit : Loop.Dom.position -> RegSet.t)
+      (block : Loop.Dom.position) =
     let freq = IntHashtbl.create hashtbl_size in
     let take = ref RegSet.empty in
     let cand = ref RegSet.empty in
@@ -249,7 +251,7 @@ struct
               cand := RegSet.remove var !cand;
               take := RegSet.add var !take
             end)
-          (wexit (uid pred)))
+          (wexit pred))
       (Loop.Dom.predecessors block);
     let dists = M.next_use_distances (uid block) in
     let cand = List.sort (compare dists) (RegSet.to_list !cand) in
@@ -264,19 +266,19 @@ struct
     in
     Loop.PositionSet.fold add_loop_node nodes (Loop.PositionSet.singleton node)
 
-  let init_loop_header (live : Liveness.t) (block : Loop.Dom.position) =
+  let init_loop_header (block : Loop.Dom.position) =
     let loop = get_loop_nodes block in
-    let alive = live.live_in (uid block) in
+    let alive = M.liveness.live_in (uid block) in
     let used_in_loop =
       Loop.PositionSet.fold
-        (fun node -> RegSet.union (live.used_in_block (uid node)))
+        (fun node -> RegSet.union (M.liveness.used_in_block (uid node)))
         loop RegSet.empty
     in
     let cand = RegSet.inter alive used_in_loop in
     let dists = M.next_use_distances (uid block) in
     let max_pressure =
       Loop.PositionSet.fold
-        (fun node -> max (live.max_register_pressure (uid node)))
+        (fun node -> max (M.liveness.max_register_pressure (uid node)))
         loop 0
     in
     if RegSet.cardinal cand < M.k then
@@ -334,9 +336,9 @@ struct
     let w = RegSet.of_list w in
     (head, { w; s })
 
-  let min_algorithm (state : spill_state) (block : X86.Cfg.block)
-      ({ w; s } : min_state) : X86.Cfg.block * min_state =
-    let next_use_distances = M.next_use_distances (X86.Cfg.id block) in
+  let min_algorithm (state : spill_state) (zblock : X86.Cfg.zblock)
+      ({ w; s } : min_state) : X86.Cfg.zblock * min_state =
+    let next_use_distances = M.next_use_distances X86.Cfg.(id (zip zblock)) in
     let rec go w s = function
       | head, X86.Cfg.Tail (Instruction instr, tail) ->
         let r = RegSet.diff (X86.Target.uses instr) w in
@@ -378,7 +380,60 @@ struct
           | X86.Cfg.CBranch (i, _, _) -> handle_instruction i
           | X86.Cfg.Return i -> handle_instruction i
         in
-        (X86.Cfg.zip (head, X86.Cfg.Last l), min_state)
+        ((head, X86.Cfg.Last l), min_state)
     in
-    go w s (X86.Cfg.unzip block)
+    go w s zblock
+
+  let spill (state : spill_state) (graph : X86.Cfg.graph) : X86.Cfg.graph =
+    let saved_w_exit = Array.make Loop.Dom.size RegSet.empty in
+    let saved_s_exit = Array.make Loop.Dom.size RegSet.empty in
+    let spill_block (state : spill_state) (graph : X86.Cfg.graph)
+        (block_uid : X86.Cfg.uid) : X86.Cfg.graph =
+      let pos = Loop.Dom.position_of_uid block_uid in
+      let w_entry =
+        if Loop.PositionSet.mem pos Loop.loop_headers then init_loop_header pos
+        else init_usual (fun pos -> saved_w_exit.(pos)) pos
+      in
+      (* intersection(union(s_exit for all predecessors), w_entry) *)
+      let s_entry =
+        RegSet.inter
+          (List.fold_left
+             (fun acc pred -> RegSet.union acc saved_s_exit.(pred))
+             RegSet.empty
+             (Loop.Dom.predecessors pos))
+          w_entry
+      in
+      (* go back to predecessors and insert coupling code *)
+      let insert_coupling graph pred =
+        let reloads = RegSet.diff w_entry saved_w_exit.(pred) in
+        let spills =
+          RegSet.(inter (diff s_entry saved_s_exit.(pred)) saved_w_exit.(pred))
+        in
+        let zblock, graph = X86.Cfg.focus (uid pred) graph in
+        let head, last = X86.Cfg.goto_end zblock in
+        let insert_instr f var head =
+          X86.Cfg.Head (head, Instruction (f var))
+        in
+        let head = RegSet.fold (insert_instr (reload state)) reloads head in
+        let head = RegSet.fold (insert_instr (spill state)) spills head in
+        X86.Cfg.unfocus ((head, Last last), graph)
+      in
+      let graph =
+        List.fold_left insert_coupling graph (Loop.Dom.predecessors pos)
+      in
+      let zblock, graph = X86.Cfg.focus block_uid graph in
+      let zblock, { w = w_exit; s = s_exit } =
+        min_algorithm state zblock { w = w_entry; s = s_entry }
+      in
+      (* save w_exit and s_exit for block id *)
+      saved_w_exit.(pos) <- w_exit;
+      saved_s_exit.(pos) <- s_exit;
+      X86.Cfg.unfocus (zblock, graph)
+    in
+    (* todo: can this be replaced with iterating from 0 to Loop.Dom.size-1? *)
+    let rpo = X86.Cfg.reverse_postorder_dfs graph in
+    List.fold_left
+      (fun graph block ->
+        spill_block state graph X86.Cfg.(idd (block_label block)))
+      graph rpo
 end
