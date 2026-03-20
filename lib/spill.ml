@@ -303,6 +303,13 @@ struct
     copies : X86.Target.reg IntHashtbl.t;
   }
 
+  let init (state : Select_x86.State.t) =
+    {
+      select_state = state;
+      spill_mapping = IntHashtbl.create hashtbl_size;
+      copies = IntHashtbl.create hashtbl_size;
+    }
+
   let spill (state : spill_state) v =
     let slot = state.select_state.new_stack_slot 8 in
     IntHashtbl.replace state.spill_mapping (X86.Target.index v) slot;
@@ -409,6 +416,7 @@ struct
         let spills =
           RegSet.(inter (diff s_entry saved_s_exit.(pred)) saved_w_exit.(pred))
         in
+        state.select_state.curr_block := uid pred;
         let zblock, graph = X86.Cfg.focus (uid pred) graph in
         let head, last = X86.Cfg.goto_end zblock in
         let insert_instr f var head =
@@ -421,6 +429,7 @@ struct
       let graph =
         List.fold_left insert_coupling graph (Loop.Dom.predecessors pos)
       in
+      state.select_state.curr_block := block_uid;
       let zblock, graph = X86.Cfg.focus block_uid graph in
       let zblock, { w = w_exit; s = s_exit } =
         min_algorithm state zblock { w = w_entry; s = s_entry }
