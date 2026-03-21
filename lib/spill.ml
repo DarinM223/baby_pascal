@@ -3,7 +3,7 @@ let m = 10_000
 
 module IntHashtbl = Hashtbl.Make (Int)
 module IntSet = Set.Make (Int)
-module IntMap = Map.Make (Int)
+module IntMap = Graph_intf.IntMap
 
 let count_instructions (tail : X86.Cfg.tail) =
   let rec go acc = function
@@ -35,7 +35,9 @@ let fact () =
               (fun _ v1 v2 -> Some (min v1 v2))
               a.distances b.distances;
         });
-    changed = (fun ~before ~after -> before.distances <> after.distances);
+    changed =
+      (fun ~before ~after ->
+        not (IntMap.equal Int.equal before.distances after.distances));
     skip_block = Fun.const false;
     get = IntHashtbl.find store;
     set = IntHashtbl.replace store;
@@ -245,7 +247,8 @@ struct
         RegSet.iter
           (fun var ->
             let var_idx = X86.Target.index var in
-            IntHashtbl.replace freq var_idx (IntHashtbl.find freq var_idx + 1);
+            IntHashtbl.replace freq var_idx
+              ((try IntHashtbl.find freq var_idx with Not_found -> 0) + 1);
             cand := RegSet.add var !cand;
             if IntHashtbl.find freq var_idx = preds_length then begin
               cand := RegSet.remove var !cand;
@@ -310,13 +313,21 @@ struct
       copies = IntHashtbl.create hashtbl_size;
     }
 
+  open struct
+    let get_slot (state : spill_state) v =
+      let id = X86.Target.index v in
+      try IntHashtbl.find state.spill_mapping id
+      with Not_found ->
+        let slot = state.select_state.new_stack_slot 8 in
+        IntHashtbl.add state.spill_mapping id slot;
+        slot
+  end
+
   let spill (state : spill_state) v =
-    let slot = state.select_state.new_stack_slot 8 in
-    IntHashtbl.replace state.spill_mapping (X86.Target.index v) slot;
-    X86.Target.mov ~dest:slot ~src:(X86.Target.Reg v)
+    X86.Target.mov ~dest:(get_slot state v) ~src:(X86.Target.Reg v)
 
   let reload (state : spill_state) v =
-    let slot = IntHashtbl.find state.spill_mapping (X86.Target.index v) in
+    let slot = get_slot state v in
     let v' = state.select_state.fresh_vreg Int in
     IntHashtbl.add state.copies (X86.Target.index v) v';
     X86.Target.mov ~dest:(X86.Target.Reg v') ~src:slot
@@ -324,9 +335,7 @@ struct
   let limit (state : spill_state) (next_use_distances : int IntMap.t)
       ({ w; s } : min_state) (head : X86.Cfg.head) (m : int) :
       X86.Cfg.head * min_state =
-    let w =
-      List.take m (List.sort (compare next_use_distances) (RegSet.to_list w))
-    in
+    let w = List.sort (compare next_use_distances) (RegSet.to_list w) in
     let head, s =
       List.fold_left
         (fun (head, s) v ->
@@ -338,9 +347,9 @@ struct
             else head
           in
           (head, RegSet.remove v s))
-        (head, s) (List.rev w)
+        (head, s) (List.drop m w)
     in
-    let w = RegSet.of_list w in
+    let w = RegSet.of_list (List.take m w) in
     (head, { w; s })
 
   let min_algorithm (state : spill_state) (zblock : X86.Cfg.zblock)
@@ -357,11 +366,6 @@ struct
         in
         let head, { w; s } = limit state next_use_distances { w; s } head M.k in
         let head = X86.Cfg.Head (head, Instruction instr) in
-        let head, { w; s } =
-          limit state next_use_distances { w; s } head
-            (M.k - RegSet.cardinal (X86.Target.defs instr))
-        in
-        let w = RegSet.union w (X86.Target.defs instr) in
         (* add reloads for vars in r *)
         let head =
           RegSet.fold
@@ -369,6 +373,11 @@ struct
               X86.Cfg.Head (head, Instruction (reload state var)))
             r head
         in
+        let head, { w; s } =
+          limit state next_use_distances { w; s } head
+            (M.k - RegSet.cardinal (X86.Target.defs instr))
+        in
+        let w = RegSet.union w (X86.Target.defs instr) in
         go w s (head, tail)
       | head, X86.Cfg.Last l ->
         let handle_instruction instr =
@@ -392,8 +401,27 @@ struct
     go w s zblock
 
   let spill (state : spill_state) (graph : X86.Cfg.graph) : X86.Cfg.graph =
+    let processed = Array.make Loop.Dom.size false in
+    let saved_w_entry = Array.make Loop.Dom.size RegSet.empty in
+    let saved_s_entry = Array.make Loop.Dom.size RegSet.empty in
     let saved_w_exit = Array.make Loop.Dom.size RegSet.empty in
     let saved_s_exit = Array.make Loop.Dom.size RegSet.empty in
+    let insert_coupling curr graph pred =
+      let reloads = RegSet.diff saved_w_entry.(curr) saved_w_exit.(pred) in
+      let spills =
+        RegSet.(
+          inter
+            (diff saved_s_entry.(curr) saved_s_exit.(pred))
+            saved_w_exit.(pred))
+      in
+      state.select_state.curr_block := uid pred;
+      let zblock, graph = X86.Cfg.focus (uid pred) graph in
+      let head, last = X86.Cfg.goto_end zblock in
+      let insert_instr f var head = X86.Cfg.Head (head, Instruction (f var)) in
+      let head = RegSet.fold (insert_instr (reload state)) reloads head in
+      let head = RegSet.fold (insert_instr (spill state)) spills head in
+      X86.Cfg.unfocus ((head, Last last), graph)
+    in
     let spill_block (state : spill_state) (graph : X86.Cfg.graph)
         (block_uid : X86.Cfg.uid) : X86.Cfg.graph =
       let pos = Loop.Dom.position_of_uid block_uid in
@@ -410,24 +438,13 @@ struct
              (Loop.Dom.predecessors pos))
           w_entry
       in
+      saved_w_entry.(pos) <- w_entry;
+      saved_s_entry.(pos) <- s_entry;
       (* go back to predecessors and insert coupling code *)
-      let insert_coupling graph pred =
-        let reloads = RegSet.diff w_entry saved_w_exit.(pred) in
-        let spills =
-          RegSet.(inter (diff s_entry saved_s_exit.(pred)) saved_w_exit.(pred))
-        in
-        state.select_state.curr_block := uid pred;
-        let zblock, graph = X86.Cfg.focus (uid pred) graph in
-        let head, last = X86.Cfg.goto_end zblock in
-        let insert_instr f var head =
-          X86.Cfg.Head (head, Instruction (f var))
-        in
-        let head = RegSet.fold (insert_instr (reload state)) reloads head in
-        let head = RegSet.fold (insert_instr (spill state)) spills head in
-        X86.Cfg.unfocus ((head, Last last), graph)
-      in
       let graph =
-        List.fold_left insert_coupling graph (Loop.Dom.predecessors pos)
+        Loop.Dom.predecessors pos
+        |> List.filter (fun pred -> processed.(pred))
+        |> List.fold_left (insert_coupling pos) graph
       in
       state.select_state.curr_block := block_uid;
       let zblock, graph = X86.Cfg.focus block_uid graph in
@@ -435,9 +452,13 @@ struct
         min_algorithm state zblock { w = w_entry; s = s_entry }
       in
       (* save w_exit and s_exit for block id *)
+      processed.(pos) <- true;
       saved_w_exit.(pos) <- w_exit;
       saved_s_exit.(pos) <- s_exit;
-      X86.Cfg.unfocus (zblock, graph)
+      let graph = X86.Cfg.unfocus (zblock, graph) in
+      Loop.Dom.successors pos
+      |> List.filter (fun succ -> processed.(succ))
+      |> List.fold_left (fun graph succ -> insert_coupling succ graph pos) graph
     in
     (* todo: can this be replaced with iterating from 0 to Loop.Dom.size-1? *)
     let rpo = X86.Cfg.reverse_postorder_dfs graph in

@@ -99,7 +99,7 @@ let test_loops () =
             ~uses:[ Reg second_loop_temps.(7); Reg temp2 ])
     @@ return ~uses:[ Reg temp3 ] @@ focus_entry empty
   in
-  Format.printf "%a\n" X86.Printer.pp_graph cfg;
+  Format.printf "Initial graph: %a\n" X86.Printer.pp_graph cfg;
   let extra = X86.Cfg.precalculate_edges cfg in
   let module Extra = (val extra) in
   let module Dom = Dominator.Make (X86.Cfg) (Extra) in
@@ -122,6 +122,7 @@ let test_loops () =
     let open X86.Cfg in
     empty
   in
+  Format.printf "Spilled graph: %a\n" X86.Printer.pp_graph cfg;
   (check X86.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph before SSA reconstruction" cfg expected;
   let module Reconstruct = Reconstruct.Make (X86.Target) (X86.Cfg) (Dom) in

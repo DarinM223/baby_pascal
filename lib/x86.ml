@@ -79,6 +79,10 @@ module Target = struct
   let destruct_label = function
     | Label (l, args) -> Some (l, args)
     | _ -> None
+  let index = function
+    | Physical (id, _, _) -> id
+    | Virtual v -> v.id
+    | Tombstone -> failwith "index: got tombstone"
   module Reg = struct
     type t = reg
     let is_tombstone = function
@@ -89,7 +93,7 @@ module Target = struct
       | Reg r -> Some r
       | _ -> None
     let to_operand r = Reg r
-    let compare = compare
+    let compare r1 r2 = Int.compare (index r1) (index r2)
   end
   module RegSet = Set.Make (Reg)
   let is_tombstone = function
@@ -144,10 +148,6 @@ module Target = struct
     |> List.fold_left RegSet.union RegSet.empty
 
   type cond = Instruction.Cond.t [@@deriving show, eq]
-  let index = function
-    | Physical (id, _, _) -> id
-    | Virtual v -> v.id
-    | Tombstone -> failwith "index: got tombstone"
   let constrained physical_reg = function
     | Physical p ->
       if p <> physical_reg then
