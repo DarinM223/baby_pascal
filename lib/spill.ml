@@ -194,6 +194,7 @@ module Liveness = struct
     in
     let analysis =
       {
+        (* todo: handle block arguments *)
         X86.Flow.BackwardAnalysis.first_in = (fun a _ -> a);
         middle_in = (fun a (Instruction instr) -> handle_instruction instr a);
         last_in = Fun.const calc_live_out;
@@ -271,12 +272,17 @@ struct
 
   let init_loop_header (block : Loop.Dom.position) =
     let loop = get_loop_nodes block in
+    Format.printf "Loop nodes: %s\n"
+      ([%show: X86.Cfg.label option list]
+         (Loop.PositionSet.to_list loop |> List.map Loop.Dom.label_of_position));
     let alive = M.liveness.live_in (uid block) in
     let used_in_loop =
       Loop.PositionSet.fold
         (fun node -> RegSet.union (M.liveness.used_in_block (uid node)))
         loop RegSet.empty
     in
+    Format.printf "Used in loop: %s\n"
+      ([%show: X86.Cfg.regs] (RegSet.to_list used_in_loop));
     let cand = RegSet.inter alive used_in_loop in
     let dists = M.next_use_distances (uid block) in
     let max_pressure =
@@ -284,13 +290,15 @@ struct
         (fun node -> max (M.liveness.max_register_pressure (uid node)))
         loop 0
     in
-    if RegSet.cardinal cand < M.k then
+    if RegSet.cardinal cand < M.k then (
       let live_through = RegSet.diff alive cand in
+      Format.printf "Live through: %s\n"
+        ([%show: X86.Cfg.regs] (RegSet.to_list live_through));
       let free_loop = M.k - max_pressure + RegSet.cardinal live_through in
       let live_through =
         List.sort (compare dists) (RegSet.to_list live_through)
       in
-      RegSet.(union cand (of_list (List.take free_loop live_through)))
+      RegSet.(union cand (of_list (List.take free_loop live_through))))
     else
       let cand = List.sort (compare dists) (RegSet.to_list cand) in
       RegSet.of_list (List.take M.k cand)

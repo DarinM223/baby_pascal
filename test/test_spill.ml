@@ -26,78 +26,104 @@ let test_loops () =
     let first_loop_temps, second_loop_temps =
       (Array.of_list (List.take 8 temps), Array.of_list (List.drop 8 temps))
     in
+    state.curr_block := 1;
+    let block1_arg1 = state.fresh_vreg Int in
+    state.curr_block := 2;
+    let block2_arg1 = state.fresh_vreg Int in
+    let block2_temp1 = state.fresh_vreg Int in
+    let block2_temp2 = state.fresh_vreg Int in
+    let block2_temp3 = state.fresh_vreg Int in
+    let block2_temp4 = state.fresh_vreg Int in
+    let block2_temp5 = state.fresh_vreg Int in
+    let block2_temp6 = state.fresh_vreg Int in
+    let block2_temp7 = state.fresh_vreg Int in
+    state.curr_block := 3;
+    let block3_arg1 = state.fresh_vreg Int in
+    state.curr_block := 4;
+    let block4_arg1 = state.fresh_vreg Int in
+    state.curr_block := 5;
+    let block5_arg1 = state.fresh_vreg Int in
+    let block5_temp1 = state.fresh_vreg Int in
+    let block5_temp2 = state.fresh_vreg Int in
+    let block5_temp3 = state.fresh_vreg Int in
+    let block5_temp4 = state.fresh_vreg Int in
+    let block5_temp5 = state.fresh_vreg Int in
     state.curr_block := 6;
-    let temp1 = state.fresh_vreg Int in
-    let temp2 = state.fresh_vreg Int in
-    let temp3 = state.fresh_vreg Int in
+    let block6_arg1 = state.fresh_vreg Int in
+    let block6_temp1 = state.fresh_vreg Int in
+    let block6_temp2 = state.fresh_vreg Int in
+    let block6_temp3 = state.fresh_vreg Int in
     state.curr_block := 0;
     unfocus @@ init_temps
     @@ branch (1, "label1")
-    @@ label (1, "label1")
-    @@ cbranch
+    @@ label ~args:[ block1_arg1 ] (1, "label1")
+    @@ cbranch ~ifso_args:[ Reg block1_arg1 ] ~ifnot_args:[ Reg block1_arg1 ]
          ~args:[ Reg first_loop_temps.(1); Reg first_loop_temps.(0) ]
          LT ~ifso:(3, "label3") ~ifnot:(2, "label2")
-    @@ label (2, "label2")
+    @@ label ~args:[ block2_arg1 ] (2, "label2")
     @@ instruction
-         (instr "addq"
-            ~defs:[ Reg first_loop_temps.(1) ]
-            ~uses:[ Reg first_loop_temps.(0); Imm 1 ])
+         (instr "addq" ~defs:[ Reg block2_temp1 ]
+            ~uses:[ Reg first_loop_temps.(0); Reg first_loop_temps.(1) ])
     @@ instruction
-         (instr "subq"
-            ~defs:[ Reg first_loop_temps.(2) ]
-            ~uses:[ Reg first_loop_temps.(1); Reg first_loop_temps.(0) ])
+         (instr "subq" ~defs:[ Reg block2_temp2 ]
+            ~uses:[ Reg block2_temp1; Reg first_loop_temps.(0) ])
     @@ instruction
-         (instr "mulq"
-            ~defs:[ Reg first_loop_temps.(3) ]
-            ~uses:[ Reg first_loop_temps.(2); Reg first_loop_temps.(2) ])
+         (instr "mulq" ~defs:[ Reg block2_temp3 ]
+            ~uses:[ Reg first_loop_temps.(2); Reg block2_arg1 ])
     @@ instruction
-         (instr "addq"
-            ~defs:[ Reg first_loop_temps.(5) ]
-            ~uses:[ Reg first_loop_temps.(3); Reg first_loop_temps.(4) ])
+         (instr "addq" ~defs:[ Reg block2_temp4 ]
+            ~uses:[ Reg block2_temp3; Reg first_loop_temps.(4) ])
     @@ instruction
-         (instr "subq"
-            ~defs:[ Reg first_loop_temps.(7) ]
+         (instr "subq" ~defs:[ Reg block2_temp5 ]
             ~uses:[ Reg first_loop_temps.(5); Reg first_loop_temps.(6) ])
-    @@ branch (1, "label1")
-    @@ label (4, "label4")
-    @@ cbranch
+    @@ instruction
+         (instr "addq" ~defs:[ Reg block2_temp6 ]
+            ~uses:[ Reg block2_temp2; Reg block2_temp4 ])
+    @@ instruction
+         (instr "addq" ~defs:[ Reg block2_temp7 ]
+            ~uses:
+              [ Reg block2_temp6; Reg block2_temp5; Reg first_loop_temps.(7) ])
+    @@ branch ~args:[ Reg block2_temp7 ] (1, "label1")
+    @@ label ~args:[ block3_arg1 ] (3, "label3")
+    @@ label ~args:[ block4_arg1 ] (4, "label4")
+    @@ cbranch ~ifso_args:[ Reg block4_arg1 ] ~ifnot_args:[ Reg block4_arg1 ]
          ~args:[ Reg second_loop_temps.(1); Reg second_loop_temps.(0) ]
          LT ~ifso:(6, "label6") ~ifnot:(5, "label5")
-    @@ label (5, "label5")
+    @@ label ~args:[ block5_arg1 ] (5, "label5")
     @@ instruction
-         (instr "addq"
-            ~defs:[ Reg second_loop_temps.(1) ]
-            ~uses:[ Reg second_loop_temps.(0); Imm 1 ])
+         (instr "addq" ~defs:[ Reg block5_temp1 ]
+            ~uses:[ Reg second_loop_temps.(0); Reg second_loop_temps.(1) ])
     @@ instruction
-         (instr "subq"
-            ~defs:[ Reg second_loop_temps.(2) ]
-            ~uses:[ Reg second_loop_temps.(1); Reg second_loop_temps.(0) ])
+         (instr "subq" ~defs:[ Reg block5_temp2 ]
+            ~uses:[ Reg block5_temp1; Reg second_loop_temps.(2) ])
     @@ instruction
-         (instr "mulq"
-            ~defs:[ Reg second_loop_temps.(3) ]
-            ~uses:[ Reg second_loop_temps.(2); Reg second_loop_temps.(2) ])
+         (instr "mulq" ~defs:[ Reg block5_temp3 ]
+            ~uses:[ Reg block5_temp2; Reg second_loop_temps.(3) ])
     @@ instruction
-         (instr "addq"
-            ~defs:[ Reg second_loop_temps.(5) ]
-            ~uses:[ Reg second_loop_temps.(3); Reg second_loop_temps.(4) ])
+         (instr "addq" ~defs:[ Reg block5_temp4 ]
+            ~uses:[ Reg block5_temp3; Reg second_loop_temps.(4) ])
     @@ instruction
-         (instr "subq"
-            ~defs:[ Reg second_loop_temps.(7) ]
-            ~uses:[ Reg second_loop_temps.(5); Reg second_loop_temps.(6) ])
-    @@ label (3, "label3")
-    @@ branch (4, "label4")
-    @@ branch (4, "label4")
-    @@ label (6, "label6")
+         (instr "subq" ~defs:[ Reg block5_temp5 ]
+            ~uses:
+              [
+                Reg block5_temp4;
+                Reg second_loop_temps.(5);
+                Reg second_loop_temps.(6);
+                Reg second_loop_temps.(7);
+              ])
+    @@ branch ~args:[ Reg block5_temp5 ] (4, "label4")
+    @@ label ~args:[ block6_arg1 ] (6, "label6")
     @@ instruction
-         (instr "addq" ~defs:[ Reg temp1 ]
+         (instr "addq" ~defs:[ Reg block6_temp1 ]
             ~uses:[ Reg pass_through.(0); Reg pass_through.(1) ])
     @@ instruction
-         (instr "addq" ~defs:[ Reg temp2 ]
-            ~uses:[ Reg first_loop_temps.(7); Reg temp1 ])
+         (instr "addq" ~defs:[ Reg block6_temp2 ]
+            ~uses:[ Reg block3_arg1; Reg block6_temp1 ])
     @@ instruction
-         (instr "addq" ~defs:[ Reg temp3 ]
-            ~uses:[ Reg second_loop_temps.(7); Reg temp2 ])
-    @@ return ~uses:[ Reg temp3 ] @@ focus_entry empty
+         (instr "addq" ~defs:[ Reg block6_temp3 ]
+            ~uses:[ Reg block6_arg1; Reg block6_temp2 ])
+    @@ return ~uses:[ Reg block6_temp3 ]
+    @@ focus_entry empty
   in
   Format.printf "Initial graph: %a\n" X86.Printer.pp_graph cfg;
   let extra = X86.Cfg.precalculate_edges cfg in
