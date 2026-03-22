@@ -46,6 +46,10 @@ let calc_a_orig graph : a_orig =
 
 let calc_live graph : liveness =
   let liveness_fact = name_fact () in
+  let first_in a = function
+    | Cfg.Entry -> a
+    | Cfg.Label (_, info) -> NameSet.(diff a (of_list info.args))
+  in
   let handle_instruction instr a =
     NameSet.union (Target.uses instr) (NameSet.diff a (Target.defs instr))
   in
@@ -59,7 +63,7 @@ let calc_live graph : liveness =
   in
   let liveness_analysis =
     {
-      Flow.BackwardAnalysis.first_in = (fun a _ -> a);
+      Flow.BackwardAnalysis.first_in;
       middle_in = (fun a (Instruction instr) -> handle_instruction instr a);
       last_in = Fun.const calc_live_out;
     }

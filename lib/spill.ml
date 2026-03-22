@@ -174,6 +174,11 @@ module Liveness = struct
           max a.State.max_register_pressure (RegSet.cardinal mapping);
       }
     in
+    let first_in a = function
+      | X86.Cfg.Entry -> a
+      | X86.Cfg.Label (_, info) ->
+        update_mapping RegSet.(diff a.State.mapping (of_list info.args)) a
+    in
     let handle_instruction instr a =
       let instr_uses = uses instr in
       let instr_defs = defs instr in
@@ -194,8 +199,7 @@ module Liveness = struct
     in
     let analysis =
       {
-        (* todo: handle block arguments *)
-        X86.Flow.BackwardAnalysis.first_in = (fun a _ -> a);
+        X86.Flow.BackwardAnalysis.first_in;
         middle_in = (fun a (Instruction instr) -> handle_instruction instr a);
         last_in = Fun.const calc_live_out;
       }
@@ -290,7 +294,7 @@ struct
         (fun node -> max (M.liveness.max_register_pressure (uid node)))
         loop 0
     in
-    if RegSet.cardinal cand < M.k then (
+    if RegSet.cardinal cand < M.k then begin
       let live_through = RegSet.diff alive cand in
       Format.printf "Live through: %s\n"
         ([%show: X86.Cfg.regs] (RegSet.to_list live_through));
@@ -298,7 +302,8 @@ struct
       let live_through =
         List.sort (compare dists) (RegSet.to_list live_through)
       in
-      RegSet.(union cand (of_list (List.take free_loop live_through))))
+      RegSet.(union cand (of_list (List.take free_loop live_through)))
+    end
     else
       let cand = List.sort (compare dists) (RegSet.to_list cand) in
       RegSet.of_list (List.take M.k cand)
