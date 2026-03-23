@@ -76,8 +76,9 @@ let next_use_distances
   in
   let fact = fact () in
   let handle_instruction i a =
-    let handle_use acc = function
+    let rec handle_use acc = function
       | X86.Target.Reg r -> IntMap.add (X86.Target.index r) a.count acc
+      | X86.Target.Label (_, uses) -> List.fold_left handle_use acc uses
       | _ -> acc
     in
     let first_use = List.fold_left handle_use a.first_use i.X86.Target.uses in
@@ -157,11 +158,12 @@ module Liveness = struct
     }
   let calc graph : t =
     let fact = fact () in
-    let convert_operands ops =
+    let rec convert_operands ops =
       ops
-      |> List.filter_map (function
-        | X86.Target.Reg r -> Some r
-        | _ -> None)
+      |> List.concat_map (function
+        | X86.Target.Reg r -> [ r ]
+        | X86.Target.Label (_, uses) -> RegSet.to_list (convert_operands uses)
+        | _ -> [])
       |> RegSet.of_list
     in
     let uses instr = convert_operands instr.X86.Target.uses in
@@ -349,6 +351,7 @@ struct
   end
 
   let spill (state : spill_state) v =
+    (* todo: only spill if no existing spill that dominates the current block *)
     X86.Target.mov ~dest:(get_slot state v) ~src:(X86.Target.Reg v)
 
   let reload (state : spill_state) v =
@@ -357,9 +360,9 @@ struct
     IntHashtbl.add state.copies (X86.Target.index v) v';
     X86.Target.mov ~dest:(X86.Target.Reg v') ~src:slot
 
-  let limit (state : spill_state) (next_use_distances : int IntMap.t)
-      ({ w; s } : min_state) (head : X86.Cfg.head) (m : int) :
-      X86.Cfg.head * min_state =
+  let limit ~add_spills (state : spill_state)
+      (next_use_distances : int IntMap.t) ({ w; s } : min_state)
+      (head : X86.Cfg.head) (m : int) : X86.Cfg.head * min_state =
     let w = List.sort (compare next_use_distances) (RegSet.to_list w) in
     let head, s =
       List.fold_left
@@ -368,7 +371,11 @@ struct
             if
               (not (RegSet.mem v s))
               && IntMap.mem (X86.Target.index v) next_use_distances
-            then X86.Cfg.Head (head, Instruction (spill state v))
+              && add_spills
+            then begin
+              Format.printf "Spilling %a\n" X86.Target.pp_reg v;
+              X86.Cfg.Head (head, Instruction (spill state v))
+            end
             else head
           in
           (head, RegSet.remove v s))
@@ -377,7 +384,7 @@ struct
     let w = RegSet.of_list (List.take m w) in
     (head, { w; s })
 
-  let min_algorithm (state : spill_state) (zblock : X86.Cfg.zblock)
+  let min_algorithm ~add_spills (state : spill_state) (zblock : X86.Cfg.zblock)
       ({ w; s } : min_state) : X86.Cfg.zblock * min_state =
     let next_use_distances = M.next_use_distances X86.Cfg.(id (zip zblock)) in
     let rec go w s = function
@@ -389,17 +396,24 @@ struct
             (fun use (w, s) -> (RegSet.add use w, RegSet.add use s))
             r (w, s)
         in
-        let head, { w; s } = limit state next_use_distances { w; s } head M.k in
+        Format.printf "W after adding uses in block %d: %s\n"
+          X86.Cfg.(id (zip zblock))
+          ([%show: X86.Cfg.regs] (RegSet.to_list w));
+        let head, { w; s } =
+          limit ~add_spills state next_use_distances { w; s } head M.k
+        in
         let head = X86.Cfg.Head (head, Instruction instr) in
         (* add reloads for vars in r *)
         let head =
-          RegSet.fold
-            (fun var head ->
-              X86.Cfg.Head (head, Instruction (reload state var)))
-            r head
+          if add_spills then
+            RegSet.fold
+              (fun var head ->
+                X86.Cfg.Head (head, Instruction (reload state var)))
+              r head
+          else head
         in
         let head, { w; s } =
-          limit state next_use_distances { w; s } head
+          limit ~add_spills state next_use_distances { w; s } head
             (M.k - RegSet.cardinal (X86.Target.defs instr))
         in
         let w = RegSet.union w (X86.Target.defs instr) in
@@ -412,7 +426,7 @@ struct
               (fun use (w, s) -> (RegSet.add use w, RegSet.add use s))
               r (w, s)
           in
-          limit state next_use_distances { w; s } head M.k
+          limit ~add_spills state next_use_distances { w; s } head M.k
         in
         let head, min_state =
           match l with
@@ -466,24 +480,44 @@ struct
       saved_w_entry.(pos) <- w_entry;
       saved_s_entry.(pos) <- s_entry;
       (* go back to predecessors and insert coupling code *)
+      let all_processed =
+        List.for_all (fun pred -> processed.(pred)) (Loop.Dom.predecessors pos)
+      in
       let graph =
         Loop.Dom.predecessors pos
         |> List.filter (fun pred -> processed.(pred))
         |> List.fold_left (insert_coupling pos) graph
       in
+      Format.printf "Block %d all processed: %b\n" block_uid all_processed;
       state.select_state.curr_block := block_uid;
       let zblock, graph = X86.Cfg.focus block_uid graph in
       let zblock, { w = w_exit; s = s_exit } =
-        min_algorithm state zblock { w = w_entry; s = s_entry }
+        min_algorithm ~add_spills:all_processed state zblock
+          { w = w_entry; s = s_entry }
       in
       (* save w_exit and s_exit for block id *)
       processed.(pos) <- true;
       saved_w_exit.(pos) <- w_exit;
       saved_s_exit.(pos) <- s_exit;
       let graph = X86.Cfg.unfocus (zblock, graph) in
+      let fix_loop_header graph succ =
+        (* update s_entry and rerun min algorithm to insert spills *)
+        saved_s_entry.(succ) <-
+          RegSet.(
+            inter
+              (union saved_s_entry.(succ) saved_s_exit.(pos))
+              saved_w_entry.(succ));
+        let zblock, graph = X86.Cfg.focus (uid succ) graph in
+        let zblock, _ =
+          min_algorithm ~add_spills:true state zblock
+            { w = saved_w_entry.(succ); s = saved_s_entry.(succ) }
+        in
+        let graph = X86.Cfg.unfocus (zblock, graph) in
+        insert_coupling succ graph pos
+      in
       Loop.Dom.successors pos
       |> List.filter (fun succ -> processed.(succ))
-      |> List.fold_left (fun graph succ -> insert_coupling succ graph pos) graph
+      |> List.fold_left fix_loop_header graph
     in
     (* todo: can this be replaced with iterating from 0 to Loop.Dom.size-1? *)
     let rpo = X86.Cfg.reverse_postorder_dfs graph in

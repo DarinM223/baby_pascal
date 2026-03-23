@@ -69,7 +69,12 @@ let test_loops () =
             ~uses:[ Reg block2_temp1; Reg first_loop_temps.(0) ])
     @@ instruction
          (instr "mulq" ~defs:[ Reg block2_temp3 ]
-            ~uses:[ Reg first_loop_temps.(2); Reg block2_arg1 ])
+            ~uses:
+              [
+                Reg first_loop_temps.(2);
+                Reg block2_arg1;
+                Reg first_loop_temps.(3);
+              ])
     @@ instruction
          (instr "addq" ~defs:[ Reg block2_temp4 ]
             ~uses:[ Reg block2_temp3; Reg first_loop_temps.(4) ])
@@ -131,6 +136,16 @@ let test_loops () =
   let module Dom = Dominator.Make (X86.Cfg) (Extra) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
   let next_use_distances = Spill.next_use_distances (module Loop) cfg in
+  Format.printf "Next use distances: %s\n"
+    begin
+      let next_use_distances =
+        X86.Cfg.reverse_postorder_dfs cfg
+        |> List.map (fun block -> X86.Cfg.(idd (block_label block)))
+        |> List.map (fun uid ->
+            (uid, Spill.IntMap.to_list (next_use_distances uid)))
+      in
+      [%show: (int * (int * int) list) list] next_use_distances
+    end;
   let liveness = Spill.Liveness.calc cfg in
   let module Spill =
     Spill.Make
