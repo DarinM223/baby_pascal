@@ -55,7 +55,7 @@ let test_loops () =
     let block6_temp3 = state.fresh_vreg Int in
     state.curr_block := 0;
     unfocus @@ init_temps
-    @@ branch (1, "label1")
+    @@ branch ~args:[ Reg first_loop_temps.(7) ] (1, "label1")
     @@ label ~args:[ block1_arg1 ] (1, "label1")
     @@ cbranch ~ifso_args:[ Reg block1_arg1 ] ~ifnot_args:[ Reg block1_arg1 ]
          ~args:[ Reg first_loop_temps.(1); Reg first_loop_temps.(0) ]
@@ -81,10 +81,10 @@ let test_loops () =
             ~uses:[ Reg block2_temp2; Reg block2_temp4 ])
     @@ instruction
          (instr "addq" ~defs:[ Reg block2_temp7 ]
-            ~uses:
-              [ Reg block2_temp6; Reg block2_temp5; Reg first_loop_temps.(7) ])
+            ~uses:[ Reg block2_temp6; Reg block2_temp5; Reg block2_temp3 ])
     @@ branch ~args:[ Reg block2_temp7 ] (1, "label1")
     @@ label ~args:[ block3_arg1 ] (3, "label3")
+    @@ branch ~args:[ Reg second_loop_temps.(7) ] (4, "label4")
     @@ label ~args:[ block4_arg1 ] (4, "label4")
     @@ cbranch ~ifso_args:[ Reg block4_arg1 ] ~ifnot_args:[ Reg block4_arg1 ]
          ~args:[ Reg second_loop_temps.(1); Reg second_loop_temps.(0) ]
@@ -109,7 +109,7 @@ let test_loops () =
                 Reg block5_temp4;
                 Reg second_loop_temps.(5);
                 Reg second_loop_temps.(6);
-                Reg second_loop_temps.(7);
+                Reg block5_arg1;
               ])
     @@ branch ~args:[ Reg block5_temp5 ] (4, "label4")
     @@ label ~args:[ block6_arg1 ] (6, "label6")
