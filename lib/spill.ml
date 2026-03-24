@@ -230,15 +230,21 @@ module Make
       val liveness : Liveness.t
     end) =
 struct
-  let compare dists a b =
-    match
-      X86.Target.
-        (IntMap.find_opt (index a) dists, IntMap.find_opt (index b) dists)
-    with
+  let lookup_dist instr_num v next_use_distances =
+    match IntMap.find (X86.Target.index v) next_use_distances with
+    | dist when instr_num > dist -> None
+    | dist -> Some dist
+    | exception Not_found -> None
+
+  let compare dists instr_num a b =
+    match (lookup_dist instr_num a dists, lookup_dist instr_num b dists) with
     | None, None -> 0
     | None, _ -> 1
     | _, None -> -1
     | Some dist1, Some dist2 -> dist1 - dist2
+
+  let infinite_distance instr_num v next_use_distances =
+    Option.is_none (lookup_dist instr_num v next_use_distances)
 
   let uid p = X86.Cfg.idd @@ Loop.Dom.label_of_position p
   module RegSet = X86.Target.RegSet
@@ -264,7 +270,7 @@ struct
           (wexit pred))
       (Loop.Dom.predecessors block);
     let dists = M.next_use_distances (uid block) in
-    let cand = List.sort (compare dists) (RegSet.to_list !cand) in
+    let cand = List.sort (compare dists 0) (RegSet.to_list !cand) in
     RegSet.(union !take (of_list (List.take (M.k - cardinal !take) cand)))
 
   let rec get_loop_nodes (node : Loop.Dom.position) : Loop.PositionSet.t =
@@ -309,7 +315,7 @@ struct
           (M.k - (max_pressure - RegSet.cardinal live_through))
       in
       let live_through =
-        List.sort (compare dists) (RegSet.to_list live_through)
+        List.sort (compare dists 0) (RegSet.to_list live_through)
       in
       let cand =
         RegSet.(union cand (of_list (List.take free_loop live_through)))
@@ -319,7 +325,7 @@ struct
       cand
     end
     else
-      let cand = List.sort (compare dists) (RegSet.to_list cand) in
+      let cand = List.sort (compare dists 0) (RegSet.to_list cand) in
       RegSet.of_list (List.take M.k cand)
 
   type min_state = {
@@ -362,15 +368,18 @@ struct
 
   let limit ~add_spills (state : spill_state)
       (next_use_distances : int IntMap.t) ({ w; s } : min_state)
-      (head : X86.Cfg.head) (m : int) : X86.Cfg.head * min_state =
-    let w = List.sort (compare next_use_distances) (RegSet.to_list w) in
+      (instr_num : int) (head : X86.Cfg.head) (m : int) :
+      X86.Cfg.head * min_state =
+    let w =
+      List.sort (compare next_use_distances instr_num) (RegSet.to_list w)
+    in
     let head, s =
       List.fold_left
         (fun (head, s) v ->
           let head =
             if
               (not (RegSet.mem v s))
-              && IntMap.mem (X86.Target.index v) next_use_distances
+              && (not (infinite_distance instr_num v next_use_distances))
               && add_spills
             then begin
               Format.printf "Spilling %a\n" X86.Target.pp_reg v;
@@ -387,7 +396,7 @@ struct
   let min_algorithm ~add_spills (state : spill_state) (zblock : X86.Cfg.zblock)
       ({ w; s } : min_state) : X86.Cfg.zblock * min_state =
     let next_use_distances = M.next_use_distances X86.Cfg.(id (zip zblock)) in
-    let rec go w s = function
+    let rec go instr_num w s = function
       | head, X86.Cfg.Tail (Instruction instr, tail) ->
         let r = RegSet.diff (X86.Target.uses instr) w in
         (* todo: just use RegSet.union r ? *)
@@ -400,7 +409,7 @@ struct
           X86.Cfg.(id (zip zblock))
           ([%show: X86.Cfg.regs] (RegSet.to_list w));
         let head, { w; s } =
-          limit ~add_spills state next_use_distances { w; s } head M.k
+          limit ~add_spills state next_use_distances { w; s } instr_num head M.k
         in
         let head = X86.Cfg.Head (head, Instruction instr) in
         (* add reloads for vars in r *)
@@ -413,11 +422,12 @@ struct
           else head
         in
         let head, { w; s } =
-          limit ~add_spills state next_use_distances { w; s } head
+          limit ~add_spills state next_use_distances { w; s } (instr_num + 1)
+            head
             (M.k - RegSet.cardinal (X86.Target.defs instr))
         in
         let w = RegSet.union w (X86.Target.defs instr) in
-        go w s (head, tail)
+        go (instr_num + 1) w s (head, tail)
       | head, X86.Cfg.Last l ->
         let handle_instruction instr =
           let r = RegSet.diff (X86.Target.uses instr) w in
@@ -426,7 +436,7 @@ struct
               (fun use (w, s) -> (RegSet.add use w, RegSet.add use s))
               r (w, s)
           in
-          limit ~add_spills state next_use_distances { w; s } head M.k
+          limit ~add_spills state next_use_distances { w; s } instr_num head M.k
         in
         let head, min_state =
           match l with
@@ -437,7 +447,7 @@ struct
         in
         ((head, X86.Cfg.Last l), min_state)
     in
-    go w s zblock
+    go 0 w s zblock
 
   let spill (state : spill_state) (graph : X86.Cfg.graph) : X86.Cfg.graph =
     let processed = Array.make Loop.Dom.size false in
