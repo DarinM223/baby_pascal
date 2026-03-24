@@ -43,6 +43,7 @@ let fact () =
     set = IntHashtbl.replace store;
   }
 
+(* todo: next use distances need to be calculated per instruction as well *)
 let next_use_distances
     (module Loop : Loopnesting.S
       with type Dom.label = X86.Cfg.label
@@ -360,8 +361,11 @@ struct
     (* todo: only spill if no existing spill that dominates the current block *)
     X86.Target.mov ~dest:(get_slot state v) ~src:(X86.Target.Reg v)
 
+  let is_spilled (state : spill_state) v =
+    IntHashtbl.mem state.spill_mapping (X86.Target.index v)
+
   let reload (state : spill_state) v =
-    let slot = get_slot state v in
+    let slot = IntHashtbl.find state.spill_mapping (X86.Target.index v) in
     let v' = state.select_state.fresh_vreg Int in
     IntHashtbl.add state.copies (X86.Target.index v) v';
     X86.Target.mov ~dest:(X86.Target.Reg v') ~src:slot
@@ -399,6 +403,9 @@ struct
     let rec go instr_num w s = function
       | head, X86.Cfg.Tail (Instruction instr, tail) ->
         let r = RegSet.diff (X86.Target.uses instr) w in
+        Format.printf "W before adding uses in block %d: %s\n"
+          X86.Cfg.(id (zip zblock))
+          ([%show: X86.Cfg.regs] (RegSet.to_list w));
         (* todo: just use RegSet.union r ? *)
         let w, s =
           RegSet.fold
@@ -417,6 +424,7 @@ struct
           if add_spills then
             RegSet.fold
               (fun var head ->
+                Format.printf "Reloading %a\n" X86.Target.pp_reg var;
                 X86.Cfg.Head (head, Instruction (reload state var)))
               r head
           else head
@@ -447,6 +455,11 @@ struct
         in
         ((head, X86.Cfg.Last l), min_state)
     in
+    let w =
+      match X86.Cfg.first zblock with
+      | X86.Cfg.Entry -> w
+      | X86.Cfg.Label (_, info) -> RegSet.(union w (of_list info.args))
+    in
     go 0 w s zblock
 
   let spill (state : spill_state) (graph : X86.Cfg.graph) : X86.Cfg.graph =
@@ -467,7 +480,13 @@ struct
       let zblock, graph = X86.Cfg.focus (uid pred) graph in
       let head, last = X86.Cfg.goto_end zblock in
       let insert_instr f var head = X86.Cfg.Head (head, Instruction (f var)) in
-      let head = RegSet.fold (insert_instr (reload state)) reloads head in
+      let head =
+        RegSet.fold
+          (fun v head ->
+            if is_spilled state v then insert_instr (reload state) v head
+            else head)
+          reloads head
+      in
       let head = RegSet.fold (insert_instr (spill state)) spills head in
       X86.Cfg.unfocus ((head, Last last), graph)
     in
