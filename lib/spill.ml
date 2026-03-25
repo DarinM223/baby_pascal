@@ -14,19 +14,27 @@ let count_instructions (tail : X86.Cfg.tail) =
 
 type state = {
   distances : int IntMap.t;
+  distances_per_instruction : int IntMap.t array;
   block_pos : int;
   count : int;
 }
 let fact () =
   let store = IntHashtbl.create hashtbl_size in
   (* if variable doesn't exist in distances map it has distance of infinity *)
-  let init_info = { distances = IntMap.empty; block_pos = 0; count = 0 } in
+  let init_info =
+    {
+      distances = IntMap.empty;
+      distances_per_instruction = Array.make 0 IntMap.empty;
+      block_pos = 0;
+      count = 0;
+    }
+  in
   {
     X86.Flow.init_info;
     add_info =
       (fun a b ->
         {
-          init_info with
+          a with
           distances =
             IntMap.union
               (fun _ v1 v2 -> Some (min v1 v2))
@@ -40,13 +48,17 @@ let fact () =
     set = IntHashtbl.replace store;
   }
 
+type distances = {
+  at_block : X86.Cfg.uid -> int IntMap.t;
+  at_instruction : X86.Cfg.uid -> int -> int IntMap.t;
+}
+
 (* todo: next use distances need to be calculated per instruction as well *)
 let next_use_distances
     (module Loop : Loopnesting.S
       with type Dom.label = X86.Cfg.label
        and type Dom.position = int
-       and type Dom.uid = X86.Cfg.uid) (graph : X86.Cfg.graph) :
-    X86.Cfg.uid -> int IntMap.t =
+       and type Dom.uid = X86.Cfg.uid) (graph : X86.Cfg.graph) : distances =
   (* edges leading out of loops:
      if u in loop_headers then header(v) != u else header(v) != header(u) *)
   (* each block has a unique length because critical edges are assumed
@@ -74,45 +86,57 @@ let next_use_distances
   in
   let fact = fact () in
   let handle_instruction i a =
+    let l = block_lengths.(a.block_pos) in
+    let num_instructions = block_num_instructions.(a.block_pos) in
     let rec handle_use acc = function
       | X86.Target.Reg r ->
-        let l = block_lengths.(a.block_pos) in
-        let num_instructions = block_num_instructions.(a.block_pos) in
         IntMap.add (X86.Target.index r) (l + num_instructions - a.count) acc
       | X86.Target.Label (_, uses) -> List.fold_left handle_use acc uses
       | _ -> acc
     in
     let distances = List.fold_left handle_use a.distances i.X86.Target.uses in
+    a.distances_per_instruction.(num_instructions - 1 - a.count) <- distances;
     { a with distances; count = a.count + 1 }
   in
-  let first_in a _ = { fact.init_info with distances = a.distances } in
+  let first_in a _ = { a with count = 0 } in
   let middle_in a (X86.Cfg.Instruction i) = handle_instruction i a in
   let transfer block_pos fact =
     let l = block_lengths.(block_pos) in
     let num_instructions = block_num_instructions.(block_pos) in
-    {
-      fact with
-      block_pos;
-      distances =
-        IntMap.map (fun dist -> l + num_instructions + dist) fact.distances;
-    }
+    let distances =
+      IntMap.map (fun dist -> l + num_instructions + dist) fact.distances
+    in
+    let distances_per_instruction = Array.make num_instructions IntMap.empty in
+    distances_per_instruction.(num_instructions - 1) <- distances;
+    { fact with block_pos; distances_per_instruction; distances }
   in
   let last_in uid =
     let pos = Loop.Dom.position_of_uid uid in
+    let lookup uid' =
+      let pos' = Loop.Dom.position_of_uid uid' in
+      (* if edge is a loop backedge, then any next-use distances will be after the
+         redefinition of the variable making them invalid *)
+      if Loop.Dom.dominates pos' pos then fact.init_info else fact.get uid'
+    in
     function
     | X86.Cfg.Exit -> { (transfer pos fact.init_info) with count = 1 }
     | X86.Cfg.Branch (i, (uid', _)) ->
-      handle_instruction i @@ transfer pos @@ fact.get uid'
+      handle_instruction i @@ transfer pos @@ lookup uid'
     | X86.Cfg.CBranch (i, (uid1, _), (uid2, _)) ->
       handle_instruction i @@ transfer pos
-      @@ fact.add_info (fact.get uid1) (fact.get uid2)
+      @@ fact.add_info (lookup uid1) (lookup uid2)
     | X86.Cfg.Return i -> handle_instruction i @@ transfer pos fact.init_info
   in
   let analysis =
     (fact, { X86.Flow.BackwardAnalysis.first_in; middle_in; last_in })
   in
   let _ = X86.Flow.BackwardAnalysis.run analysis graph in
-  fun uid -> (fact.get uid).distances
+  {
+    at_block = (fun uid -> (fact.get uid).distances);
+    at_instruction =
+      (fun uid instr_num ->
+        (fact.get uid).distances_per_instruction.(instr_num));
+  }
 
 module Liveness = struct
   module RegSet = X86.Target.RegSet
@@ -224,25 +248,22 @@ module Make
          and type Dom.uid = X86.Cfg.uid)
     (M : sig
       val k : int
-      val next_use_distances : X86.Cfg.uid -> int IntMap.t
+      val next_use_distances : distances
       val liveness : Liveness.t
     end) =
 struct
-  let lookup_dist instr_num v next_use_distances =
-    match IntMap.find (X86.Target.index v) next_use_distances with
-    | dist when instr_num > dist -> None
-    | dist -> Some dist
-    | exception Not_found -> None
-
-  let compare dists instr_num a b =
-    match (lookup_dist instr_num a dists, lookup_dist instr_num b dists) with
+  let compare dists a b =
+    match
+      ( IntMap.find_opt (X86.Target.index a) dists,
+        IntMap.find_opt (X86.Target.index b) dists )
+    with
     | None, None -> 0
     | None, _ -> 1
     | _, None -> -1
     | Some dist1, Some dist2 -> dist1 - dist2
 
-  let infinite_distance instr_num v next_use_distances =
-    Option.is_none (lookup_dist instr_num v next_use_distances)
+  let infinite_distance v next_use_distances =
+    not (IntMap.mem (X86.Target.index v) next_use_distances)
 
   let uid p = X86.Cfg.idd @@ Loop.Dom.label_of_position p
   module RegSet = X86.Target.RegSet
@@ -267,8 +288,8 @@ struct
             end)
           (wexit pred))
       (Loop.Dom.predecessors block);
-    let dists = M.next_use_distances (uid block) in
-    let cand = List.sort (compare dists 0) (RegSet.to_list !cand) in
+    let dists = M.next_use_distances.at_block (uid block) in
+    let cand = List.sort (compare dists) (RegSet.to_list !cand) in
     RegSet.(union !take (of_list (List.take (M.k - cardinal !take) cand)))
 
   let rec get_loop_nodes (node : Loop.Dom.position) : Loop.PositionSet.t =
@@ -296,7 +317,7 @@ struct
       ([%show: X86.Cfg.regs] (RegSet.to_list used_in_loop));
     let cand = RegSet.inter alive used_in_loop in
     Format.printf "Cand: %s\n" ([%show: X86.Cfg.regs] (RegSet.to_list cand));
-    let dists = M.next_use_distances (uid block) in
+    let dists = M.next_use_distances.at_block (uid block) in
     let max_pressure =
       Loop.PositionSet.fold
         (fun node -> max (M.liveness.max_register_pressure (uid node)))
@@ -313,7 +334,7 @@ struct
           (M.k - (max_pressure - RegSet.cardinal live_through))
       in
       let live_through =
-        List.sort (compare dists 0) (RegSet.to_list live_through)
+        List.sort (compare dists) (RegSet.to_list live_through)
       in
       let cand =
         RegSet.(union cand (of_list (List.take free_loop live_through)))
@@ -323,7 +344,7 @@ struct
       cand
     end
     else
-      let cand = List.sort (compare dists 0) (RegSet.to_list cand) in
+      let cand = List.sort (compare dists) (RegSet.to_list cand) in
       RegSet.of_list (List.take M.k cand)
 
   type min_state = {
@@ -367,20 +388,28 @@ struct
     IntHashtbl.add state.copies (X86.Target.index v) v';
     X86.Target.mov ~dest:(X86.Target.Reg v') ~src:slot
 
-  let limit ~add_spills (state : spill_state)
-      (next_use_distances : int IntMap.t) ({ w; s } : min_state)
-      (instr_num : int) (head : X86.Cfg.head) (m : int) :
-      X86.Cfg.head * min_state =
-    let w =
-      List.sort (compare next_use_distances instr_num) (RegSet.to_list w)
+  let limit ~add_spills (state : spill_state) ({ w; s } : min_state)
+      (block_uid : X86.Cfg.uid) (instr_num : int) (head : X86.Cfg.head)
+      (m : int) : X86.Cfg.head * min_state =
+    let dists = M.next_use_distances.at_instruction block_uid instr_num in
+    let pp_sep fmt () = Format.fprintf fmt ", " in
+    let pp_print_tuple fmt (a, b) =
+      Format.fprintf fmt "%d -> %a" a (Format.pp_print_option CCInt.pp) b
     in
+    Format.printf "Distances: %a\n"
+      Format.(pp_print_list ~pp_sep pp_print_tuple)
+      (List.map
+         (fun v ->
+           (X86.Target.index v, IntMap.find_opt (X86.Target.index v) dists))
+         (RegSet.to_list w));
+    let w = List.sort (compare dists) (RegSet.to_list w) in
     let head, s =
       List.fold_left
         (fun (head, s) v ->
           let head =
             if
               (not (RegSet.mem v s))
-              && (not (infinite_distance instr_num v next_use_distances))
+              && (not (infinite_distance v dists))
               && add_spills
             then begin
               Format.printf "Spilling %a\n" X86.Target.pp_reg v;
@@ -396,13 +425,15 @@ struct
 
   let min_algorithm ~add_spills (state : spill_state) (zblock : X86.Cfg.zblock)
       ({ w; s } : min_state) : X86.Cfg.zblock * min_state =
-    let next_use_distances = M.next_use_distances X86.Cfg.(id (zip zblock)) in
+    let uid, w =
+      match X86.Cfg.first zblock with
+      | X86.Cfg.Entry -> (X86.Cfg.entry_uid, w)
+      | X86.Cfg.Label ((uid, _), info) ->
+        (uid, RegSet.(union w (of_list info.args)))
+    in
     let rec go instr_num w s = function
       | head, X86.Cfg.Tail (Instruction instr, tail) ->
         let r = RegSet.diff (X86.Target.uses instr) w in
-        Format.printf "W before adding uses in block %d: %s\n"
-          X86.Cfg.(id (zip zblock))
-          ([%show: X86.Cfg.regs] (RegSet.to_list w));
         (* todo: just use RegSet.union r ? *)
         let w, s =
           RegSet.fold
@@ -413,7 +444,7 @@ struct
           X86.Cfg.(id (zip zblock))
           ([%show: X86.Cfg.regs] (RegSet.to_list w));
         let head, { w; s } =
-          limit ~add_spills state next_use_distances { w; s } instr_num head M.k
+          limit ~add_spills state { w; s } uid instr_num head M.k
         in
         let head = X86.Cfg.Head (head, Instruction instr) in
         (* add reloads for vars in r *)
@@ -427,8 +458,7 @@ struct
           else head
         in
         let head, { w; s } =
-          limit ~add_spills state next_use_distances { w; s } (instr_num + 1)
-            head
+          limit ~add_spills state { w; s } uid (instr_num + 1) head
             (M.k - RegSet.cardinal (X86.Target.defs instr))
         in
         let w = RegSet.union w (X86.Target.defs instr) in
@@ -441,7 +471,7 @@ struct
               (fun use (w, s) -> (RegSet.add use w, RegSet.add use s))
               r (w, s)
           in
-          limit ~add_spills state next_use_distances { w; s } instr_num head M.k
+          limit ~add_spills state { w; s } uid instr_num head M.k
         in
         let head, min_state =
           match l with
@@ -451,11 +481,6 @@ struct
           | X86.Cfg.Return i -> handle_instruction i
         in
         ((head, X86.Cfg.Last l), min_state)
-    in
-    let w =
-      match X86.Cfg.first zblock with
-      | X86.Cfg.Entry -> w
-      | X86.Cfg.Label (_, info) -> RegSet.(union w (of_list info.args))
     in
     go 0 w s zblock
 

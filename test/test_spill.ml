@@ -142,7 +142,7 @@ let test_loops () =
         X86.Cfg.reverse_postorder_dfs cfg
         |> List.map (fun block -> X86.Cfg.(idd (block_label block)))
         |> List.map (fun uid ->
-            (uid, Spill.IntMap.to_list (next_use_distances uid)))
+            (uid, Spill.IntMap.to_list (next_use_distances.at_block uid)))
       in
       [%show: (int * (int * int) list) list] next_use_distances
     end;
