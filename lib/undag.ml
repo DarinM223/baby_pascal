@@ -52,13 +52,13 @@ let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
       acc uses
   in
   let rec count_uses acc = function
-    | Normalize.Cfg.Last l -> begin
-      match l with
+    | Normalize.Cfg.Last l ->
+      begin match l with
       | Normalize.Cfg.Exit -> acc
       | Normalize.Cfg.Branch (i, _) -> add_uses (uses i) acc
       | Normalize.Cfg.CBranch (i, _, _) -> add_uses (uses i) acc
       | Normalize.Cfg.Return i -> add_uses (uses i) acc
-    end
+      end
     | Normalize.Cfg.Tail (Instruction i, rest) ->
       count_uses (add_uses (uses i) acc) rest
   in
@@ -74,13 +74,13 @@ let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
     let acc = ref acc in
     let rec convert_operand = function
       | Normalize.Target.Const i -> Target.Const i
-      | Normalize.Target.Reg reg -> begin
-        match NameMap.find_opt reg !acc with
+      | Normalize.Target.Reg reg ->
+        begin match NameMap.find_opt reg !acc with
         | Some instr ->
           acc := NameMap.remove reg !acc;
           Target.Instr instr
         | None -> Target.Reg reg
-      end
+        end
       | Normalize.Target.Label (l, ops) ->
         Target.Label
           ( l,
@@ -97,8 +97,8 @@ let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
     NameMap.fold (fun _ instr tail -> Cfg.Tail (Instruction instr, tail))
   in
   let rec rewrite_tail acc = function
-    | Normalize.Cfg.Last l -> begin
-      match l with
+    | Normalize.Cfg.Last l ->
+      begin match l with
       | Normalize.Cfg.Exit -> Cfg.Last Cfg.Exit
       | Normalize.Cfg.Branch (i, l) ->
         let i, acc = rewrite_instruction acc i in
@@ -109,7 +109,7 @@ let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
       | Normalize.Cfg.Return i ->
         let i, acc = rewrite_instruction acc i in
         dump_mappings acc Cfg.(Last (Return i))
-    end
+      end
     | Normalize.Cfg.Tail (Instruction i, rest) ->
       let rewritten, acc = rewrite_instruction acc i in
       let num_uses =

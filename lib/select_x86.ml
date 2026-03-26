@@ -193,13 +193,13 @@ let codegen_block state ((first, tail) : Undag.Cfg.block) : Cfg.block =
   let endd = Cfg.Last Cfg.Exit in
   let rec go_tail (tail : Undag.Cfg.tail) : Cfg.tail =
     match tail with
-    | Undag.Cfg.Last last -> begin
-      match last with
+    | Undag.Cfg.Last last ->
+      begin match last with
       | Undag.Cfg.Exit -> endd
       | Undag.Cfg.Branch (i, _) -> select state i (Fun.const endd)
       | Undag.Cfg.CBranch (i, _, _) -> select state i (Fun.const endd)
       | Undag.Cfg.Return i -> select state i (Fun.const endd)
-    end
+      end
     | Undag.Cfg.Tail (Instruction i, rest) ->
       select state i (fun _ -> go_tail rest)
   in

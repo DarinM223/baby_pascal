@@ -84,11 +84,11 @@ functor
 
     let exit_uid graph =
       let rec find_exit = function
-        | (uid, block) :: rest -> begin
-          match goto_end (unzip block) with
+        | (uid, block) :: rest ->
+          begin match goto_end (unzip block) with
           | _, Exit -> uid
           | _ -> find_exit rest
-        end
+          end
         | [] -> failwith "exit not found"
       in
       find_exit (IntMap.to_list graph)
@@ -171,11 +171,11 @@ functor
     let splice_tail ?(entry = entry_uid) graph tail =
       let single tail' =
         match ht_to_last (First Entry) tail' with
-        | head, Exit -> begin
-          match ht_to_first head tail with
+        | head, Exit ->
+          begin match ht_to_first head tail with
           | Entry, tail'' -> (tail'', empty)
           | _ -> failwith "impossible, head is not an entry"
-        end
+          end
         | _ -> failwith "spliced graph without exit"
       in
       let multi ~entry ~exit ~rest =

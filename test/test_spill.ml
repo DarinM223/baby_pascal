@@ -154,8 +154,7 @@ let test_loops () =
         let k = 16
         let next_use_distances = next_use_distances
         let liveness = liveness
-      end)
-  in
+      end) in
   let state = Spill.init state in
   let cfg = Spill.spill state cfg in
   let expected =

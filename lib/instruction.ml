@@ -89,11 +89,11 @@ module Make (T : Operand) = struct
     | Call (d, sf, s) ->
       let sf = f sf in
       Call (d, sf, List.map f s)
-    | Goto (l, args) -> begin
-      match T.destruct_label (f (T.label l args)) with
+    | Goto (l, args) ->
+      begin match T.destruct_label (f (T.label l args)) with
       | Some (l, args) -> Goto (l, args)
       | _ -> failwith "map_uses: goto label transformed into different operand"
-    end
+      end
     | Cbranch (o1, o2, c, l1, l1args, l2, l2args) ->
       let o1 = f o1 in
       let o2 = f o2 in

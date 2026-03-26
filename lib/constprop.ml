@@ -50,8 +50,8 @@ let block_args graph =
   in
   let last_in uid =
     let go_use (a : OperandSet.t NameMap.t) = function
-      | Target.Label ((uid', _), args) -> begin
-        try
+      | Target.Label ((uid', _), args) ->
+        begin try
           let args' = IntHashtbl.find args_tbl uid' in
           List.fold_left
             (fun a (arg', arg) ->
@@ -62,7 +62,7 @@ let block_args graph =
                 a)
             a (List.combine args' args)
         with Not_found -> a
-      end
+        end
       | _ -> a
     in
     function
@@ -214,11 +214,11 @@ let constprop (block_args : OperandSet.t NameMap.t)
         let get_values acc = function
           | uid, Target.Const i when (fact.get uid).executable ->
             Defined i :: acc
-          | uid, Target.Reg arg when (fact.get uid).executable -> begin
-            match NameMap.find_opt arg a.mapping with
+          | uid, Target.Reg arg when (fact.get uid).executable ->
+            begin match NameMap.find_opt arg a.mapping with
             | Some NeverDefined | None -> acc
             | Some v -> v :: acc
-          end
+            end
           | _ -> acc
         in
         let values =
@@ -241,12 +241,12 @@ let constprop (block_args : OperandSet.t NameMap.t)
         IntHashtbl.add args_tbl uid args;
         Flow.Dataflow a
       end
-      else begin
-        match IntHashtbl.find_opt args_tbl uid with
+      else
+        begin match IntHashtbl.find_opt args_tbl uid with
         | Some args when args <> info.args ->
           Flow.Rewrite Cfg.(unfocus @@ label ~args l @@ focus_entry empty)
         | _ -> Flow.Dataflow a
-      end
+        end
   in
   let handle_instruction a = function
     | Target.Assign (Reg res, arg) ->
@@ -377,11 +377,11 @@ let remove_empty_blocks graph =
         match l with
         | Cfg.Exit -> Cfg.Exit
         | Cfg.Return i -> Cfg.Return i
-        | Cfg.Branch (_, (uid, _)) -> begin
-          match IntMap.find_opt uid empty_blocks with
+        | Cfg.Branch (_, (uid, _)) ->
+          begin match IntMap.find_opt uid empty_blocks with
           | Some (lab, ops) -> Cfg.Branch (Target.Goto (lab, ops), lab)
           | None -> l
-        end
+          end
         | Cfg.CBranch
             (Target.Cbranch (op1, op2, cond, l1, l1args, l2, l2args), _, _) ->
           let l1, l1args =

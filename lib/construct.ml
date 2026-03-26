@@ -180,7 +180,7 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
                 (* handle call instructions to pass block parameters *)
                 Label
                   (l, List.map (fun n -> Target.Reg (replace_use n)) args'.args)
-            end
+              end
             | op -> op)
           instr
       in

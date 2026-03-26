@@ -158,17 +158,17 @@ functor
           | b :: bs ->
             let rec propagate head a t rewritten changed =
               match head with
-              | G.Head (h, m) -> begin
-                match pass_fns.middle_in a m with
+              | G.Head (h, m) ->
+                begin match pass_fns.middle_in a m with
                 | Dataflow a -> propagate h a (G.Tail (m, t)) rewritten changed
                 | Rewrite g ->
                   let a, (g, _) = solve_and_rewrite pass g a changed in
                   let t, g = G.splice_tail g t in
                   let rewritten = G.Blocks.union g rewritten in
                   propagate h a t rewritten true
-              end
-              | G.First f -> begin
-                match pass_fns.first_in a f with
+                end
+              | G.First f ->
+                begin match pass_fns.first_in a f with
                 | Dataflow _ ->
                   rewrite_blocks changed (G.Blocks.insert (f, t) rewritten) bs
                 | Rewrite g ->
@@ -195,7 +195,7 @@ functor
                     let rewritten = G.Blocks.union g rewritten in
                     rewrite_blocks changed (G.Blocks.insert (f, t) rewritten) bs
                   end
-              end
+                end
             in
             if fact.skip_block (G.id b) then
               rewrite_blocks changed (G.Blocks.insert b rewritten) bs
@@ -274,15 +274,15 @@ functor
 
       let with_exit (fact, pass_fns) exit_fact_ref =
         let last_outs uid in' = function
-          | G.Exit -> begin
-            match pass_fns.last_outs uid in' G.Exit with
+          | G.Exit ->
+            begin match pass_fns.last_outs uid in' G.Exit with
             | Dataflow setter ->
               Dataflow
                 (fun set ->
                   setter set;
                   exit_fact_ref := in')
             | Rewrite _ -> Dataflow (fun _ -> exit_fact_ref := in')
-          end
+            end
           | l -> pass_fns.last_outs uid in' l
         in
         (fact, { pass_fns with last_outs })
@@ -300,16 +300,16 @@ functor
         let update = update fact changed in
         let set_successor_facts ((first, tail) as b) =
           let rec set_tail_facts in' = function
-            | G.Tail (m, t) -> begin
-              match pass_fns.middle_out in' m with
+            | G.Tail (m, t) ->
+              begin match pass_fns.middle_out in' m with
               | Dataflow a -> set_tail_facts a t
               | Rewrite g -> set_tail_facts (solve_graph pass g in') t
-            end
-            | G.Last l -> begin
-              match pass_fns.last_outs (G.id b) in' l with
+              end
+            | G.Last l ->
+              begin match pass_fns.last_outs (G.id b) in' l with
               | Dataflow setter -> setter update
               | Rewrite g -> ignore (solve_graph pass g in')
-            end
+              end
           in
           let in' =
             match pass_fns.first_out first with
@@ -356,8 +356,8 @@ functor
           | b :: bs ->
             let rec propagate h a tail rewritten changed =
               match tail with
-              | G.Tail (m, t) -> begin
-                match pass_fns.middle_out a m with
+              | G.Tail (m, t) ->
+                begin match pass_fns.middle_out a m with
                 | Dataflow a -> propagate (G.Head (h, m)) a t rewritten changed
                 | Rewrite g ->
                   let a, (g, _) = solve_and_rewrite pass g a changed in
@@ -365,9 +365,9 @@ functor
                   let _, g = G.remove_entry g in
                   let rewritten = G.Blocks.union g rewritten in
                   propagate h a t rewritten true
-              end
-              | G.Last l -> begin
-                match pass_fns.last_outs (G.id b) a l with
+                end
+              | G.Last l ->
+                begin match pass_fns.last_outs (G.id b) a l with
                 | Dataflow set ->
                   set (check_property_match fact);
                   rewrite_blocks changed
@@ -377,7 +377,7 @@ functor
                   rewrite_blocks true
                     (G.Blocks.union (G.splice_head_only h g) rewritten)
                     bs
-              end
+                end
             in
             if fact.skip_block (G.id b) then
               rewrite_blocks changed (G.Blocks.insert b rewritten) bs
