@@ -159,16 +159,137 @@ let test_loops () =
   let state = Spill.init state in
   let cfg = Spill.spill state cfg in
   let expected =
-    (* let open X86.Target in *)
-    let open X86.Cfg in
-    empty
+    {|
+  movq %17any, $17
+  movq %16any, $16
+  movq %15any, $15
+  movq %14any, $14
+  movq %13any, $13
+  movq %12any, $12
+  movq %11any, $11
+  movq %10any, $10
+  movq %9any, $9
+  movq %8any, $8
+  movq %7any, $7
+  movq %6any, $6
+  movq %5any, $5
+  movq %4any, $4
+  movq %3any, $3
+  movq %2any, $2
+  movq %1any, $1
+  movq 8(%rsp), %16any
+  movq %0any, $0
+  movq 16(%rsp), %1any
+  j label1(%9any)
+label1(local=false)(18any):
+  cmp Instruction.Cond.LT %3any, %2any, label3(%18any), label2(%18any)
+label2(local=false)(19any):
+  addq %20any, %2any, %3any
+  subq %21any, %20any, %2any
+  mulq %22any, %4any, %19any, %5any
+  addq %23any, %22any, %6any
+  subq %24any, %7any, %8any
+  addq %25any, %21any, %23any
+  addq %26any, %25any, %24any, %22any
+  j label1(%26any)
+label3(local=false)(27any):
+  movq %39any, 16(%rsp)
+  movq %40any, 8(%rsp)
+  j label4(%17any)
+label4(local=false)(28any):
+  cmp Instruction.Cond.LT %11any, %10any, label6(%28any), label5(%28any)
+label5(local=false)(29any):
+  addq %30any, %10any, %11any
+  subq %31any, %30any, %12any
+  mulq %32any, %31any, %13any
+  addq %33any, %32any, %14any
+  subq %34any, %33any, %15any, %16any, %29any
+  j label4(%34any)
+label6(local=false)(35any):
+  addq %36any, %0any, %1any
+  addq %37any, %27any, %36any
+  addq %38any, %35any, %37any
+  ret %38any
+|}
   in
   Format.printf "Spilled graph: %a\n" X86.Printer.pp_graph cfg;
-  (check X86.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph before SSA reconstruction" cfg expected;
+  let cfg_pretty = Format.asprintf "%a" X86.Printer.pp_graph cfg in
+  (check string) "Produces proper graph before SSA reconstruction" cfg_pretty
+    expected;
   let module Reconstruct = Reconstruct.Make (X86.Target) (X86.Cfg) (Dom) in
-  (* todo: for every cloned register run reconstruct *)
-  ()
+  let reconstruct_copies reg _ graph =
+    let copies = Spill.RegHashtbl.find_all state.copies reg in
+    let def_blocks =
+      List.map
+        (fun r ->
+          Deadcode.IntHashtbl.find state.select_state.vreg_block
+            (X86.Target.index r))
+        (reg :: copies)
+    in
+    Reconstruct.reconstruct
+      (fun () -> state.select_state.fresh_vreg Int)
+      (Spill.RegSet.singleton reg)
+      (Spill.RegSet.of_list copies)
+      def_blocks graph
+  in
+  let cfg = Spill.RegHashtbl.fold reconstruct_copies state.copies cfg in
+  Format.printf "Reconstructed graph: %a\n" X86.Printer.pp_graph cfg;
+  let cfg_pretty = Format.asprintf "%a" X86.Printer.pp_graph cfg in
+  let expected =
+    {|
+  movq %17any, $17
+  movq %16any, $16
+  movq %15any, $15
+  movq %14any, $14
+  movq %13any, $13
+  movq %12any, $12
+  movq %11any, $11
+  movq %10any, $10
+  movq %9any, $9
+  movq %8any, $8
+  movq %7any, $7
+  movq %6any, $6
+  movq %5any, $5
+  movq %4any, $4
+  movq %3any, $3
+  movq %2any, $2
+  movq %1any, $1
+  movq 8(%rsp), %16any
+  movq %0any, $0
+  movq 16(%rsp), %1any
+  j label1(%9any)
+label1(local=false)(18any):
+  cmp Instruction.Cond.LT %3any, %2any, label3(%18any), label2(%18any)
+label2(local=false)(19any):
+  addq %20any, %2any, %3any
+  subq %21any, %20any, %2any
+  mulq %22any, %4any, %19any, %5any
+  addq %23any, %22any, %6any
+  subq %24any, %7any, %8any
+  addq %25any, %21any, %23any
+  addq %26any, %25any, %24any, %22any
+  j label1(%26any)
+label3(local=false)(27any):
+  movq %39any, 16(%rsp)
+  movq %40any, 8(%rsp)
+  j label4(%17any)
+label4(local=false)(28any):
+  cmp Instruction.Cond.LT %11any, %10any, label6(%28any), label5(%28any)
+label5(local=false)(29any):
+  addq %30any, %10any, %11any
+  subq %31any, %30any, %12any
+  mulq %32any, %31any, %13any
+  addq %33any, %32any, %14any
+  subq %34any, %33any, %15any, %40any, %29any
+  j label4(%34any)
+label6(local=false)(35any):
+  addq %36any, %0any, %39any
+  addq %37any, %27any, %36any
+  addq %38any, %35any, %37any
+  ret %38any
+|}
+  in
+  (check string) "Check reconstructed graph" cfg_pretty expected
 
 let _ =
   run "Spilling"

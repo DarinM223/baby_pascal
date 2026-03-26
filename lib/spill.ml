@@ -267,6 +267,11 @@ struct
 
   let uid p = X86.Cfg.idd @@ Loop.Dom.label_of_position p
   module RegSet = X86.Target.RegSet
+  module RegHashtbl = Hashtbl.Make (struct
+    type t = X86.Target.reg
+    let equal r1 r2 = Int.equal (X86.Target.index r1) (X86.Target.index r2)
+    let hash r = Int.hash (X86.Target.index r)
+  end)
 
   let init_usual (wexit : Loop.Dom.position -> RegSet.t)
       (block : Loop.Dom.position) =
@@ -355,14 +360,14 @@ struct
   type spill_state = {
     select_state : Select_x86.State.t;
     spill_mapping : X86.Target.operand IntHashtbl.t;
-    copies : X86.Target.reg IntHashtbl.t;
+    copies : X86.Target.reg RegHashtbl.t;
   }
 
   let init (state : Select_x86.State.t) =
     {
       select_state = state;
       spill_mapping = IntHashtbl.create hashtbl_size;
-      copies = IntHashtbl.create hashtbl_size;
+      copies = RegHashtbl.create hashtbl_size;
     }
 
   open struct
@@ -385,7 +390,7 @@ struct
   let reload (state : spill_state) v =
     let slot = IntHashtbl.find state.spill_mapping (X86.Target.index v) in
     let v' = state.select_state.fresh_vreg Int in
-    IntHashtbl.add state.copies (X86.Target.index v) v';
+    RegHashtbl.add state.copies v v';
     X86.Target.mov ~dest:(X86.Target.Reg v') ~src:slot
 
   let limit ~add_spills (state : spill_state) ({ w; s } : min_state)
