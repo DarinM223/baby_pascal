@@ -31,6 +31,47 @@ let test_example_1 () =
   (check Undag.Cfg.(testable pp_block equal_block))
     "Produces proper graph" block expected
 
+let test_use_in_jump () =
+  let cfg =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
+    @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
+    @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
+    @@ branch ~args:[ reg "c"; reg "a" ] (1, "label1")
+    @@ label (1, "label1")
+    @@ exit @@ focus_entry empty
+  in
+  let block = Normalize.Cfg.(zip (fst (focus_entry cfg))) in
+  let block = Undag.undag block in
+  let expected =
+    let open Undag.Target in
+    let open Undag.Cfg in
+    unfocus
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
+    @@ branch
+         ~args:
+           [
+             Instr
+               (bop Add ~dest:(reg "c") ~src1:(reg "a")
+                  ~src2:(Instr (assign ~src:(Const 2) ~dest:(reg "b"))));
+             reg "a";
+           ]
+         (1, "label1")
+    @@ label (1, "label1")
+    @@ exit @@ focus_entry empty
+  in
+  let expected = Undag.Cfg.(zip (fst (focus_entry expected))) in
+  (check Undag.Cfg.(testable pp_block equal_block))
+    "Produces proper graph" block expected
+
 let _ =
   run "Test undag to list of trees"
-    [ ("Tests proper output", [ test_case "example 1" `Quick test_example_1 ]) ]
+    [
+      ( "Tests proper output",
+        [
+          test_case "example 1" `Quick test_example_1;
+          test_case "second use in jump" `Quick test_use_in_jump;
+        ] );
+    ]

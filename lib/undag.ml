@@ -35,11 +35,12 @@ module Convert = Converter.Make (Normalize.Target) (Target)
 
 let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
   let uses instr =
-    List.filter_map
-      (function
-        | Normalize.Target.Reg r -> Some r
-        | _ -> None)
-      (Normalize.Target.srcs instr)
+    let rec handle_operand = function
+      | Normalize.Target.Reg r -> [ r ]
+      | Normalize.Target.Label (_, args) -> List.concat_map handle_operand args
+      | _ -> []
+    in
+    List.concat_map handle_operand (Normalize.Target.srcs instr)
   in
   let add_uses uses acc =
     List.fold_left
