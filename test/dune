@@ -14,4 +14,4 @@
  (flags (:standard))
  (preprocess
   (pps ppx_deriving.std))
- (libraries alcotest baby_pascal))
+ (libraries alcotest baby_pascal logs.fmt))

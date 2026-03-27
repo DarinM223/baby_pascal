@@ -130,22 +130,23 @@ let test_loops () =
     @@ return ~uses:[ Reg block6_temp3 ]
     @@ focus_entry empty
   in
-  Format.printf "Initial graph: %a\n" X86.Printer.pp_graph cfg;
+  Logs.debug (fun m -> m "Initial graph: %a\n" X86.Printer.pp_graph cfg);
   let extra = X86.Cfg.precalculate_edges cfg in
   let module Extra = (val extra) in
   let module Dom = Dominator.Make (X86.Cfg) (Extra) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
   let next_use_distances = Spill.next_use_distances (module Loop) cfg in
-  Format.printf "Next use distances: %s\n"
-    begin
-      let next_use_distances =
-        X86.Cfg.reverse_postorder_dfs cfg
-        |> List.map (fun block -> X86.Cfg.(idd (block_label block)))
-        |> List.map (fun uid ->
-            (uid, Spill.IntMap.to_list (next_use_distances.at_block uid)))
-      in
-      [%show: (int * (int * int) list) list] next_use_distances
-    end;
+  Logs.debug (fun m ->
+      m "Next use distances: %s\n"
+        begin
+          let next_use_distances =
+            X86.Cfg.reverse_postorder_dfs cfg
+            |> List.map (fun block -> X86.Cfg.(idd (block_label block)))
+            |> List.map (fun uid ->
+                (uid, Spill.IntMap.to_list (next_use_distances.at_block uid)))
+          in
+          [%show: (int * (int * int) list) list] next_use_distances
+        end);
   let liveness = Spill.Liveness.calc cfg in
   let module Spill =
     Spill.Make
@@ -211,7 +212,7 @@ label6(local=false)(35any):
   ret %38any
 |}
   in
-  Format.printf "Spilled graph: %a\n" X86.Printer.pp_graph cfg;
+  Logs.debug (fun m -> m "Spilled graph: %a\n" X86.Printer.pp_graph cfg);
   let cfg_pretty = Format.asprintf "%a" X86.Printer.pp_graph cfg in
   (check string) "Produces proper graph before SSA reconstruction" cfg_pretty
     expected;
@@ -232,7 +233,7 @@ label6(local=false)(35any):
       def_blocks graph
   in
   let cfg = Spill.RegHashtbl.fold reconstruct_copies state.copies cfg in
-  Format.printf "Reconstructed graph: %a\n" X86.Printer.pp_graph cfg;
+  Logs.debug (fun m -> m "Reconstructed graph: %a\n" X86.Printer.pp_graph cfg);
   let cfg_pretty = Format.asprintf "%a" X86.Printer.pp_graph cfg in
   let expected =
     {|
@@ -291,5 +292,7 @@ label6(local=false)(35any):
   (check string) "Check reconstructed graph" cfg_pretty expected
 
 let _ =
+  Logs.set_reporter (Logs_fmt.reporter ());
+  Logs.set_level (Some Logs.Debug);
   run "Spilling"
     [ ("Tests spilling", [ test_case "spills in loops" `Quick test_loops ]) ]

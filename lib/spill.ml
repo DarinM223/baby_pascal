@@ -308,31 +308,37 @@ struct
 
   let init_loop_header (block : Loop.Dom.position) =
     let loop = get_loop_nodes block in
-    Format.printf "Loop nodes: %s\n"
-      ([%show: X86.Cfg.label option list]
-         (Loop.PositionSet.to_list loop |> List.map Loop.Dom.label_of_position));
+    Logs.debug (fun m ->
+        m "Loop nodes: %s\n"
+          ([%show: X86.Cfg.label option list]
+             (Loop.PositionSet.to_list loop
+             |> List.map Loop.Dom.label_of_position)));
     let alive = M.liveness.live_in (uid block) in
-    Format.printf "Alive: %s\n" ([%show: X86.Cfg.regs] (RegSet.to_list alive));
+    Logs.debug (fun m ->
+        m "Alive: %s\n" ([%show: X86.Cfg.regs] (RegSet.to_list alive)));
     let used_in_loop =
       Loop.PositionSet.fold
         (fun node -> RegSet.union (M.liveness.used_in_block (uid node)))
         loop RegSet.empty
     in
-    Format.printf "Used in loop: %s\n"
-      ([%show: X86.Cfg.regs] (RegSet.to_list used_in_loop));
+    Logs.debug (fun m ->
+        m "Used in loop: %s\n"
+          ([%show: X86.Cfg.regs] (RegSet.to_list used_in_loop)));
     let cand = RegSet.inter alive used_in_loop in
-    Format.printf "Cand: %s\n" ([%show: X86.Cfg.regs] (RegSet.to_list cand));
+    Logs.debug (fun m ->
+        m "Cand: %s\n" ([%show: X86.Cfg.regs] (RegSet.to_list cand)));
     let dists = M.next_use_distances.at_block (uid block) in
     let max_pressure =
       Loop.PositionSet.fold
         (fun node -> max (M.liveness.max_register_pressure (uid node)))
         loop 0
     in
-    Format.printf "Max pressure: %d\n" max_pressure;
+    Logs.debug (fun m -> m "Max pressure: %d\n" max_pressure);
     if RegSet.cardinal cand < M.k then begin
       let live_through = RegSet.diff alive cand in
-      Format.printf "Live through: %s\n"
-        ([%show: X86.Cfg.regs] (RegSet.to_list live_through));
+      Logs.debug (fun m ->
+          m "Live through: %s\n"
+            ([%show: X86.Cfg.regs] (RegSet.to_list live_through)));
       let free_loop =
         min
           (M.k - RegSet.cardinal cand)
@@ -344,8 +350,8 @@ struct
       let cand =
         RegSet.(union cand (of_list (List.take free_loop live_through)))
       in
-      Format.printf "Final Cand: %s\n"
-        ([%show: X86.Cfg.regs] (RegSet.to_list cand));
+      Logs.debug (fun m ->
+          m "Final Cand: %s\n" ([%show: X86.Cfg.regs] (RegSet.to_list cand)));
       cand
     end
     else
@@ -397,16 +403,17 @@ struct
       (block_uid : X86.Cfg.uid) (instr_num : int) (head : X86.Cfg.head)
       (m : int) : X86.Cfg.head * min_state =
     let dists = M.next_use_distances.at_instruction block_uid instr_num in
-    let pp_sep fmt () = Format.fprintf fmt ", " in
-    let pp_print_tuple fmt (a, b) =
-      Format.fprintf fmt "%d -> %a" a (Format.pp_print_option CCInt.pp) b
-    in
-    Format.printf "Distances: %a\n"
-      Format.(pp_print_list ~pp_sep pp_print_tuple)
-      (List.map
-         (fun v ->
-           (X86.Target.index v, IntMap.find_opt (X86.Target.index v) dists))
-         (RegSet.to_list w));
+    Logs.debug (fun m ->
+        let pp_sep fmt () = Format.fprintf fmt ", " in
+        let pp_print_tuple fmt (a, b) =
+          Format.fprintf fmt "%d -> %a" a (Format.pp_print_option CCInt.pp) b
+        in
+        m "Distances: %a\n"
+          Format.(pp_print_list ~pp_sep pp_print_tuple)
+          (List.map
+             (fun v ->
+               (X86.Target.index v, IntMap.find_opt (X86.Target.index v) dists))
+             (RegSet.to_list w)));
     let w = List.sort (compare dists) (RegSet.to_list w) in
     let head, s =
       List.fold_left
@@ -417,7 +424,7 @@ struct
               && (not (infinite_distance v dists))
               && add_spills
             then begin
-              Format.printf "Spilling %a\n" X86.Target.pp_reg v;
+              Logs.debug (fun m -> m "Spilling %a\n" X86.Target.pp_reg v);
               X86.Cfg.Head (head, Instruction (spill state v))
             end
             else head
@@ -445,9 +452,10 @@ struct
             (fun use (w, s) -> (RegSet.add use w, RegSet.add use s))
             r (w, s)
         in
-        Format.printf "W after adding uses in block %d: %s\n"
-          X86.Cfg.(id (zip zblock))
-          ([%show: X86.Cfg.regs] (RegSet.to_list w));
+        Logs.debug (fun m ->
+            m "W after adding uses in block %d: %s\n"
+              X86.Cfg.(id (zip zblock))
+              ([%show: X86.Cfg.regs] (RegSet.to_list w)));
         let head, { w; s } =
           limit ~add_spills state { w; s } uid instr_num head M.k
         in
@@ -457,7 +465,7 @@ struct
           if add_spills then
             RegSet.fold
               (fun var head ->
-                Format.printf "Reloading %a\n" X86.Target.pp_reg var;
+                Logs.debug (fun m -> m "Reloading %a\n" X86.Target.pp_reg var);
                 X86.Cfg.Head (head, Instruction (reload state var)))
               r head
           else head
@@ -544,7 +552,8 @@ struct
         |> List.filter (fun pred -> processed.(pred))
         |> List.fold_left (insert_coupling pos) graph
       in
-      Format.printf "Block %d all processed: %b\n" block_uid all_processed;
+      Logs.debug (fun m ->
+          m "Block %d all processed: %b\n" block_uid all_processed);
       state.select_state.curr_block := block_uid;
       let zblock, graph = X86.Cfg.focus block_uid graph in
       let zblock, { w = w_exit; s = s_exit } =
