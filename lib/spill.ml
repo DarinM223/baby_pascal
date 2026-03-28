@@ -470,11 +470,20 @@ struct
               r head
           else head
         in
+        let w = RegSet.union w (X86.Target.defs instr) in
+        let next_defs =
+          match tail with
+          | X86.Cfg.Tail (Instruction next, _) ->
+            RegSet.cardinal (X86.Target.defs next)
+          | X86.Cfg.Last _ -> 0
+        in
+        (* provide room for definitions of next instruction *)
+        (* measured from previous instruction because the next instruction's
+           uses don't matter when writing to result registers *)
         let head, { w; s } =
           limit ~add_spills state { w; s } uid (instr_num + 1) head
-            (M.k - RegSet.cardinal (X86.Target.defs instr))
+            (M.k - next_defs)
         in
-        let w = RegSet.union w (X86.Target.defs instr) in
         go (instr_num + 1) w s (head, tail)
       | head, X86.Cfg.Last l ->
         let handle_instruction instr =

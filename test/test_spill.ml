@@ -1,6 +1,10 @@
 open Alcotest
 open Baby_pascal
 
+let string =
+  let pp fmt = Format.fprintf fmt "%s" in
+  testable pp String.equal
+
 let test_loops () =
   let state = Select_x86.State.init () in
   let cfg =
@@ -176,10 +180,10 @@ let test_loops () =
   movq %4any, $4
   movq %3any, $3
   movq %2any, $2
-  movq %1any, $1
   movq 8(%rsp), %16any
-  movq %0any, $0
+  movq %1any, $1
   movq 16(%rsp), %1any
+  movq %0any, $0
   j label1(%9any)
 label1(local=false)(18any):
   cmp Instruction.Cond.LT %3any, %2any, label3(%18any), label2(%18any)
@@ -253,10 +257,10 @@ label6(local=false)(35any):
   movq %4any, $4
   movq %3any, $3
   movq %2any, $2
-  movq %1any, $1
   movq 8(%rsp), %16any
-  movq %0any, $0
+  movq %1any, $1
   movq 16(%rsp), %1any
+  movq %0any, $0
   j label1(%9any)
 label1(local=false)(18any):
   cmp Instruction.Cond.LT %3any, %2any, label3(%18any), label2(%18any)
