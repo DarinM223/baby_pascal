@@ -14,13 +14,13 @@ module Target = struct
   and virtual_reg = {
     id : int;
     reg_class : reg_class;
+    mutable reg : reg;
     mutable reg_constr : reg_constr;
   }
   and reg =
     | Physical of physical_reg
     | Virtual of virtual_reg
     | Tombstone
-  [@@deriving eq]
   let pp_reg_class fmt = function
     | Int -> Format.fprintf fmt ""
     | Float -> Format.fprintf fmt "f"
@@ -47,6 +47,11 @@ module Target = struct
     | Tombstone -> ()
   let show_reg_constr = Format.asprintf "%a" pp_reg_constr
   let show_reg = Format.asprintf "%a" pp_reg
+  let index = function
+    | Physical (id, _, _) -> id
+    | Virtual v -> v.id
+    | Tombstone -> failwith "index: got tombstone"
+  let equal_reg r1 r2 = Int.equal (index r1) (index r2)
 
   type regs = reg list [@@deriving show, eq]
   type operand =
@@ -79,10 +84,6 @@ module Target = struct
   let destruct_label = function
     | Label (l, args) -> Some (l, args)
     | _ -> None
-  let index = function
-    | Physical (id, _, _) -> id
-    | Virtual v -> v.id
-    | Tombstone -> failwith "index: got tombstone"
   module Reg = struct
     type t = reg
     let is_tombstone = function

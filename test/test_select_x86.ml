@@ -4,27 +4,32 @@ open Baby_pascal
 let test_print () =
   let open X86 in
   let open Target in
-  let v1 = Virtual { id = 1; reg_class = Int; reg_constr = Any } in
-  let v2 = Virtual { id = 2; reg_class = Int; reg_constr = Any } in
-  let v3 = Virtual { id = 3; reg_class = Int; reg_constr = Any } in
+  let new_reg vreg =
+    let rec reg = Virtual { vreg with reg } in
+    reg
+  in
+  let reg = Tombstone in
+  let v1 = new_reg { id = 1; reg_class = Int; reg_constr = Any; reg } in
+  let v2 = new_reg { id = 2; reg_class = Int; reg_constr = Any; reg } in
+  let v3 = new_reg { id = 3; reg_class = Int; reg_constr = Any; reg } in
   let instr =
     instr "addq"
       ~defs:[ Reg (reuse v1 v3) ]
       ~uses:[ Reg v1; Reg (constrained Regs.rax v2) ]
   in
   (check string) "add" (show_instr instr) "addq %3(reuse=%1), %1any, %2(%rax)";
-  let v1 = Virtual { id = 1; reg_class = Float; reg_constr = OnStack } in
-  let v2 = Virtual { id = 2; reg_class = Float; reg_constr = OnReg } in
-  let v3 = Virtual { id = 3; reg_class = Float; reg_constr = OnReg } in
+  let v1 = new_reg { id = 1; reg_class = Float; reg_constr = OnStack; reg } in
+  let v2 = new_reg { id = 2; reg_class = Float; reg_constr = OnReg; reg } in
+  let v3 = new_reg { id = 3; reg_class = Float; reg_constr = OnReg; reg } in
   let instr =
     mov ~dest:(Reg v1)
       ~src:(MemAddr { base = v2; index = v3; scale = 10; displacement = 15 })
   in
   (check string) "mov" (show_instr instr) "movq %1fstack, 15(%2freg,%3freg,10)";
-  let v1 = Virtual { id = 1; reg_class = Int; reg_constr = Any } in
-  let v2 = Virtual { id = 2; reg_class = Int; reg_constr = Any } in
-  let v3 = Virtual { id = 3; reg_class = Int; reg_constr = Any } in
-  let v4 = Virtual { id = 4; reg_class = Int; reg_constr = Any } in
+  let v1 = new_reg { id = 1; reg_class = Int; reg_constr = Any; reg } in
+  let v2 = new_reg { id = 2; reg_class = Int; reg_constr = Any; reg } in
+  let v3 = new_reg { id = 3; reg_class = Int; reg_constr = Any; reg } in
+  let v4 = new_reg { id = 4; reg_class = Int; reg_constr = Any; reg } in
   let instr =
     pcopy
       ~dests:[ Reg (constrained Regs.rdi v3); Reg (constrained Regs.rsi v4) ]

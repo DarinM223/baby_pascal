@@ -27,7 +27,10 @@ module State = struct
       fun clz ->
         incr c;
         IntHashtbl.replace vreg_block !c !curr_block;
-        Target.Virtual { id = !c; reg_class = clz; reg_constr = Any }
+        let rec reg =
+          Target.Virtual { id = !c; reg_class = clz; reg; reg_constr = Any }
+        in
+        reg
     in
     let stack_offset = ref 0 in
     let mapping = NameHashtbl.create hashtbl_size in
