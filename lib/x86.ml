@@ -95,6 +95,9 @@ module Target = struct
       | _ -> None
     let to_operand r = Reg r
     let compare r1 r2 = Int.compare (index r1) (index r2)
+    let reg = function
+      | Virtual v -> v.reg
+      | r -> r
   end
   module RegSet = Set.Make (Reg)
   let is_tombstone = function

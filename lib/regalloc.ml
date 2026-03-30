@@ -14,6 +14,8 @@ let enforce_constraints _state _instr = ()
 
 let implement_phi_copies _state ~src:_ ~dest:_ = ()
 
+let dies _state _a _instr = false
+
 let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
   let uid = X86.Cfg.id block in
   let occupied = ref (state.liveness.live_in uid) in
@@ -24,15 +26,26 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
   in
   List.iter
     (function
-      | X86.Target.Virtual phi ->
-        phi.reg <- get_register state (X86.Target.Virtual phi) !occupied;
-        occupied := X86.Target.RegSet.add phi.reg !occupied
+      | X86.Target.Virtual phi' as phi ->
+        phi'.reg <- get_register state phi !occupied;
+        occupied := X86.Target.RegSet.add phi'.reg !occupied
       | _ -> ())
     phis;
   let handle_instruction instr =
     enforce_constraints state instr;
-    (* todo: implement this *)
-    ()
+    X86.Target.RegSet.iter
+      (function
+        | X86.Target.Virtual a' as a when dies state a instr ->
+          occupied := X86.Target.(RegSet.remove a'.reg !occupied)
+        | _ -> ())
+      (X86.Target.uses instr);
+    X86.Target.RegSet.iter
+      (function
+        | X86.Target.Virtual r' as r ->
+          r'.reg <- get_register state r !occupied;
+          occupied := X86.Target.RegSet.add r'.reg !occupied
+        | _ -> ())
+      (X86.Target.defs instr)
   in
   let rec go = function
     | X86.Cfg.Tail (Instruction instr, tail) ->
