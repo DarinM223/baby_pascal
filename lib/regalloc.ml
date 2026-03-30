@@ -14,7 +14,10 @@ let enforce_constraints _state _instr = ()
 
 let implement_phi_copies _state ~src:_ ~dest:_ = ()
 
-let dies _state _a _instr = false
+let dies state uid a instr_num =
+  match state.liveness.dies uid a with
+  | Some num when num <= instr_num -> true
+  | _ -> false
 
 let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
   let uid = X86.Cfg.id block in
@@ -31,11 +34,11 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
         occupied := X86.Target.RegSet.add phi'.reg !occupied
       | _ -> ())
     phis;
-  let handle_instruction instr =
+  let handle_instruction instr_num instr =
     enforce_constraints state instr;
     X86.Target.RegSet.iter
       (function
-        | X86.Target.Virtual a' as a when dies state a instr ->
+        | X86.Target.Virtual a' as a when dies state uid a instr_num ->
           occupied := X86.Target.(RegSet.remove a'.reg !occupied)
         | _ -> ())
       (X86.Target.uses instr);
@@ -47,19 +50,19 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
         | _ -> ())
       (X86.Target.defs instr)
   in
-  let rec go = function
+  let rec go instr_num = function
     | X86.Cfg.Tail (Instruction instr, tail) ->
-      handle_instruction instr;
-      go tail
+      handle_instruction instr_num instr;
+      go (instr_num + 1) tail
     | X86.Cfg.Last l ->
       begin match l with
       | X86.Printer.Exit -> ()
-      | X86.Printer.Branch (i, _) -> handle_instruction i
-      | X86.Printer.CBranch (i, _, _) -> handle_instruction i
-      | X86.Printer.Return i -> handle_instruction i
+      | X86.Printer.Branch (i, _) -> handle_instruction instr_num i
+      | X86.Printer.CBranch (i, _, _) -> handle_instruction instr_num i
+      | X86.Printer.Return i -> handle_instruction instr_num i
       end
   in
-  go tail;
+  go 0 tail;
   let module Dom = (val state.dom) in
   let pos = Dom.position_of_uid uid in
   state.processed.(pos) <- true;

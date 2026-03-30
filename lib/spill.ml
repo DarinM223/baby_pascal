@@ -140,17 +140,21 @@ let next_use_distances
 
 module Liveness = struct
   module RegSet = X86.Target.RegSet
+  module RegMap = Map.Make (X86.Target.Reg)
   module State = struct
     type t = {
       mapping : RegSet.t;
       max_register_pressure : int;
       used : RegSet.t;
+      dies : int RegMap.t;
+      count : int;
     }
   end
   type t = {
     live_in : X86.Cfg.uid -> RegSet.t;
     live_out : X86.Cfg.uid -> RegSet.t;
     used_in_block : X86.Cfg.uid -> RegSet.t;
+    dies : X86.Cfg.uid -> X86.Target.reg -> int option;
     max_register_pressure : X86.Cfg.uid -> int;
   }
   let fact () =
@@ -161,6 +165,8 @@ module Liveness = struct
           State.mapping = RegSet.empty;
           used = RegSet.empty;
           max_register_pressure = 0;
+          dies = RegMap.empty;
+          count = 0;
         };
       add_info =
         (fun a b ->
@@ -198,22 +204,40 @@ module Liveness = struct
           max a.State.max_register_pressure (RegSet.cardinal mapping);
       }
     in
-    let first_in a = function
-      | X86.Cfg.Entry -> a
-      | X86.Cfg.Label (_, info) ->
-        update_mapping RegSet.(diff a.State.mapping (of_list info.args)) a
+    let update_dead uses (a : State.t) =
+      (* died: uses in instruction that aren't in a's mapping *)
+      let dies =
+        RegSet.fold
+          (fun dead acc -> RegMap.add dead a.count acc)
+          (RegSet.diff uses a.mapping)
+          a.dies
+      in
+      { a with dies }
     in
-    let handle_instruction instr a =
+    let finish_dead (a : State.t) =
+      { a with dies = RegMap.map (fun off -> a.count - off) a.dies }
+    in
+    let first_in (a : State.t) = function
+      | X86.Cfg.Entry -> finish_dead a
+      | X86.Cfg.Label (_, info) ->
+        let uses = RegSet.of_list info.args in
+        let a = update_dead uses a in
+        finish_dead
+        @@ update_mapping RegSet.(diff a.mapping (of_list info.args)) a
+    in
+    let handle_instruction instr (a : State.t) =
       let instr_uses = uses instr in
       let instr_defs = defs instr in
+      let a = update_dead instr_uses a in
       update_mapping
-        RegSet.(union instr_uses (diff a.State.mapping instr_defs))
-        { a with used = RegSet.union instr_uses a.used }
+        RegSet.(union instr_uses (diff a.mapping instr_defs))
+        { a with used = RegSet.union instr_uses a.used; count = a.count + 1 }
     in
     let calc_live_out = function
       | X86.Cfg.Exit -> fact.init_info
-      | X86.Cfg.Branch (_, (uid, _)) ->
-        update_mapping (fact.get uid).mapping fact.init_info
+      | X86.Cfg.Branch (instr, (uid, _)) ->
+        handle_instruction instr
+        @@ update_mapping (fact.get uid).mapping fact.init_info
       | X86.Cfg.CBranch (instr, (uid1, _), (uid2, _)) ->
         handle_instruction instr
         @@ update_mapping
@@ -236,6 +260,7 @@ module Liveness = struct
         (fun uid ->
           (calc_live_out X86.Cfg.(last @@ fst @@ focus uid graph)).mapping);
       used_in_block = (fun uid -> (fact.get uid).used);
+      dies = (fun uid reg -> RegMap.find_opt reg (fact.get uid).dies);
       max_register_pressure = (fun uid -> (fact.get uid).max_register_pressure);
     }
 end
