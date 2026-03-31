@@ -1,5 +1,3 @@
-(* todo: replace with bitset (CCBV) *)
-module IntSet = Set.Make (Int)
 type state = {
   processed : bool array;
   preferences : int array array;
@@ -21,7 +19,7 @@ let get_register state var occupied : int =
   try
     for i = Array.length preferences - 1 downto 0 do
       let reg, _ = preferences.(i) in
-      if not (IntSet.mem reg occupied) then raise (Reg reg)
+      if not (CCBV.get occupied reg) then raise (Reg reg)
     done;
     failwith "get_register: couldn't find non-occupied register"
   with Reg reg -> reg
@@ -37,7 +35,7 @@ let dies state uid a instr_num =
 
 let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
   let uid = X86.Cfg.id block in
-  let occupied = ref IntSet.empty in
+  let occupied = CCBV.create ~size:(Array.length X86.Regs.int_regs) false in
   let phis =
     match first with
     | X86.Cfg.Entry -> []
@@ -46,9 +44,9 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
   List.iter
     (function
       | X86.Target.Virtual phi' as phi ->
-        let reg = get_register state phi !occupied in
+        let reg = get_register state phi occupied in
         phi'.reg <- X86.(Target.Physical Regs.int_regs.(reg));
-        occupied := IntSet.add reg !occupied
+        CCBV.set occupied reg
       | _ -> ())
     phis;
   let handle_instruction instr_num instr =
@@ -56,15 +54,15 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
     X86.Target.RegSet.iter
       (function
         | X86.Target.Virtual a' as a when dies state uid a instr_num ->
-          occupied := X86.Target.(IntSet.remove (index a'.reg) !occupied)
+          CCBV.reset occupied (X86.Target.index a'.reg)
         | _ -> ())
       (X86.Target.uses instr);
     X86.Target.RegSet.iter
       (function
         | X86.Target.Virtual r' as r ->
-          let reg = get_register state r !occupied in
+          let reg = get_register state r occupied in
           r'.reg <- X86.(Target.Physical Regs.int_regs.(reg));
-          occupied := IntSet.add reg !occupied
+          CCBV.set occupied reg
         | _ -> ())
       (X86.Target.defs instr)
   in
