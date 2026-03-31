@@ -2,7 +2,6 @@ let hashtbl_size = 100
 let m = 10_000
 
 module IntHashtbl = Hashtbl.Make (Int)
-module IntSet = Set.Make (Int)
 module IntMap = Graph_intf.IntMap
 
 let count_instructions (tail : X86.Cfg.tail) =

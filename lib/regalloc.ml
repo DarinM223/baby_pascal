@@ -1,5 +1,8 @@
+(* todo: replace with bitset (CCBV) *)
+module IntSet = Set.Make (Int)
 type state = {
   processed : bool array;
+  preferences : int array array;
   liveness : Spill.Liveness.t;
   dom :
     (module Dominator.S
@@ -8,7 +11,20 @@ type state = {
         and type position = int);
 }
 
-let get_register _state _var _occupied = failwith ""
+let get_register state var occupied : int =
+  let preferences =
+    state.preferences.(X86.Target.index var)
+    |> Array.mapi (fun i pref -> (i, pref))
+  in
+  Array.sort (fun (_, pref1) (_, pref2) -> Int.compare pref1 pref2) preferences;
+  let exception Reg of int in
+  try
+    for i = Array.length preferences - 1 downto 0 do
+      let reg, _ = preferences.(i) in
+      if not (IntSet.mem reg occupied) then raise (Reg reg)
+    done;
+    failwith "get_register: couldn't find non-occupied register"
+  with Reg reg -> reg
 
 let enforce_constraints _state _instr = ()
 
@@ -21,7 +37,7 @@ let dies state uid a instr_num =
 
 let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
   let uid = X86.Cfg.id block in
-  let occupied = ref (state.liveness.live_in uid) in
+  let occupied = ref IntSet.empty in
   let phis =
     match first with
     | X86.Cfg.Entry -> []
@@ -30,8 +46,9 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
   List.iter
     (function
       | X86.Target.Virtual phi' as phi ->
-        phi'.reg <- get_register state phi !occupied;
-        occupied := X86.Target.RegSet.add phi'.reg !occupied
+        let reg = get_register state phi !occupied in
+        phi'.reg <- X86.(Target.Physical Regs.int_regs.(reg));
+        occupied := IntSet.add reg !occupied
       | _ -> ())
     phis;
   let handle_instruction instr_num instr =
@@ -39,14 +56,15 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
     X86.Target.RegSet.iter
       (function
         | X86.Target.Virtual a' as a when dies state uid a instr_num ->
-          occupied := X86.Target.(RegSet.remove a'.reg !occupied)
+          occupied := X86.Target.(IntSet.remove (index a'.reg) !occupied)
         | _ -> ())
       (X86.Target.uses instr);
     X86.Target.RegSet.iter
       (function
         | X86.Target.Virtual r' as r ->
-          r'.reg <- get_register state r !occupied;
-          occupied := X86.Target.RegSet.add r'.reg !occupied
+          let reg = get_register state r !occupied in
+          r'.reg <- X86.(Target.Physical Regs.int_regs.(reg));
+          occupied := IntSet.add reg !occupied
         | _ -> ())
       (X86.Target.defs instr)
   in
