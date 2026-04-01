@@ -112,14 +112,22 @@ let build_preferences state graph : int array array =
     Array.init_matrix state.num_vars (Array.length state.regs) (fun _ _ -> 0)
   in
   let rec handle_operand live = function
-    | X86.Target.(Reg (Virtual { reg_constr = UsePhysical (reg, _, _); _ })) ->
-      CCBV.iter_true live @@ fun live ->
-      preferences.(live).(reg) <- preferences.(live).(reg) - 1
+    | X86.Target.(Reg (Virtual { id; reg_constr = UsePhysical (reg, _, _); _ }))
+      ->
+      (* give penalties to all registers that are not the constrained register. *)
+      for i = 0 to Array.length preferences.(id) do
+        if i <> reg then preferences.(id).(i) <- preferences.(id).(i) - 1
+      done;
+      (* give penalties to all other live variables for the constrained register *)
+      CCBV.iter_true live (fun live ->
+          if live <> id then
+            preferences.(live).(reg) <- preferences.(live).(reg) - 1)
     | X86.Target.Label (_, ops) -> List.iter (handle_operand live) ops
     | _ -> ()
   in
   let handle_instruction live (instr : X86.Target.instr) =
     List.iter (handle_operand live) instr.defs;
+    (* todo: handle reuse_op constraints for defs here by adding the preferences to the use *)
     let defs =
       X86.Target.defs instr |> X86.Target.RegSet.to_list
       |> List.map X86.Target.index |> CCBV.of_list
