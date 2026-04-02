@@ -55,6 +55,9 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
         state.reg_current_var.(reg) <- phi'.id;
         state.reg_current_pref.(reg) <- pref;
         CCBV.set occupied reg
+        (* todo: add color to preference vectors of uncolored variables in the same affinity chunk *)
+        (* first check for interference between defined variable and its called variables chunks *)
+        (* if they do not interfere, the operand's chunk can be merged with the definition's chunk *)
       | _ -> ())
     phis;
   let handle_instruction instr_num instr =
@@ -84,6 +87,7 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
       handle_instruction instr_num instr;
       go (instr_num + 1) tail
     | X86.Cfg.Last l ->
+      (* todo: propagate branch args to the affinity chunk *)
       begin match l with
       | X86.Printer.Exit -> ()
       | X86.Printer.Branch (i, _) -> handle_instruction instr_num i
@@ -111,7 +115,14 @@ let build_preferences state graph : int array array =
   let preferences =
     Array.init_matrix state.num_vars (Array.length state.regs) (fun _ _ -> 0)
   in
-  let rec handle_operand live = function
+  let rec handle_operand ?(def = false) live = function
+    | X86.Target.(Reg (Virtual { id; reg_constr = ReuseOperand reg; _ }))
+      when def ->
+      (* add preferences to use variable when there is a reuse operand def *)
+      let op = X86.Target.index reg in
+      for i = 0 to Array.length preferences.(op) do
+        preferences.(op).(i) <- preferences.(op).(i) + preferences.(id).(i)
+      done
     | X86.Target.(Reg (Virtual { id; reg_constr = UsePhysical (reg, _, _); _ }))
       ->
       (* give penalties to all registers that are not the constrained register. *)
@@ -126,7 +137,7 @@ let build_preferences state graph : int array array =
     | _ -> ()
   in
   let handle_instruction live (instr : X86.Target.instr) =
-    List.iter (handle_operand live) instr.defs;
+    List.iter (handle_operand ~def:true live) instr.defs;
     (* todo: handle reuse_op constraints for defs here by adding the preferences to the use *)
     let defs =
       X86.Target.defs instr |> X86.Target.RegSet.to_list
@@ -157,9 +168,7 @@ let build_preferences state graph : int array array =
       | X86.Cfg.Head (head, Instruction i) ->
         handle_instruction live i;
         go_head head
-      | X86.Cfg.First Entry -> ()
-      | X86.Cfg.First (Label (_, info)) ->
-        List.iter (fun r -> handle_operand live (X86.Target.Reg r)) info.args
+      | X86.Cfg.First _ -> () (* ignore phis *)
     in
     go_head head
   in
