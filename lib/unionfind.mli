@@ -8,6 +8,9 @@ type repr
 val equal_repr : repr -> repr -> bool
 (** check if two set representatives are equal *)
 
+val to_int : repr -> int
+(** integer representation of a set representative *)
+
 val create : int -> t
 (** create a new union find set with given size *)
 

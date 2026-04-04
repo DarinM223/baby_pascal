@@ -175,3 +175,19 @@ let build_preferences state graph : int array array =
   let rpo = X86.Cfg.reverse_postorder_dfs graph in
   List.iter go_block rpo;
   preferences
+
+let create_congruence_class _state _classes _block = failwith ""
+
+let set_congruence_prefs state classes v =
+  let v_repr = Unionfind.(to_int (find classes v)) in
+  if v <> v_repr then
+    Array.blit state.preferences.(v_repr) 0 state.preferences.(v) 0
+      (Array.length state.preferences.(v))
+
+let combine_congruence_classes state graph =
+  let classes = Unionfind.create state.num_vars in
+  let rpo = X86.Cfg.reverse_postorder_dfs graph in
+  List.iter (create_congruence_class state classes) rpo;
+  Array.iteri
+    (fun v _ -> set_congruence_prefs state classes v)
+    state.preferences

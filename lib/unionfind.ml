@@ -6,6 +6,8 @@ type t = int array
 
 type repr = int [@@deriving eq]
 
+let to_int r = r
+
 let create size = Array.make size (-1)
 
 let union data set1 set2 =
