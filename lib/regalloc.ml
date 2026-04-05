@@ -1,3 +1,5 @@
+module RegSet = Spill.Liveness.RegSet
+
 type state = {
   regs : X86.Target.reg array;
   num_vars : int;
@@ -173,11 +175,92 @@ let build_preferences state graph : int array array =
   List.iter go_block rpo;
   preferences
 
-let create_congruence_class _state _classes _block =
-  (* for each jump arg: *)
-  (* interferes if anything in live_in of block successor has the same set representative as jump arg *)
-  (* interferes if other args in jump has same set representative as jump arg *)
-  (* if no interference, merge jump arg and successor phi classes and add preferences to set representative *)
+let create_congruence_class state classes graph block =
+  let live_out = state.liveness.live_out (X86.Cfg.id block) in
+  let live =
+    CCBV.of_list
+      (List.map X86.Target.index (X86.Target.RegSet.to_list live_out))
+  in
+  let _head, last = X86.Cfg.(goto_end (unzip block)) in
+  let handle_instruction live instr =
+    let defs =
+      X86.Target.defs instr |> X86.Target.RegSet.to_list
+      |> List.map X86.Target.index |> CCBV.of_list
+    in
+    let uses =
+      X86.Target.uses instr |> X86.Target.RegSet.to_list
+      |> List.map X86.Target.index |> CCBV.of_list
+    in
+    CCBV.diff_into ~into:live defs;
+    CCBV.union_into ~into:live uses
+  in
+  let handle_jump_arg succ args i arg =
+    let succ = X86.Cfg.idd (Some succ) in
+    let live = state.liveness.live_in succ in
+    let check_interferes v =
+      Unionfind.equal_repr
+        (Unionfind.find classes (X86.Target.index v))
+        (Unionfind.find classes (X86.Target.index arg))
+    in
+    (* interferes if anything in live_in of block successor has the same set representative as jump arg *)
+    let interferes = RegSet.exists check_interferes live in
+    (* interferes if other args in jump has same set representative as jump arg *)
+    let interferes =
+      interferes
+      || args
+         |> List.filter_map (function
+           | X86.Target.Reg r when r <> arg -> Some r
+           | _ -> None)
+         |> List.exists check_interferes
+    in
+    (* if no interference, merge jump arg and successor phi classes and add preferences to set representative *)
+    if not interferes then
+      let phi =
+        match X86.Cfg.(first (fst (focus succ graph))) with
+        | X86.Cfg.Entry ->
+          failwith "create_congruence_class: jump with arguments to entry block"
+        | X86.Cfg.Label (_, info) ->
+          begin match List.nth_opt info.args i with
+          | Some phi -> phi
+          | None ->
+            failwith "create_congruence_class: jump has different arity to phis"
+          end
+      in
+      let arg_repr = Unionfind.find classes (X86.Target.index arg) in
+      let phi_repr = Unionfind.find classes (X86.Target.index phi) in
+      let merged_repr = Unionfind.union classes arg_repr phi_repr in
+      let other_repr =
+        if Unionfind.equal_repr merged_repr phi_repr then arg_repr else phi_repr
+      in
+      let merged = state.preferences.(Unionfind.to_int merged_repr) in
+      let other = state.preferences.(Unionfind.to_int other_repr) in
+      for r = 0 to Array.length state.regs - 1 do
+        merged.(r) <- merged.(r) + other.(r)
+      done
+  in
+  let handle_jump instr =
+    List.iter
+      (function
+        | X86.Target.Label (succ, args) ->
+          List.iteri
+            (fun i -> function
+              | X86.Target.Reg r -> handle_jump_arg succ args i r
+              | _ -> ())
+            args
+        | _ -> ())
+      instr.X86.Target.uses
+  in
+  begin match last with
+  | X86.Printer.Exit -> ()
+  | X86.Printer.Branch (instr, _) ->
+    handle_jump instr;
+    handle_instruction live instr
+  | X86.Printer.CBranch (instr, _, _) ->
+    handle_jump instr;
+    handle_instruction live instr
+  | X86.Printer.Return instr -> handle_instruction live instr
+  end;
+  (* todo: *)
   (* for each instruction: *)
   (* update liveness at current point in block *)
   (* if defined variable has reuse operand constraint: *)
@@ -194,7 +277,7 @@ let set_congruence_prefs state classes v =
 let combine_congruence_classes state graph =
   let classes = Unionfind.create state.num_vars in
   let rpo = X86.Cfg.reverse_postorder_dfs graph in
-  List.iter (create_congruence_class state classes) rpo;
+  List.iter (create_congruence_class state classes graph) rpo;
   Array.iteri
     (fun v _ -> set_congruence_prefs state classes v)
     state.preferences
