@@ -55,9 +55,6 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
         state.reg_current_var.(reg) <- phi'.id;
         state.reg_current_pref.(reg) <- pref;
         CCBV.set occupied reg
-        (* todo: add color to preference vectors of uncolored variables in the same affinity chunk *)
-        (* first check for interference between defined variable and its called variables chunks *)
-        (* if they do not interfere, the operand's chunk can be merged with the definition's chunk *)
       | _ -> ())
     phis;
   let handle_instruction instr_num instr =
@@ -176,7 +173,17 @@ let build_preferences state graph : int array array =
   List.iter go_block rpo;
   preferences
 
-let create_congruence_class _state _classes _block = failwith ""
+let create_congruence_class _state _classes _block =
+  (* for each jump arg: *)
+  (* interferes if anything in live_in of block successor has the same set representative as jump arg *)
+  (* interferes if other args in jump has same set representative as jump arg *)
+  (* if no interference, merge jump arg and successor phi classes and add preferences to set representative *)
+  (* for each instruction: *)
+  (* update liveness at current point in block *)
+  (* if defined variable has reuse operand constraint: *)
+  (* if any current live variables has the same set representative as the reused operand then it interferes *)
+  (* if no interference then merge classes for reuse operand def and use variables *)
+  failwith ""
 
 let set_congruence_prefs state classes v =
   let v_repr = Unionfind.(to_int (find classes v)) in
