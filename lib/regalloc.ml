@@ -119,13 +119,13 @@ let build_preferences state graph : int array array =
       when def ->
       (* add preferences to use variable when there is a reuse operand def *)
       let op = X86.Target.index reg in
-      for i = 0 to Array.length preferences.(op) do
+      for i = 0 to Array.length preferences.(op) - 1 do
         preferences.(op).(i) <- preferences.(op).(i) + preferences.(id).(i)
       done
     | X86.Target.(Reg (Virtual { id; reg_constr = UsePhysical (reg, _, _); _ }))
       ->
       (* give penalties to all registers that are not the constrained register. *)
-      for i = 0 to Array.length preferences.(id) do
+      for i = 0 to Array.length preferences.(id) - 1 do
         if i <> reg then preferences.(id).(i) <- preferences.(id).(i) - 1
       done;
       (* give penalties to all other live variables for the constrained register *)
@@ -137,7 +137,6 @@ let build_preferences state graph : int array array =
   in
   let handle_instruction live (instr : X86.Target.instr) =
     List.iter (handle_operand ~def:true live) instr.defs;
-    (* todo: handle reuse_op constraints for defs here by adding the preferences to the use *)
     let defs =
       X86.Target.defs instr |> X86.Target.RegSet.to_list
       |> List.map X86.Target.index |> CCBV.of_list
@@ -176,13 +175,12 @@ let build_preferences state graph : int array array =
   preferences
 
 let create_congruence_class state classes graph block =
-  let live_out = state.liveness.live_out (X86.Cfg.id block) in
   let live =
+    let live_out = state.liveness.live_out (X86.Cfg.id block) in
     CCBV.of_list
       (List.map X86.Target.index (X86.Target.RegSet.to_list live_out))
   in
-  let _head, last = X86.Cfg.(goto_end (unzip block)) in
-  let handle_instruction live instr =
+  let liveness_transfer instr =
     let defs =
       X86.Target.defs instr |> X86.Target.RegSet.to_list
       |> List.map X86.Target.index |> CCBV.of_list
@@ -202,11 +200,10 @@ let create_congruence_class state classes graph block =
         (Unionfind.find classes (X86.Target.index v))
         (Unionfind.find classes (X86.Target.index arg))
     in
-    (* interferes if anything in live_in of block successor has the same set representative as jump arg *)
-    let interferes = RegSet.exists check_interferes live in
-    (* interferes if other args in jump has same set representative as jump arg *)
+    (* interferes if anything in live_in of block successor has the same set representative as jump arg
+       or if other args in jump has same set representative as jump arg *)
     let interferes =
-      interferes
+      RegSet.exists check_interferes live
       || args
          |> List.filter_map (function
            | X86.Target.Reg r when r <> arg -> Some r
@@ -250,23 +247,44 @@ let create_congruence_class state classes graph block =
         | _ -> ())
       instr.X86.Target.uses
   in
+  let head, last = X86.Cfg.(goto_end (unzip block)) in
   begin match last with
   | X86.Printer.Exit -> ()
   | X86.Printer.Branch (instr, _) ->
     handle_jump instr;
-    handle_instruction live instr
+    liveness_transfer instr
   | X86.Printer.CBranch (instr, _, _) ->
     handle_jump instr;
-    handle_instruction live instr
-  | X86.Printer.Return instr -> handle_instruction live instr
+    liveness_transfer instr
+  | X86.Printer.Return instr -> liveness_transfer instr
   end;
-  (* todo: *)
-  (* for each instruction: *)
-  (* update liveness at current point in block *)
-  (* if defined variable has reuse operand constraint: *)
-  (* if any current live variables has the same set representative as the reused operand then it interferes *)
-  (* if no interference then merge classes for reuse operand def and use variables *)
-  failwith ""
+  let handle_reuse_operand_def = function
+    | X86.Target.(Reg (Virtual { id; reg_constr = ReuseOperand op; _ })) ->
+      let op = X86.Target.index op in
+      let interferes = ref false in
+      let exception Break in
+      (* if any current live variables has the same set representative as the reused operand then it interferes *)
+      begin try
+        CCBV.iter_true live @@ fun v ->
+        if Unionfind.(equal_repr (find classes v) (find classes op)) then begin
+          interferes := true;
+          raise Break
+        end
+      with Break -> ()
+      end;
+      (* if no interference then merge classes for reuse operand def and use variables *)
+      if not !interferes then
+        ignore Unionfind.(union classes (find classes id) (find classes op))
+    | _ -> ()
+  in
+  let rec go_head = function
+    | X86.Cfg.First _ -> ()
+    | X86.Cfg.Head (head, Instruction instr) ->
+      List.iter handle_reuse_operand_def instr.defs;
+      liveness_transfer instr;
+      go_head head
+  in
+  go_head head
 
 let set_congruence_prefs state classes v =
   let v_repr = Unionfind.(to_int (find classes v)) in
