@@ -4,11 +4,12 @@ type state = {
   regs : X86.Target.reg array;
   num_vars : int;
   processed : bool array;
-  preferences : int array array;
+  block_execution_frequency : float array;
+  preferences : float array array;
   (* initially -1 if no variable for register *)
   reg_current_var : int array;
   (* initially 0 *)
-  reg_current_pref : int array;
+  reg_current_pref : float array;
   liveness : Spill.Liveness.t;
   dom :
     (module Dominator.S
@@ -17,13 +18,15 @@ type state = {
         and type position = int);
 }
 
-let get_register state var occupied : int * int =
+let get_register state var occupied : int * float =
   let preferences =
     state.preferences.(X86.Target.index var)
     |> Array.mapi (fun i pref -> (i, pref))
   in
-  Array.sort (fun (_, pref1) (_, pref2) -> Int.compare pref1 pref2) preferences;
-  let exception Reg of int * int in
+  Array.sort
+    (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
+    preferences;
+  let exception Reg of int * float in
   try
     for i = Array.length preferences - 1 downto 0 do
       let reg, pref = preferences.(i) in
@@ -66,7 +69,7 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
         | X86.Target.Virtual a' as a when dies state uid a instr_num ->
           let reg = X86.Target.index a'.reg in
           state.reg_current_var.(reg) <- -1;
-          state.reg_current_pref.(reg) <- 0;
+          state.reg_current_pref.(reg) <- 0.;
           CCBV.reset occupied reg
         | _ -> ())
       (X86.Target.uses instr);
@@ -110,9 +113,9 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
         implement_phi_copies state ~src:pos ~dest:succ)
     (Dom.successors pos)
 
-let build_preferences state graph : int array array =
+let build_preferences state graph : float array array =
   let preferences =
-    Array.init_matrix state.num_vars (Array.length state.regs) (fun _ _ -> 0)
+    Array.init_matrix state.num_vars (Array.length state.regs) (fun _ _ -> 0.)
   in
   let rec handle_operand ?(def = false) live = function
     | X86.Target.(Reg (Virtual { id; reg_constr = ReuseOperand reg; _ }))
@@ -120,18 +123,18 @@ let build_preferences state graph : int array array =
       (* add preferences to use variable when there is a reuse operand def *)
       let op = X86.Target.index reg in
       for i = 0 to Array.length preferences.(op) - 1 do
-        preferences.(op).(i) <- preferences.(op).(i) + preferences.(id).(i)
+        preferences.(op).(i) <- preferences.(op).(i) +. preferences.(id).(i)
       done
     | X86.Target.(Reg (Virtual { id; reg_constr = UsePhysical (reg, _, _); _ }))
       ->
       (* give penalties to all registers that are not the constrained register. *)
       for i = 0 to Array.length preferences.(id) - 1 do
-        if i <> reg then preferences.(id).(i) <- preferences.(id).(i) - 1
+        if i <> reg then preferences.(id).(i) <- preferences.(id).(i) -. 1.
       done;
       (* give penalties to all other live variables for the constrained register *)
       CCBV.iter_true live (fun live ->
           if live <> id then
-            preferences.(live).(reg) <- preferences.(live).(reg) - 1)
+            preferences.(live).(reg) <- preferences.(live).(reg) -. 1.)
     | X86.Target.Label (_, ops) -> List.iter (handle_operand live) ops
     | _ -> ()
   in
@@ -232,7 +235,7 @@ let create_congruence_class state classes graph block =
       let merged = state.preferences.(Unionfind.to_int merged_repr) in
       let other = state.preferences.(Unionfind.to_int other_repr) in
       for r = 0 to Array.length state.regs - 1 do
-        merged.(r) <- merged.(r) + other.(r)
+        merged.(r) <- merged.(r) +. other.(r)
       done
   in
   let handle_jump instr =
