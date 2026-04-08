@@ -1,10 +1,18 @@
 module RegSet = Spill.Liveness.RegSet
 
+module Weights = struct
+  let use_factor = 1.
+  let def_factor = 1.
+  let neighbor_factor = 0.2
+  let aff_should_be_same = 0.5
+  let aff_phi = 1.
+end
+
 type state = {
   regs : X86.Target.reg array;
   num_vars : int;
   processed : bool array;
-  block_execution_frequency : float array;
+  block_execution_frequency : X86.Cfg.uid -> float;
   preferences : float array array;
   (* initially -1 if no variable for register *)
   reg_current_var : int array;
@@ -117,7 +125,7 @@ let build_preferences state graph : float array array =
   let preferences =
     Array.init_matrix state.num_vars (Array.length state.regs) (fun _ _ -> 0.)
   in
-  let rec handle_operand ?(def = false) live = function
+  let rec handle_operand ?(def = false) uid live = function
     | X86.Target.(Reg (Virtual { id; reg_constr = ReuseOperand reg; _ }))
       when def ->
       (* add preferences to use variable when there is a reuse operand def *)
@@ -127,25 +135,30 @@ let build_preferences state graph : float array array =
       done
     | X86.Target.(Reg (Virtual { id; reg_constr = UsePhysical (reg, _, _); _ }))
       ->
+      let weight = state.block_execution_frequency uid in
+      let penalty =
+        weight *. if def then Weights.def_factor else Weights.use_factor
+      in
       (* give penalties to all registers that are not the constrained register. *)
       for i = 0 to Array.length preferences.(id) - 1 do
-        if i <> reg then preferences.(id).(i) <- preferences.(id).(i) -. 1.
+        if i <> reg then preferences.(id).(i) <- preferences.(id).(i) -. penalty
       done;
+      let penalty = penalty *. Weights.neighbor_factor in
       (* give penalties to all other live variables for the constrained register *)
       CCBV.iter_true live (fun live ->
           if live <> id then
-            preferences.(live).(reg) <- preferences.(live).(reg) -. 1.)
-    | X86.Target.Label (_, ops) -> List.iter (handle_operand live) ops
+            preferences.(live).(reg) <- preferences.(live).(reg) -. penalty)
+    | X86.Target.Label (_, ops) -> List.iter (handle_operand uid live) ops
     | _ -> ()
   in
-  let handle_instruction live (instr : X86.Target.instr) =
-    List.iter (handle_operand ~def:true live) instr.defs;
+  let handle_instruction uid live (instr : X86.Target.instr) =
+    List.iter (handle_operand ~def:true uid live) instr.defs;
     let defs =
       X86.Target.defs instr |> X86.Target.RegSet.to_list
       |> List.map X86.Target.index |> CCBV.of_list
     in
     CCBV.diff_into ~into:live defs;
-    List.iter (handle_operand live) instr.uses;
+    List.iter (handle_operand uid live) instr.uses;
     let uses =
       X86.Target.uses instr |> X86.Target.RegSet.to_list
       |> List.map X86.Target.index |> CCBV.of_list
@@ -153,7 +166,8 @@ let build_preferences state graph : float array array =
     CCBV.union_into ~into:live uses
   in
   let go_block block =
-    let live_out = state.liveness.live_out (X86.Cfg.id block) in
+    let uid = X86.Cfg.id block in
+    let live_out = state.liveness.live_out uid in
     let live =
       CCBV.of_list
         (List.map X86.Target.index (X86.Target.RegSet.to_list live_out))
@@ -161,13 +175,13 @@ let build_preferences state graph : float array array =
     let head, last = X86.Cfg.(goto_end (unzip block)) in
     begin match last with
     | X86.Printer.Exit -> ()
-    | X86.Printer.Branch (i, _) -> handle_instruction live i
-    | X86.Printer.CBranch (i, _, _) -> handle_instruction live i
-    | X86.Printer.Return i -> handle_instruction live i
+    | X86.Printer.Branch (i, _) -> handle_instruction uid live i
+    | X86.Printer.CBranch (i, _, _) -> handle_instruction uid live i
+    | X86.Printer.Return i -> handle_instruction uid live i
     end;
     let rec go_head = function
       | X86.Cfg.Head (head, Instruction i) ->
-        handle_instruction live i;
+        handle_instruction uid live i;
         go_head head
       | X86.Cfg.First _ -> () (* ignore phis *)
     in
