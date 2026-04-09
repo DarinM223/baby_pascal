@@ -316,3 +316,44 @@ let combine_congruence_classes state graph =
   Array.iteri
     (fun v _ -> set_congruence_prefs state classes v)
     state.preferences
+
+let rec add_trace (module Dom : Dominator.S with type position = int) trace seen
+    order block =
+  if not seen.(block) then begin
+    let best_pred =
+      Dom.predecessors block
+      |> List.filter (fun pred -> not (Dom.dominates block pred))
+      |> List.fold_left
+           (function
+             | None -> fun pred -> Some pred
+             | Some best ->
+               fun pred ->
+                 Some (if trace.(best) < trace.(pred) then pred else best))
+           None
+    in
+    let order =
+      match best_pred with
+      | Some pred -> add_trace (module Dom) trace seen order pred
+      | None -> order
+    in
+    seen.(block) <- true;
+    block :: order
+  end
+  else order
+
+let blockorder state =
+  let module Dom = (val state.dom) in
+  let trace = Array.make Dom.size 0. in
+  for b = Dom.size - 1 downto 0 do
+    let uid = X86.Cfg.idd (Dom.label_of_position b) in
+    let t =
+      List.fold_left
+        (fun acc pred -> max acc trace.(pred))
+        0. (Dom.predecessors b)
+    in
+    trace.(b) <- t +. state.block_execution_frequency uid
+  done;
+  let blocks = Array.init Dom.size (fun i -> i) in
+  Array.sort (fun a b -> Float.compare trace.(a) trace.(b)) blocks;
+  let seen = Array.make Dom.size false in
+  List.rev @@ Array.fold_left (add_trace (module Dom) trace seen) [] blocks
