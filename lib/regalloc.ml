@@ -52,7 +52,7 @@ let dies state uid a instr_num =
   | Some num when num <= instr_num -> true
   | _ -> false
 
-let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
+let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
   let uid = X86.Cfg.id block in
   let occupied = CCBV.create ~size:(Array.length state.regs) false in
   let phis =
@@ -70,7 +70,7 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
         CCBV.set occupied reg
       | _ -> ())
     phis;
-  let handle_instruction instr_num instr =
+  let handle_instruction instr_num head instr =
     enforce_constraints state instr;
     X86.Target.RegSet.iter
       (function
@@ -90,22 +90,25 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
           state.reg_current_pref.(reg) <- pref;
           CCBV.set occupied reg
         | _ -> ())
-      (X86.Target.defs instr)
+      (X86.Target.defs instr);
+    head
   in
-  let rec go instr_num = function
+  let rec go instr_num head = function
     | X86.Cfg.Tail (Instruction instr, tail) ->
-      handle_instruction instr_num instr;
-      go (instr_num + 1) tail
+      let head = handle_instruction instr_num head instr in
+      go (instr_num + 1) (X86.Cfg.Head (head, Instruction instr)) tail
     | X86.Cfg.Last l ->
       (* todo: propagate branch args to the affinity chunk *)
-      begin match l with
-      | X86.Printer.Exit -> ()
-      | X86.Printer.Branch (i, _) -> handle_instruction instr_num i
-      | X86.Printer.CBranch (i, _, _) -> handle_instruction instr_num i
-      | X86.Printer.Return i -> handle_instruction instr_num i
-      end
+      let head =
+        match l with
+        | X86.Printer.Exit -> head
+        | X86.Printer.Branch (i, _) -> handle_instruction instr_num head i
+        | X86.Printer.CBranch (i, _, _) -> handle_instruction instr_num head i
+        | X86.Printer.Return i -> handle_instruction instr_num head i
+      in
+      (head, X86.Cfg.Last l)
   in
-  go 0 tail;
+  let block = X86.Cfg.zip (go 0 (X86.Cfg.First first) tail) in
   let module Dom = (val state.dom) in
   let pos = Dom.position_of_uid uid in
   state.processed.(pos) <- true;
@@ -119,7 +122,8 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : unit =
       (* todo: use block.succs[0] instead *)
       if state.processed.(succ) then
         implement_phi_copies state ~src:pos ~dest:succ)
-    (Dom.successors pos)
+    (Dom.successors pos);
+  block
 
 let build_preferences state graph : float array array =
   let preferences =
