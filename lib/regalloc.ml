@@ -26,7 +26,7 @@ type state = {
         and type position = int);
 }
 
-let get_register state var occupied : int * float =
+let get_register state uid var occupied head : int * float * X86.Cfg.head =
   let preferences =
     state.preferences.(X86.Target.index var)
     |> Array.mapi (fun i pref -> (i, pref))
@@ -34,14 +34,40 @@ let get_register state var occupied : int * float =
   Array.sort
     (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
     preferences;
-  let exception Reg of int * float in
+  let exception Reg of int * float * X86.Cfg.head in
+  let exception Break of int * float in
   try
     for i = Array.length preferences - 1 downto 0 do
       let reg, pref = preferences.(i) in
-      if not (CCBV.get occupied reg) then raise (Reg (reg, pref))
+      if not (CCBV.get occupied reg) then raise (Reg (reg, pref, head));
+      let ovar = state.reg_current_var.(reg) in
+      let preferences =
+        Array.mapi (fun i pref -> (i, pref)) state.preferences.(ovar)
+      in
+      Array.sort
+        (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
+        preferences;
+      try
+        for i = Array.length preferences - 1 downto 0 do
+          let oreg, opref = preferences.(i) in
+          if not (CCBV.get occupied oreg) then
+            raise (Break (oreg, opref -. state.reg_current_pref.(oreg)))
+        done
+      with Break (oreg, other_win) ->
+        if i + 1 < Array.length preferences then
+          let _, next_pref = preferences.(i + 1) in
+          let win = next_pref -. pref in
+          if win +. other_win > state.block_execution_frequency uid then
+            let mov =
+              X86.Target.mov
+                ~dest:(Reg state.regs.(oreg))
+                ~src:(Reg state.regs.(reg))
+            in
+            let head = X86.Cfg.Head (head, Instruction mov) in
+            raise (Reg (reg, pref, head))
     done;
     failwith "get_register: couldn't find non-occupied register"
-  with Reg (reg, pref) -> (reg, pref)
+  with Reg (reg, pref, head) -> (reg, pref, head)
 
 let enforce_constraints _state _instr = ()
 
@@ -60,16 +86,19 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
     | X86.Cfg.Entry -> []
     | X86.Cfg.Label (_, info) -> info.args
   in
-  List.iter
-    (function
-      | X86.Target.Virtual phi' as phi ->
-        let reg, pref = get_register state phi occupied in
-        phi'.reg <- state.regs.(reg);
-        state.reg_current_var.(reg) <- phi'.id;
-        state.reg_current_pref.(reg) <- pref;
-        CCBV.set occupied reg
-      | _ -> ())
-    phis;
+  let head =
+    List.fold_left
+      (fun head -> function
+        | X86.Target.Virtual phi' as phi ->
+          let reg, pref, head = get_register state uid phi occupied head in
+          phi'.reg <- state.regs.(reg);
+          state.reg_current_var.(reg) <- phi'.id;
+          state.reg_current_pref.(reg) <- pref;
+          CCBV.set occupied reg;
+          head
+        | _ -> head)
+      (X86.Cfg.First first) phis
+  in
   let handle_instruction instr_num head instr =
     enforce_constraints state instr;
     X86.Target.RegSet.iter
@@ -81,17 +110,18 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
           CCBV.reset occupied reg
         | _ -> ())
       (X86.Target.uses instr);
-    X86.Target.RegSet.iter
+    X86.Target.RegSet.fold
       (function
         | X86.Target.Virtual r' as r ->
-          let reg, pref = get_register state r occupied in
-          r'.reg <- state.regs.(reg);
-          state.reg_current_var.(reg) <- r'.id;
-          state.reg_current_pref.(reg) <- pref;
-          CCBV.set occupied reg
-        | _ -> ())
-      (X86.Target.defs instr);
-    head
+          fun head ->
+            let reg, pref, head = get_register state uid r occupied head in
+            r'.reg <- state.regs.(reg);
+            state.reg_current_var.(reg) <- r'.id;
+            state.reg_current_pref.(reg) <- pref;
+            CCBV.set occupied reg;
+            head
+        | _ -> fun head -> head)
+      (X86.Target.defs instr) head
   in
   let rec go instr_num head = function
     | X86.Cfg.Tail (Instruction instr, tail) ->
@@ -108,7 +138,7 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       in
       (head, X86.Cfg.Last l)
   in
-  let block = X86.Cfg.zip (go 0 (X86.Cfg.First first) tail) in
+  let block = X86.Cfg.zip (go 0 head tail) in
   let module Dom = (val state.dom) in
   let pos = Dom.position_of_uid uid in
   state.processed.(pos) <- true;
