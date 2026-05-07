@@ -382,7 +382,10 @@ struct
       let cand = List.sort (compare dists) (RegSet.to_list cand) in
       RegSet.of_list (List.take M.k cand)
 
-  type min_state = w:RegSet.t * s:RegSet.t
+  type min_state = {
+    w : RegSet.t;
+    s : RegSet.t;
+  }
 
   type spill_state = {
     select_state : Select_x86.State.t;
@@ -420,7 +423,7 @@ struct
     RegHashtbl.add state.copies v v';
     X86.Target.mov ~dest:(X86.Target.Reg v') ~src:slot
 
-  let limit ~add_spills (state : spill_state) ((~w, ~s) : min_state)
+  let limit ~add_spills (state : spill_state) ({ w; s } : min_state)
       (block_uid : X86.Cfg.uid) (instr_num : int) (head : X86.Cfg.head)
       (m : int) : X86.Cfg.head * min_state =
     let dists = M.next_use_distances.at_instruction block_uid instr_num in
@@ -454,10 +457,10 @@ struct
         (head, s) (List.drop m w)
     in
     let w = RegSet.of_list (List.take m w) in
-    (head, (~w, ~s))
+    (head, { w; s })
 
   let min_algorithm ~add_spills (state : spill_state) (zblock : X86.Cfg.zblock)
-      ((~w, ~s) : min_state) : X86.Cfg.zblock * min_state =
+      ({ w; s } : min_state) : X86.Cfg.zblock * min_state =
     let uid, w =
       match X86.Cfg.first zblock with
       | X86.Cfg.Entry -> (X86.Cfg.entry_uid, w)
@@ -477,8 +480,8 @@ struct
             m "W after adding uses in block %d: %s\n"
               X86.Cfg.(id (zip zblock))
               ([%show: X86.Cfg.regs] (RegSet.to_list w)));
-        let head, (~w, ~s) =
-          limit ~add_spills state (~w, ~s) uid instr_num head M.k
+        let head, { w; s } =
+          limit ~add_spills state { w; s } uid instr_num head M.k
         in
         let head = X86.Cfg.Head (head, Instruction instr) in
         (* add reloads for vars in r *)
@@ -501,8 +504,8 @@ struct
         (* provide room for definitions of next instruction *)
         (* measured from previous instruction because the next instruction's
            uses don't matter when writing to result registers *)
-        let head, (~w, ~s) =
-          limit ~add_spills state (~w, ~s) uid (instr_num + 1) head
+        let head, { w; s } =
+          limit ~add_spills state { w; s } uid (instr_num + 1) head
             (M.k - next_defs)
         in
         go (instr_num + 1) w s (head, tail)
@@ -514,11 +517,11 @@ struct
               (fun use (w, s) -> (RegSet.add use w, RegSet.add use s))
               r (w, s)
           in
-          limit ~add_spills state (~w, ~s) uid instr_num head M.k
+          limit ~add_spills state { w; s } uid instr_num head M.k
         in
         let head, min_state =
           match l with
-          | X86.Cfg.Exit -> (head, (~w, ~s))
+          | X86.Cfg.Exit -> (head, { w; s })
           | X86.Cfg.Branch (i, _) -> handle_instruction i
           | X86.Cfg.CBranch (i, _, _) -> handle_instruction i
           | X86.Cfg.Return i -> handle_instruction i
@@ -586,9 +589,9 @@ struct
           m "Block %d all processed: %b\n" block_uid all_processed);
       state.select_state.curr_block := block_uid;
       let zblock, graph = X86.Cfg.focus block_uid graph in
-      let zblock, (~w:w_exit, ~s:s_exit) =
+      let zblock, { w = w_exit; s = s_exit } =
         min_algorithm ~add_spills:all_processed state zblock
-          (~w:w_entry, ~s:s_entry)
+          { w = w_entry; s = s_entry }
       in
       (* save w_exit and s_exit for block id *)
       processed.(pos) <- true;
@@ -605,7 +608,7 @@ struct
         let zblock, graph = X86.Cfg.focus (uid succ) graph in
         let zblock, _ =
           min_algorithm ~add_spills:true state zblock
-            (~w:saved_w_entry.(succ), ~s:saved_s_entry.(succ))
+            { w = saved_w_entry.(succ); s = saved_s_entry.(succ) }
         in
         let graph = X86.Cfg.unfocus (zblock, graph) in
         insert_coupling succ graph pos
