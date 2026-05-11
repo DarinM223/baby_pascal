@@ -29,20 +29,22 @@ struct
 
   let calls_exit = Array.init Dom.size (fun _block -> false)
 
+  let is_back_edge a b = Dom.dominates b a
   let is_exit_edge a b = Loop.(loop_header a <> loop_header b)
 
   let heuristics :
       (float * (Dom.position -> Dom.position -> Dom.position -> bool)) list =
     []
 
-  let calc_branch_prob =
-    let prob = Array.make_matrix Dom.size Dom.size 0. in
+  let prob = Array.make_matrix Dom.size Dom.size 0.
+  let bfreq = Array.make Dom.size 0.
+  let freq = Array.make_matrix Dom.size Dom.size 0.
+
+  let calc_branch_prob () =
     for block = 0 to Dom.size do
       let succs = Dom.successors block in
       let n = List.length succs in
-      let back_edges =
-        List.filter (fun succ -> Dom.dominates succ block) succs
-      in
+      let back_edges = List.filter (is_back_edge block) succs in
       let m = List.length back_edges in
       let exit_edges = List.filter (is_exit_edge block) succs in
       if n <> 0 then ()
@@ -81,6 +83,49 @@ struct
           (fun (prob, f) -> if f block s1 s2 then go_heuristic prob)
           heuristics
       end
-    done;
-    prob
+    done
+
+  module IntHashtbl = Hashtbl.Make (Int)
+
+  let compute_freq () =
+    let visited : unit IntHashtbl.t = IntHashtbl.create Dom.size in
+    let back_edge_prob = Array.map Array.copy prob in
+    let exception Return in
+    let rec propagate_freq block head =
+      try
+        if not (IntHashtbl.mem visited block) then begin
+          if block = head then bfreq.(block) <- 1.
+          else begin
+            List.iter
+              (fun pred ->
+                if
+                  (not (IntHashtbl.mem visited pred))
+                  && not (is_back_edge pred block)
+                then raise Return)
+              (Dom.predecessors block);
+            bfreq.(block) <- 0.;
+            let cyclic_probability = ref 0 in
+            let go_pred pred = failwith "" in
+            List.iter go_pred (Dom.predecessors block);
+            ()
+          end;
+          IntHashtbl.replace visited block ();
+          let go_succ succ =
+            freq.(block).(succ) <- prob.(block).(succ) *. bfreq.(block);
+            if succ = head then
+              back_edge_prob.(block).(succ) <-
+                prob.(block).(succ) *. bfreq.(block)
+          in
+          List.iter go_succ (Dom.successors block);
+          List.iter
+            (fun succ ->
+              if not (is_back_edge block succ) then propagate_freq succ head)
+            (Dom.successors block)
+        end
+      with Return -> ()
+    in
+    ()
+
+  let () = calc_branch_prob ()
+  let () = compute_freq ()
 end
