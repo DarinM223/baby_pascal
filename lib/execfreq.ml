@@ -87,29 +87,48 @@ struct
 
   module IntHashtbl = Hashtbl.Make (Int)
 
+  let inner_to_outer_loops : Dom.position array =
+    let visited = IntHashtbl.create Dom.size in
+    let arr = Dynarray.create () in
+    let rec go node =
+      let loop_nodes = Iarray.get Loop.loop_nodes node in
+      Loop.PositionSet.iter
+        (fun nested ->
+          if
+            (not (IntHashtbl.mem visited nested))
+            && Loop.PositionSet.mem nested Loop.loop_headers
+          then go nested)
+        loop_nodes;
+      Dynarray.add_last arr node;
+      IntHashtbl.replace visited node ()
+    in
+    let root = Dom.position_of_uid G.entry_uid in
+    go root;
+    Dynarray.to_array arr
+
   let compute_freq () =
-    let visited : unit IntHashtbl.t = IntHashtbl.create Dom.size in
+    let not_visited : unit IntHashtbl.t = IntHashtbl.create Dom.size in
     let back_edge_prob = Array.map Array.copy prob in
     let exception Return in
     let rec propagate_freq block head =
       try
-        if not (IntHashtbl.mem visited block) then begin
+        if IntHashtbl.mem not_visited block then begin
           if block = head then bfreq.(block) <- 1.
           else begin
             List.iter
               (fun pred ->
                 if
-                  (not (IntHashtbl.mem visited pred))
+                  IntHashtbl.mem not_visited pred
                   && not (is_back_edge pred block)
                 then raise Return)
               (Dom.predecessors block);
             bfreq.(block) <- 0.;
-            let cyclic_probability = ref 0 in
-            let go_pred pred = failwith "" in
+            let _cyclic_probability = ref 0 in
+            let go_pred _pred = failwith "" in
             List.iter go_pred (Dom.predecessors block);
             ()
           end;
-          IntHashtbl.replace visited block ();
+          IntHashtbl.remove not_visited block;
           let go_succ succ =
             freq.(block).(succ) <- prob.(block).(succ) *. bfreq.(block);
             if succ = head then
@@ -124,7 +143,18 @@ struct
         end
       with Return -> ()
     in
-    ()
+    for i = 0 to Array.length inner_to_outer_loops - 1 do
+      let head = inner_to_outer_loops.(i) in
+      IntHashtbl.clear not_visited;
+      (* mark all blocks reachable from head as not visited *)
+      let head_uid = G.idd (Dom.label_of_position head) in
+      List.iter
+        (fun block ->
+          let pos = Dom.position_of_label (G.block_label block) in
+          IntHashtbl.replace not_visited pos ())
+        (G.reverse_postorder_dfs_from head_uid Dom.graph);
+      propagate_freq head head
+    done
 
   let () = calc_branch_prob ()
   let () = compute_freq ()

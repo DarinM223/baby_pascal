@@ -179,6 +179,7 @@ module type S = sig
   val expand : (middle -> graph) -> (last -> graph) -> graph -> graph
 
   val successors : last -> label list
+  val reverse_postorder_dfs_from : uid -> graph -> block list
   val reverse_postorder_dfs : graph -> block list
 
   val unreachable : tail -> unit

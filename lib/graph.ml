@@ -220,8 +220,8 @@ functor
       | CBranch (_, l1, l2) -> [ l1; l2 ]
       | Return _ -> []
 
-    let reverse_postorder_dfs graph =
-      let entry, blocks = focus_entry graph in
+    let reverse_postorder_dfs_from uid graph =
+      let node, blocks = focus uid graph in
       let rec vnode block acc visited k =
         let u = id block in
         if IntSet.mem u visited then k acc visited
@@ -240,7 +240,9 @@ functor
         in
         next children acc visited
       in
-      vnode (zip entry) [] IntSet.empty (fun acc _ -> acc)
+      vnode (zip node) [] IntSet.empty (fun acc _ -> acc)
+
+    let reverse_postorder_dfs = reverse_postorder_dfs_from entry_uid
 
     let instruction instr ((head, tail), graph) =
       ((head, Tail (Instruction instr, tail)), graph)
