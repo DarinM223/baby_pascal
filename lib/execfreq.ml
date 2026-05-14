@@ -123,10 +123,20 @@ struct
                 then raise Return)
               (Dom.predecessors block);
             bfreq.(block) <- 0.;
-            let _cyclic_probability = ref 0 in
-            let go_pred _pred = failwith "" in
+            let cyclic_probability = ref 0. in
+            let go_pred pred =
+              if
+                is_back_edge pred block
+                && Loop.PositionSet.mem block Loop.loop_headers
+              then
+                cyclic_probability :=
+                  !cyclic_probability +. back_edge_prob.(pred).(block)
+              else bfreq.(block) <- bfreq.(block) +. freq.(pred).(block)
+            in
             List.iter go_pred (Dom.predecessors block);
-            ()
+            if !cyclic_probability > 1. -. epsilon_float then
+              cyclic_probability := 1. -. epsilon_float;
+            bfreq.(block) <- bfreq.(block) /. (1. -. !cyclic_probability)
           end;
           IntHashtbl.remove not_visited block;
           let go_succ succ =
