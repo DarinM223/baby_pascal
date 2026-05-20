@@ -14,7 +14,22 @@ let oh_prob = 0.84
     successor is a loop head will not exit the loop. *)
 let leh_prob = 0.8
 
+(** Return heuristic: Predict a successor that contains a return will not be
+    taken. *)
+let rh_prob = 0.72
+
+(** Loop Header heuristic: Predict a successor that is a loop header or a loop
+    pre-header and does not post-dominate will be taken. *)
+let lhh_prob = 0.75
+
 let not_taken prob = 1. -. prob
+
+module type Requirements = sig
+  module Target : Graph.Target
+  val instr_name : Target.instr -> string
+  val call : string
+  val ret : string
+end
 
 module Make
     (G : Graph.S)
@@ -23,7 +38,8 @@ module Make
         with type Dom.label = G.label
          and type Dom.graph = G.graph
          and type Dom.position = int
-         and type Dom.uid = G.uid) =
+         and type Dom.uid = G.uid)
+    (Requirements : Requirements with module Target = G.Target) =
 struct
   module Dom = Loop.Dom
 
@@ -32,9 +48,30 @@ struct
   let is_back_edge a b = Dom.dominates b a
   let is_exit_edge a b = Loop.(loop_header a <> loop_header b)
 
+  let contains_instr (pos : Dom.position) (name : string) : bool =
+    let uid = G.idd (Dom.label_of_position pos) in
+    let (_, tail), _ = G.focus uid Dom.graph in
+    let rec go_tail (tail : G.tail) =
+      match tail with
+      | G.Last _ -> false
+      | G.Tail (G.Instruction i, tail) ->
+        if Requirements.instr_name i = name then true else go_tail tail
+    in
+    go_tail tail
+
+  (* Probabilities that s1 will be taken *)
   let heuristics :
       (float * (Dom.position -> Dom.position -> Dom.position -> bool)) list =
-    []
+    [
+      ( ch_prob,
+        fun n _ s2 ->
+          contains_instr s2 Requirements.call && not (Dom.dominates s2 n) );
+      ( not_taken ch_prob,
+        fun n s1 _ ->
+          contains_instr s1 Requirements.call && not (Dom.dominates s1 n) );
+      (rh_prob, fun _ _ s2 -> contains_instr s2 Requirements.ret);
+      (not_taken rh_prob, fun _ s1 _ -> contains_instr s1 Requirements.ret);
+    ]
 
   let prob = Array.make_matrix Dom.size Dom.size 0.
   let bfreq = Array.make Dom.size 0.
