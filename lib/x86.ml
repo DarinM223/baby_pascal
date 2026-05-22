@@ -276,15 +276,15 @@ module Deadcode = Deadcode.Make (Target) (Cfg) (Flow)
 module ExecfreqRequirements :
   Execfreq.Requirements with module Target = Target = struct
   module Target = Target
-  let instr_name : Target.instr -> string = fun i -> i.instr
-  let imm : Target.operand -> int option = function
+  let instr_name = fun i -> i.Target.instr
+  let imm = function
     | Target.Imm i -> Some i
     | _ -> None
-  let label : Target.operand -> Target.label option = function
+  let label = function
     | Target.Label (l, _) -> Some l
     | _ -> None
-  let uses : Target.instr -> Target.operands = fun i -> i.uses
-  let call : string = "call"
-  let ret : string = "ret"
-  let cmp : string = "cmp"
+  let uses = fun i -> i.Target.uses
+  let call = "call"
+  let ret = "ret"
+  let cmp = "cmp"
 end

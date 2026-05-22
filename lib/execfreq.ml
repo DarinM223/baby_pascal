@@ -108,6 +108,26 @@ struct
         fun n s1 _ ->
           let l = Dom.label_of_position s1 in
           Option.is_some l && contains_opcode (Option.get l) n );
+      ( leh_prob,
+        fun n s1 s2 ->
+          let loop_nodes = Loop.(Iarray.get loop_nodes (loop_header n)) in
+          (not Loop.(PositionSet.mem s1 loop_headers))
+          && (not Loop.(PositionSet.mem s2 loop_headers))
+          && Loop.PositionSet.mem s1 loop_nodes
+          && not (Loop.PositionSet.mem s2 loop_nodes) );
+      ( not_taken leh_prob,
+        fun n s1 s2 ->
+          let loop_nodes = Loop.(Iarray.get loop_nodes (loop_header n)) in
+          (not Loop.(PositionSet.mem s1 loop_headers))
+          && (not Loop.(PositionSet.mem s2 loop_headers))
+          && Loop.PositionSet.mem s2 loop_nodes
+          && not (Loop.PositionSet.mem s1 loop_nodes) );
+      ( lhh_prob,
+        fun n s1 _ ->
+          Loop.(PositionSet.mem s1 loop_headers) && not (Dom.dominates s1 n) );
+      ( not_taken lhh_prob,
+        fun n _ s2 ->
+          Loop.(PositionSet.mem s2 loop_headers) && not (Dom.dominates s2 n) );
     ]
 
   let prob = Array.make_matrix Dom.size Dom.size 0.
