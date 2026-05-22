@@ -273,3 +273,18 @@ module Printer = struct
 end
 
 module Deadcode = Deadcode.Make (Target) (Cfg) (Flow)
+module ExecfreqRequirements :
+  Execfreq.Requirements with module Target = Target = struct
+  module Target = Target
+  let instr_name : Target.instr -> string = fun i -> i.instr
+  let imm : Target.operand -> int option = function
+    | Target.Imm i -> Some i
+    | _ -> None
+  let label : Target.operand -> Target.label option = function
+    | Target.Label (l, _) -> Some l
+    | _ -> None
+  let uses : Target.instr -> Target.operands = fun i -> i.uses
+  let call : string = "call"
+  let ret : string = "ret"
+  let cmp : string = "cmp"
+end

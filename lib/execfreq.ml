@@ -27,12 +27,19 @@ let not_taken prob = 1. -. prob
 module type Requirements = sig
   module Target : Graph.Target
   val instr_name : Target.instr -> string
+  val imm : Target.operand -> int option
+  val label : Target.operand -> Target.label option
+  val uses : Target.instr -> Target.operands
   val call : string
   val ret : string
+  val cmp : string
 end
 
 module Make
-    (G : Graph.S)
+    (G :
+      Graph.S
+        with type label = int * string
+         and type Target.label = int * string)
     (Loop :
       Loopnesting.S
         with type Dom.label = G.label
@@ -48,16 +55,36 @@ struct
   let is_back_edge a b = Dom.dominates b a
   let is_exit_edge a b = Loop.(loop_header a <> loop_header b)
 
-  let contains_instr (pos : Dom.position) (name : string) : bool =
+  let contains_instr (f : G.Target.instr -> bool) (pos : Dom.position) : bool =
     let uid = G.idd (Dom.label_of_position pos) in
     let (_, tail), _ = G.focus uid Dom.graph in
     let rec go_tail (tail : G.tail) =
       match tail with
       | G.Last _ -> false
-      | G.Tail (G.Instruction i, tail) ->
-        if Requirements.instr_name i = name then true else go_tail tail
+      | G.Tail (G.Instruction i, tail) -> f i || go_tail tail
     in
     go_tail tail
+  let contains_instr_name name =
+    contains_instr (fun i -> Requirements.instr_name i = name)
+  let cmp_zero_or_constant name not_taken_succ ops =
+    let lt = Requirements.cmp ^ " " ^ "LT" in
+    let le = Requirements.cmp ^ " " ^ "LE" in
+    let eq = Requirements.cmp ^ " " ^ "EQ" in
+    match ops with
+    | [ _; b; _; l2 ] ->
+      Requirements.label l2 = Some not_taken_succ
+      && begin match Requirements.imm b with
+      | Some 0 when name = lt || name = le || name = eq -> true
+      | Some _ when name = eq -> true
+      | _ -> false
+      end
+    | _ -> false
+  let contains_opcode not_taken_succ =
+    contains_instr (fun i ->
+        let name = Requirements.instr_name i in
+        String.length name >= 3
+        && String.sub name 0 3 = Requirements.cmp
+        && cmp_zero_or_constant name not_taken_succ (Requirements.uses i))
 
   (* Probabilities that s1 will be taken *)
   let heuristics :
@@ -65,12 +92,22 @@ struct
     [
       ( ch_prob,
         fun n _ s2 ->
-          contains_instr s2 Requirements.call && not (Dom.dominates s2 n) );
+          contains_instr_name Requirements.call s2 && not (Dom.dominates s2 n)
+      );
       ( not_taken ch_prob,
         fun n s1 _ ->
-          contains_instr s1 Requirements.call && not (Dom.dominates s1 n) );
-      (rh_prob, fun _ _ s2 -> contains_instr s2 Requirements.ret);
-      (not_taken rh_prob, fun _ s1 _ -> contains_instr s1 Requirements.ret);
+          contains_instr_name Requirements.call s1 && not (Dom.dominates s1 n)
+      );
+      (rh_prob, fun _ _ s2 -> contains_instr_name Requirements.ret s2);
+      (not_taken rh_prob, fun _ s1 _ -> contains_instr_name Requirements.ret s1);
+      ( oh_prob,
+        fun n _ s2 ->
+          let l = Dom.label_of_position s2 in
+          Option.is_some l && contains_opcode (Option.get l) n );
+      ( not_taken oh_prob,
+        fun n s1 _ ->
+          let l = Dom.label_of_position s1 in
+          Option.is_some l && contains_opcode (Option.get l) n );
     ]
 
   let prob = Array.make_matrix Dom.size Dom.size 0.

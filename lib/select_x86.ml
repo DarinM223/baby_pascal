@@ -272,7 +272,7 @@ let%expect_test "Fibonacci code generation" =
   [%expect
     {|
       pcopy [(%1any, %0(%rdi))]
-      cmp Instruction.Cond.LE %1any, $1, label2, label3
+      cmp LE %1any, $1, label2, label3
     label1(local=false)(34any):
       movq %35(%rax), %34any
       ret %35(%rax)
@@ -325,12 +325,12 @@ let%expect_test "Nested loops code generation" =
     label1(local=false)():
       exit
     label2(local=false)(1any):
-      cmp Instruction.Cond.LT %1any, $100, label3, label1
+      cmp LT %1any, $100, label3, label1
     label3(local=false)():
       movq %2any, %1any
       j label4(%1any, %2any)
     label4(local=false)(3any, 4any):
-      cmp Instruction.Cond.LT %4any, $100, label5, label2(%3any)
+      cmp LT %4any, $100, label5, label2(%3any)
     label5(local=false)():
       movq %7any, %3any
       addq %6(reuse=%7), %7any, $1
