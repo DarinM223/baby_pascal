@@ -33,6 +33,7 @@ module type Requirements = sig
   val call : string
   val ret : string
   val cmp : string
+  val exit : string
 end
 
 module Make
@@ -50,10 +51,21 @@ module Make
 struct
   module Dom = Loop.Dom
 
-  let calls_exit = Array.init Dom.size (fun _block -> false)
+  let pp_array pp_elem fmt arr =
+    let open Format in
+    pp_open_box fmt 0;
+    pp_print_string fmt "[";
+    pp_print_array
+      ~pp_sep:(fun fmt () -> pp_print_string fmt ", ")
+      pp_elem fmt arr;
+    pp_print_string fmt "]";
+    pp_close_box fmt ()
+  let pp_prob = pp_array (pp_array Format.pp_print_float)
+  let pp_bfreq = pp_array Format.pp_print_float
 
+  let header n =
+    Loop.(if PositionSet.mem n loop_headers then n else loop_header n)
   let is_back_edge a b = Dom.dominates b a
-  let is_exit_edge a b = Loop.(loop_header a <> loop_header b)
 
   let contains_instr (f : G.Target.instr -> bool) (pos : Dom.position) : bool =
     let uid = G.idd (Dom.label_of_position pos) in
@@ -66,6 +78,8 @@ struct
     go_tail tail
   let contains_instr_name name =
     contains_instr (fun i -> Requirements.instr_name i = name)
+  let calls_exit = Array.init Dom.size (contains_instr_name Requirements.exit)
+
   let cmp_zero_or_constant name not_taken_succ ops =
     let lt = Requirements.cmp ^ " " ^ "LT" in
     let le = Requirements.cmp ^ " " ^ "LE" in
@@ -85,47 +99,56 @@ struct
         String.length name >= 3
         && String.sub name 0 3 = Requirements.cmp
         && cmp_zero_or_constant name not_taken_succ (Requirements.uses i))
+  let is_loop_exit n ~continue:s1 ~exit:s2 =
+    let loop_nodes = Loop.(Iarray.get loop_nodes (header n)) in
+    (not Loop.(PositionSet.mem s1 loop_headers))
+    && (not Loop.(PositionSet.mem s2 loop_headers))
+    && Loop.PositionSet.mem s1 loop_nodes
+    && not (Loop.PositionSet.mem s2 loop_nodes)
 
   (* Probabilities that s1 will be taken *)
   let heuristics :
-      (float * (Dom.position -> Dom.position -> Dom.position -> bool)) list =
+      (string * float * (Dom.position -> Dom.position -> Dom.position -> bool))
+      list =
     [
-      ( ch_prob,
+      ( "s2 call, so take s1",
+        ch_prob,
         fun n _ s2 ->
           contains_instr_name Requirements.call s2 && not (Dom.dominates s2 n)
       );
-      ( not_taken ch_prob,
+      ( "s1 call, so take s2",
+        not_taken ch_prob,
         fun n s1 _ ->
           contains_instr_name Requirements.call s1 && not (Dom.dominates s1 n)
       );
-      (rh_prob, fun _ _ s2 -> contains_instr_name Requirements.ret s2);
-      (not_taken rh_prob, fun _ s1 _ -> contains_instr_name Requirements.ret s1);
-      ( oh_prob,
+      ( "s2 return, so take s1",
+        rh_prob,
+        fun _ _ s2 -> contains_instr_name Requirements.ret s2 );
+      ( "s1 return, so take s2",
+        not_taken rh_prob,
+        fun _ s1 _ -> contains_instr_name Requirements.ret s1 );
+      ( "s2 opcode, so take s1",
+        oh_prob,
         fun n _ s2 ->
           let l = Dom.label_of_position s2 in
           Option.is_some l && contains_opcode (Option.get l) n );
-      ( not_taken oh_prob,
+      ( "s1 opcode, so take s2",
+        not_taken oh_prob,
         fun n s1 _ ->
           let l = Dom.label_of_position s1 in
           Option.is_some l && contains_opcode (Option.get l) n );
-      ( leh_prob,
-        fun n s1 s2 ->
-          let loop_nodes = Loop.(Iarray.get loop_nodes (loop_header n)) in
-          (not Loop.(PositionSet.mem s1 loop_headers))
-          && (not Loop.(PositionSet.mem s2 loop_headers))
-          && Loop.PositionSet.mem s1 loop_nodes
-          && not (Loop.PositionSet.mem s2 loop_nodes) );
-      ( not_taken leh_prob,
-        fun n s1 s2 ->
-          let loop_nodes = Loop.(Iarray.get loop_nodes (loop_header n)) in
-          (not Loop.(PositionSet.mem s1 loop_headers))
-          && (not Loop.(PositionSet.mem s2 loop_headers))
-          && Loop.PositionSet.mem s2 loop_nodes
-          && not (Loop.PositionSet.mem s1 loop_nodes) );
-      ( lhh_prob,
+      ( "s1 not loop exit",
+        leh_prob,
+        fun n s1 s2 -> is_loop_exit n ~continue:s1 ~exit:s2 );
+      ( "s2 not loop exit",
+        not_taken leh_prob,
+        fun n s1 s2 -> is_loop_exit n ~continue:s2 ~exit:s1 );
+      ( "s1 loop header",
+        lhh_prob,
         fun n s1 _ ->
           Loop.(PositionSet.mem s1 loop_headers) && not (Dom.dominates s1 n) );
-      ( not_taken lhh_prob,
+      ( "s2 loop header",
+        not_taken lhh_prob,
         fun n _ s2 ->
           Loop.(PositionSet.mem s2 loop_headers) && not (Dom.dominates s2 n) );
     ]
@@ -135,26 +158,30 @@ struct
   let freq = Array.make_matrix Dom.size Dom.size 0.
 
   let calc_branch_prob () =
-    for block = 0 to Dom.size do
+    for block = 0 to Dom.size - 1 do
       let succs = Dom.successors block in
       let n = List.length succs in
-      let back_edges = List.filter (is_back_edge block) succs in
+      let back_edges, exit_edges = List.partition (is_back_edge block) succs in
       let m = List.length back_edges in
-      let exit_edges = List.filter (is_exit_edge block) succs in
-      if n <> 0 then ()
+      if n = 0 then ()
       else if calls_exit.(block) then begin
         List.iter (fun succ -> prob.(block).(succ) <- 0.) succs
       end
       else if m > 0 && m < n then begin
         List.iter
-          (fun succ -> prob.(block).(succ) <- lbh_prob /. float_of_int m)
+          (fun succ ->
+            Format.printf "Setting back edge from %d to %d to %f\n" block succ
+              (lbh_prob /. float_of_int m);
+            prob.(block).(succ) <- lbh_prob /. float_of_int m)
           back_edges;
         List.iter
           (fun succ ->
+            Format.printf "Setting exit edge from %d to %d to %f\n" block succ
+              (not_taken lbh_prob /. float_of_int (n - m));
             prob.(block).(succ) <- not_taken lbh_prob /. float_of_int (n - m))
           exit_edges
       end
-      else if m > 0 && n <> 2 then
+      else if m > 0 || n <> 2 then
         List.iter
           (fun succ -> prob.(block).(succ) <- 1. /. float_of_int n)
           succs
@@ -162,11 +189,15 @@ struct
         let s1, s2 =
           match succs with
           | [ s1; s2 ] -> (s1, s2)
-          | _ -> failwith "expected only two successors"
+          | l ->
+            failwith
+              (Format.asprintf "expected only two successors, got: %a"
+                 Format.(pp_print_list pp_print_int)
+                 l)
         in
         prob.(block).(s1) <- 0.5;
         prob.(block).(s2) <- 0.5;
-        let go_heuristic h =
+        let go_heuristic _desc h =
           let d =
             (prob.(block).(s1) *. h) +. (prob.(block).(s2) *. not_taken h)
           in
@@ -174,7 +205,7 @@ struct
           prob.(block).(s2) <- prob.(block).(s2) *. not_taken h /. d
         in
         List.iter
-          (fun (prob, f) -> if f block s1 s2 then go_heuristic prob)
+          (fun (desc, prob, f) -> if f block s1 s2 then go_heuristic desc prob)
           heuristics
       end
     done
@@ -207,6 +238,7 @@ struct
     let rec propagate_freq block head =
       try
         if IntHashtbl.mem not_visited block then begin
+          Format.printf "Visited block %d\n" block;
           if block = head then bfreq.(block) <- 1.
           else begin
             List.iter
@@ -248,6 +280,8 @@ struct
       with Return -> ()
     in
     for i = 0 to Array.length inner_to_outer_loops - 1 do
+      Format.printf "Prob: %a\n" pp_prob prob;
+      Format.printf "Block Freq: %a\n" pp_bfreq bfreq;
       let head = inner_to_outer_loops.(i) in
       IntHashtbl.clear not_visited;
       (* mark all blocks reachable from head as not visited *)

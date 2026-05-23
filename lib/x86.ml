@@ -287,4 +287,5 @@ module ExecfreqRequirements :
   let call = "call"
   let ret = "ret"
   let cmp = "cmp"
+  let exit = "exit"
 end
