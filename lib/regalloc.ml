@@ -391,3 +391,87 @@ let blockorder state =
   Array.sort (fun a b -> Float.compare trace.(a) trace.(b)) blocks;
   let seen = Array.make Dom.size false in
   List.rev @@ Array.fold_left (add_trace (module Dom) trace seen) [] blocks
+
+let%expect_test "Nested loops register allocation" =
+  let ast =
+    let open Ast in
+    [
+      Assign ("i", Int 0);
+      While
+        ( Bop (Lt, Var "i", Int 100),
+          [
+            Assign ("j", Var "i");
+            While
+              ( Bop (Lt, Var "j", Int 100),
+                [
+                  Assign ("j", Bop (Add, Var "j", Int 1));
+                  Assign ("i", Bop (Add, Var "i", Int 1));
+                ] );
+          ] );
+    ]
+  in
+  let module F = Normalize.Fresh () in
+  let cfg = Normalize.normalize F.fresh ast in
+  let state = Select_x86.State.init () in
+  let cfg = Select_x86.codegen_test_helper state [] cfg in
+  let extra = X86.Cfg.precalculate_edges cfg in
+  let module Extra = (val extra) in
+  let module Dom = Dominator.Make (X86.Cfg) (Extra) in
+  let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
+  let module Freq = Execfreq.Make (X86.Cfg) (Loop) (X86.ExecfreqRequirements) in
+  let next_use_distances = Spill.next_use_distances (module Loop) cfg in
+  let liveness = Spill.Liveness.calc cfg in
+  let module Spill =
+    Spill.Make
+      (Loop)
+      (struct
+        let k = 16
+        let next_use_distances = next_use_distances
+        let liveness = liveness
+      end) in
+  let spill_state = Spill.init state in
+  let cfg = Spill.(spill spill_state cfg) in
+  let block_execution_frequency uid = Freq.bfreq.(Extra.position_of_uid uid) in
+  let regs = X86.Regs.int_regs |> Array.map (fun r -> X86.Target.Physical r) in
+  let state =
+    {
+      regs;
+      block_execution_frequency;
+      liveness;
+      dom = (module Dom);
+      reg_current_var = Array.make (Array.length regs) (-1);
+      reg_current_pref = Array.make (Array.length regs) 0.;
+      processed = Array.make Extra.size false;
+      (* block specific state, initialize for each block *)
+      num_vars = 0;
+      preferences = Array.make_matrix 0 0 0.;
+    }
+  in
+  let go_block cfg pos =
+    let uid = X86.Cfg.idd (Extra.label_of_position pos) in
+    let zblock, cfg = X86.Cfg.focus uid cfg in
+    (* todo: setup state for block *)
+    let block = color_block state (X86.Cfg.zip zblock) in
+    X86.Cfg.(unfocus (unzip block, cfg))
+  in
+  let cfg = List.fold_left go_block cfg (blockorder state) in
+  Format.printf "%a" X86.Printer.pp_graph cfg;
+  [%expect {||}]
+
+(* type state = {
+  regs : X86.Target.reg array;
+  num_vars : int;
+  processed : bool array;
+  block_execution_frequency : X86.Cfg.uid -> float;
+  preferences : float array array;
+  (* initially -1 if no variable for register *)
+  reg_current_var : int array;
+  (* initially 0 *)
+  reg_current_pref : float array;
+  liveness : Spill.Liveness.t;
+  dom :
+    (module Dominator.S
+       with type label = X86.Cfg.label
+        and type uid = X86.Cfg.uid
+        and type position = int);
+} *)
