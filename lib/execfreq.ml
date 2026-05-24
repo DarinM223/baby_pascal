@@ -170,14 +170,16 @@ struct
       else if m > 0 && m < n then begin
         List.iter
           (fun succ ->
-            Format.printf "Setting back edge from %d to %d to %f\n" block succ
-              (lbh_prob /. float_of_int m);
+            Logs.debug (fun f ->
+                f "Setting back edge from %d to %d to %f\n" block succ
+                  (lbh_prob /. float_of_int m));
             prob.(block).(succ) <- lbh_prob /. float_of_int m)
           back_edges;
         List.iter
           (fun succ ->
-            Format.printf "Setting exit edge from %d to %d to %f\n" block succ
-              (not_taken lbh_prob /. float_of_int (n - m));
+            Logs.debug (fun f ->
+                f "Setting exit edge from %d to %d to %f\n" block succ
+                  (not_taken lbh_prob /. float_of_int (n - m)));
             prob.(block).(succ) <- not_taken lbh_prob /. float_of_int (n - m))
           exit_edges
       end
@@ -238,7 +240,7 @@ struct
     let rec propagate_freq block head =
       try
         if IntHashtbl.mem not_visited block then begin
-          Format.printf "Visited block %d\n" block;
+          Logs.debug (fun f -> f "Visited block %d\n" block);
           if block = head then bfreq.(block) <- 1.
           else begin
             List.iter
@@ -280,8 +282,8 @@ struct
       with Return -> ()
     in
     for i = 0 to Array.length inner_to_outer_loops - 1 do
-      Format.printf "Prob: %a\n" pp_prob prob;
-      Format.printf "Block Freq: %a\n" pp_bfreq bfreq;
+      Logs.debug (fun f -> f "Prob: %a\n" pp_prob prob);
+      Logs.debug (fun f -> f "Block Freq: %a\n" pp_bfreq bfreq);
       let head = inner_to_outer_loops.(i) in
       IntHashtbl.clear not_visited;
       (* mark all blocks reachable from head as not visited *)
