@@ -392,6 +392,8 @@ let blockorder state =
   let seen = Array.make Dom.size false in
   List.rev @@ Array.fold_left (add_trace (module Dom) trace seen) [] blocks
 
+module IntHashtbl = Hashtbl.Make (Int)
+
 let%expect_test "Nested loops register allocation" =
   let ast =
     let open Ast in
@@ -430,10 +432,11 @@ let%expect_test "Nested loops register allocation" =
         let liveness = liveness
       end) in
   let spill_state = Spill.init state in
-  let cfg = Spill.(spill spill_state cfg) in
+  let cfg = Spill.spill spill_state cfg in
   let block_execution_frequency uid = Freq.bfreq.(Extra.position_of_uid uid) in
   let regs = X86.Regs.int_regs |> Array.map (fun r -> X86.Target.Physical r) in
-  let state =
+  let num_vars = IntHashtbl.length state.vreg_block in
+  let alloc_state =
     {
       regs;
       block_execution_frequency;
@@ -442,36 +445,40 @@ let%expect_test "Nested loops register allocation" =
       reg_current_var = Array.make (Array.length regs) (-1);
       reg_current_pref = Array.make (Array.length regs) 0.;
       processed = Array.make Extra.size false;
-      (* block specific state, initialize for each block *)
-      num_vars = 0;
-      preferences = Array.make_matrix 0 0 0.;
+      num_vars;
+      preferences = Array.make_matrix num_vars (Array.length regs) 0.;
     }
   in
   let go_block cfg pos =
     let uid = X86.Cfg.idd (Extra.label_of_position pos) in
     let zblock, cfg = X86.Cfg.focus uid cfg in
-    (* todo: setup state for block *)
-    let block = color_block state (X86.Cfg.zip zblock) in
+    let block = color_block alloc_state (X86.Cfg.zip zblock) in
     X86.Cfg.(unfocus (unzip block, cfg))
   in
-  let cfg = List.fold_left go_block cfg (blockorder state) in
+  let cfg = List.fold_left go_block cfg (blockorder alloc_state) in
+  (* todo: fix test output to be correct *)
   Format.printf "%a" X86.Printer.pp_graph cfg;
-  [%expect {||}]
-
-(* type state = {
-  regs : X86.Target.reg array;
-  num_vars : int;
-  processed : bool array;
-  block_execution_frequency : X86.Cfg.uid -> float;
-  preferences : float array array;
-  (* initially -1 if no variable for register *)
-  reg_current_var : int array;
-  (* initially 0 *)
-  reg_current_pref : float array;
-  liveness : Spill.Liveness.t;
-  dom :
-    (module Dominator.S
-       with type label = X86.Cfg.label
-        and type uid = X86.Cfg.uid
-        and type position = int);
-} *)
+  [%expect
+    {|
+      movq %rax(0), $0
+      j label6
+    label1(local=false)():
+      exit
+    label2(local=false)(rax(1)):
+      cmp LT %rax(1), $100, label3, label1
+    label3(local=false)():
+      movq %rax(2), %rax(1)
+      j label4(%rax(1), %rax(2))
+    label4(local=false)(rax(3), rbx(4)):
+      cmp LT %rbx(4), $100, label5, label2(%rax(3))
+    label5(local=false)():
+      movq %rax(7), %rax(3)
+      addq %rbx(6), %rax(7), $1
+      movq %rsi(5), %rbx(6)
+      movq %r13(10), %rbx(4)
+      addq %r15(9), %r13(10), $1
+      movq %r14(8), %r15(9)
+      j label4(%rsi(5), %r14(8))
+    label6(local=false)():
+      j label2(%rax(0))
+    |}]

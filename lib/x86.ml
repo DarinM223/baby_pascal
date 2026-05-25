@@ -42,8 +42,12 @@ module Target = struct
   and pp_reg fmt = function
     | Physical (_, _, s) -> Format.fprintf fmt "%s" s
     | Virtual v ->
-      Format.fprintf fmt "%d%a%a" v.id pp_reg_class v.reg_class pp_reg_constr
-        v.reg_constr
+      begin match v.reg with
+      | Physical _ as r -> Format.fprintf fmt "%a(%d)" pp_reg r v.id
+      | _ ->
+        Format.fprintf fmt "%d%a%a" v.id pp_reg_class v.reg_class pp_reg_constr
+          v.reg_constr
+      end
     | Tombstone -> ()
   let show_reg_constr = Format.asprintf "%a" pp_reg_constr
   let show_reg = Format.asprintf "%a" pp_reg
