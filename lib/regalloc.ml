@@ -26,6 +26,28 @@ type state = {
         and type position = int);
 }
 
+let pp_preferences regs fmt preferences =
+  let open Format in
+  pp_open_box fmt 0;
+  pp_print_string fmt "[";
+  for i = 0 to Array.length preferences - 1 do
+    pp_print_int fmt i;
+    pp_print_string fmt " -> ";
+    pp_open_box fmt 0;
+    pp_print_string fmt "[";
+    for j = 0 to Array.length preferences.(i) - 1 do
+      let reg = regs.(j) in
+      let pref = preferences.(i).(j) in
+      printf "%a: %f" X86.Target.pp_reg reg pref;
+      if j <> Array.length preferences.(i) - 1 then pp_print_string fmt ", "
+    done;
+    pp_print_string fmt "]";
+    pp_close_box fmt ();
+    if i <> Array.length preferences - 1 then pp_print_string fmt ", "
+  done;
+  pp_print_string fmt "]";
+  pp_close_box fmt ()
+
 let get_register state uid var occupied head : int * float * X86.Cfg.head =
   let preferences =
     state.preferences.(X86.Target.index var)
@@ -155,10 +177,8 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
     (Dom.successors pos);
   block
 
-let build_preferences state graph : float array array =
-  let preferences =
-    Array.init_matrix state.num_vars (Array.length state.regs) (fun _ _ -> 0.)
-  in
+let build_preferences state graph : unit =
+  let preferences = state.preferences in
   let rec handle_operand ?(def = false) uid live = function
     | X86.Target.(Reg (Virtual { id; reg_constr = ReuseOperand reg; _ }))
       when def ->
@@ -222,8 +242,7 @@ let build_preferences state graph : float array array =
     go_head head
   in
   let rpo = X86.Cfg.reverse_postorder_dfs graph in
-  List.iter go_block rpo;
-  preferences
+  List.iter go_block rpo
 
 let create_congruence_class state classes graph block =
   let live =
@@ -257,7 +276,7 @@ let create_congruence_class state classes graph block =
       RegSet.exists check_interferes live
       || args
          |> List.filter_map (function
-           | X86.Target.Reg r when r <> arg -> Some r
+           | X86.Target.Reg r when not (X86.Target.equal_reg r arg) -> Some r
            | _ -> None)
          |> List.exists check_interferes
     in
@@ -449,6 +468,22 @@ let%expect_test "Nested loops register allocation" =
       preferences = Array.make_matrix num_vars (Array.length regs) 0.;
     }
   in
+  build_preferences alloc_state cfg;
+  combine_congruence_classes alloc_state cfg;
+  Format.printf "%a\n" (pp_preferences alloc_state.regs) alloc_state.preferences;
+  [%expect {|
+    [0 -> [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 1 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 2 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 3 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 4 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 5 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 6 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 7 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 8 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 9 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 10 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000]]
+    |}];
   let go_block cfg pos =
     let uid = X86.Cfg.idd (Extra.label_of_position pos) in
     let zblock, cfg = X86.Cfg.focus uid cfg in
