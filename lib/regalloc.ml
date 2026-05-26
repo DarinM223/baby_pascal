@@ -49,7 +49,25 @@ let pp_preferences regs fmt preferences =
   pp_print_string fmt "]";
   pp_close_box fmt ()
 
+let find_reg_index regs reg : int =
+  match Array.find_index (X86.Target.equal_reg reg) regs with
+  | Some index -> index
+  | None ->
+    failwith
+      (Format.asprintf "find_reg: couldn't find index for register %a"
+         X86.Target.pp_reg reg)
+
 let get_register state uid var head : int * float * X86.Cfg.head =
+  (* give preference bonus to ReuseOperand contraints *)
+  begin match var with
+  | X86.Target.Virtual { reg_constr = ReuseOperand (Virtual r); _ } ->
+    let weight = state.block_execution_frequency uid in
+    let reg_index = find_reg_index state.regs r.reg in
+    state.preferences.(X86.Target.index var).(reg_index) <-
+      state.preferences.(X86.Target.index var).(reg_index)
+      +. (weight *. Weights.aff_should_be_same)
+  | _ -> ()
+  end;
   let preferences =
     state.preferences.(X86.Target.index var)
     |> Array.mapi (fun i pref -> (i, pref))
@@ -130,7 +148,7 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
     X86.Target.RegSet.iter
       (function
         | X86.Target.Virtual a' as a when dies state uid a instr_num ->
-          let reg = X86.Target.index a'.reg in
+          let reg = find_reg_index state.regs a'.reg in
           state.reg_current_var.(reg) <- -1;
           state.reg_current_pref.(reg) <- 0.;
           CCBV.reset state.occupied reg
@@ -446,7 +464,7 @@ let%expect_test "Nested loops register allocation" =
   let module Freq = Execfreq.Make (X86.Cfg) (Loop) (X86.ExecfreqRequirements) in
   let next_use_distances = Spill.next_use_distances (module Loop) cfg in
   let liveness = Spill.Liveness.calc cfg in
-  let module Spill =
+  let module Spill' =
     Spill.Make
       (Loop)
       (struct
@@ -454,8 +472,10 @@ let%expect_test "Nested loops register allocation" =
         let next_use_distances = next_use_distances
         let liveness = liveness
       end) in
-  let spill_state = Spill.init state in
-  let cfg = Spill.spill spill_state cfg in
+  let spill_state = Spill'.init state in
+  let cfg = Spill'.spill spill_state cfg in
+  (* have to recalculate because added spills may have modified the instruction numbers *)
+  let liveness = Spill.Liveness.calc cfg in
   let block_execution_frequency uid = Freq.bfreq.(Extra.position_of_uid uid) in
   let regs = X86.Regs.int_regs |> Array.map (fun r -> X86.Target.Physical r) in
   let num_vars = IntHashtbl.length state.vreg_block in
@@ -505,21 +525,21 @@ let%expect_test "Nested loops register allocation" =
       j label6
     label1(local=false)():
       exit
-    label2(local=false)(rbx(1)):
-      cmp LT %rbx(1), $100, label3, label1
+    label2(local=false)(rax(1)):
+      cmp LT %rax(1), $100, label3, label1
     label3(local=false)():
-      movq %rsi(2), %rbx(1)
-      j label4(%rbx(1), %rsi(2))
-    label4(local=false)(r13(3), r15(4)):
-      cmp LT %r15(4), $100, label5, label2(%r13(3))
+      movq %rbx(2), %rax(1)
+      j label4(%rax(1), %rbx(2))
+    label4(local=false)(rax(3), rbx(4)):
+      cmp LT %rbx(4), $100, label5, label2(%rax(3))
     label5(local=false)():
-      movq %r14(7), %r13(3)
-      addq %r12(6), %r14(7), $1
-      movq %r11(5), %r12(6)
-      movq %r10(10), %r15(4)
-      addq %r9(9), %r10(10), $1
-      movq %r8(8), %r9(9)
-      j label4(%r11(5), %r8(8))
+      movq %rax(7), %rax(3)
+      addq %rax(6), %rax(7), $1
+      movq %rax(5), %rax(6)
+      movq %rbx(10), %rbx(4)
+      addq %rbx(9), %rbx(10), $1
+      movq %rbx(8), %rbx(9)
+      j label4(%rax(5), %rbx(8))
     label6(local=false)():
       j label2(%rax(0))
     |}]

@@ -214,7 +214,7 @@ module Liveness = struct
       { a with dies }
     in
     let finish_dead (a : State.t) =
-      { a with dies = RegMap.map (fun off -> a.count - off) a.dies }
+      { a with dies = RegMap.map (fun off -> a.count - 1 - off) a.dies }
     in
     let first_in (a : State.t) = function
       | X86.Cfg.Entry -> finish_dead a
