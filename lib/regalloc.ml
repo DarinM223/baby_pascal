@@ -19,6 +19,7 @@ type state = {
   (* initially 0 *)
   reg_current_pref : float array;
   liveness : Spill.Liveness.t;
+  occupied : CCBV.t;
   dom :
     (module Dominator.S
        with type label = X86.Cfg.label
@@ -48,7 +49,7 @@ let pp_preferences regs fmt preferences =
   pp_print_string fmt "]";
   pp_close_box fmt ()
 
-let get_register state uid var occupied head : int * float * X86.Cfg.head =
+let get_register state uid var head : int * float * X86.Cfg.head =
   let preferences =
     state.preferences.(X86.Target.index var)
     |> Array.mapi (fun i pref -> (i, pref))
@@ -61,7 +62,7 @@ let get_register state uid var occupied head : int * float * X86.Cfg.head =
   try
     for i = Array.length preferences - 1 downto 0 do
       let reg, pref = preferences.(i) in
-      if not (CCBV.get occupied reg) then raise (Reg (reg, pref, head));
+      if not (CCBV.get state.occupied reg) then raise (Reg (reg, pref, head));
       let ovar = state.reg_current_var.(reg) in
       let preferences =
         Array.mapi (fun i pref -> (i, pref)) state.preferences.(ovar)
@@ -72,14 +73,17 @@ let get_register state uid var occupied head : int * float * X86.Cfg.head =
       try
         for i = Array.length preferences - 1 downto 0 do
           let oreg, opref = preferences.(i) in
-          if not (CCBV.get occupied oreg) then
+          if not (CCBV.get state.occupied oreg) then
             raise (Break (oreg, opref -. state.reg_current_pref.(oreg)))
         done
       with Break (oreg, other_win) ->
         if i + 1 < Array.length preferences then
           let _, next_pref = preferences.(i + 1) in
           let win = next_pref -. pref in
-          if win +. other_win > state.block_execution_frequency uid then
+          if win +. other_win > state.block_execution_frequency uid then begin
+            Logs.debug (fun m ->
+                m "Adding move from %a to %a" X86.Target.pp_reg state.regs.(reg)
+                  X86.Target.pp_reg state.regs.(oreg));
             let mov =
               X86.Target.mov
                 ~dest:(Reg state.regs.(oreg))
@@ -87,6 +91,7 @@ let get_register state uid var occupied head : int * float * X86.Cfg.head =
             in
             let head = X86.Cfg.Head (head, Instruction mov) in
             raise (Reg (reg, pref, head))
+          end
     done;
     failwith "get_register: couldn't find non-occupied register"
   with Reg (reg, pref, head) -> (reg, pref, head)
@@ -102,7 +107,6 @@ let dies state uid a instr_num =
 
 let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
   let uid = X86.Cfg.id block in
-  let occupied = CCBV.create ~size:(Array.length state.regs) false in
   let phis =
     match first with
     | X86.Cfg.Entry -> []
@@ -112,11 +116,11 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
     List.fold_left
       (fun head -> function
         | X86.Target.Virtual phi' as phi ->
-          let reg, pref, head = get_register state uid phi occupied head in
+          let reg, pref, head = get_register state uid phi head in
           phi'.reg <- state.regs.(reg);
           state.reg_current_var.(reg) <- phi'.id;
           state.reg_current_pref.(reg) <- pref;
-          CCBV.set occupied reg;
+          CCBV.set state.occupied reg;
           head
         | _ -> head)
       (X86.Cfg.First first) phis
@@ -129,18 +133,18 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
           let reg = X86.Target.index a'.reg in
           state.reg_current_var.(reg) <- -1;
           state.reg_current_pref.(reg) <- 0.;
-          CCBV.reset occupied reg
+          CCBV.reset state.occupied reg
         | _ -> ())
       (X86.Target.uses instr);
     X86.Target.RegSet.fold
       (function
         | X86.Target.Virtual r' as r ->
           fun head ->
-            let reg, pref, head = get_register state uid r occupied head in
+            let reg, pref, head = get_register state uid r head in
             r'.reg <- state.regs.(reg);
             state.reg_current_var.(reg) <- r'.id;
             state.reg_current_pref.(reg) <- pref;
-            CCBV.set occupied reg;
+            CCBV.set state.occupied reg;
             head
         | _ -> fun head -> head)
       (X86.Target.defs instr) head
@@ -466,12 +470,14 @@ let%expect_test "Nested loops register allocation" =
       processed = Array.make Extra.size false;
       num_vars;
       preferences = Array.make_matrix num_vars (Array.length regs) 0.;
+      occupied = CCBV.create ~size:(Array.length regs) false;
     }
   in
   build_preferences alloc_state cfg;
   combine_congruence_classes alloc_state cfg;
   Format.printf "%a\n" (pp_preferences alloc_state.regs) alloc_state.preferences;
-  [%expect {|
+  [%expect
+    {|
     [0 -> [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 1 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 2 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 3 ->
@@ -499,21 +505,21 @@ let%expect_test "Nested loops register allocation" =
       j label6
     label1(local=false)():
       exit
-    label2(local=false)(rax(1)):
-      cmp LT %rax(1), $100, label3, label1
+    label2(local=false)(rbx(1)):
+      cmp LT %rbx(1), $100, label3, label1
     label3(local=false)():
-      movq %rax(2), %rax(1)
-      j label4(%rax(1), %rax(2))
-    label4(local=false)(rax(3), rbx(4)):
-      cmp LT %rbx(4), $100, label5, label2(%rax(3))
+      movq %rsi(2), %rbx(1)
+      j label4(%rbx(1), %rsi(2))
+    label4(local=false)(r13(3), r15(4)):
+      cmp LT %r15(4), $100, label5, label2(%r13(3))
     label5(local=false)():
-      movq %rax(7), %rax(3)
-      addq %rbx(6), %rax(7), $1
-      movq %rsi(5), %rbx(6)
-      movq %r13(10), %rbx(4)
-      addq %r15(9), %r13(10), $1
-      movq %r14(8), %r15(9)
-      j label4(%rsi(5), %r14(8))
+      movq %r14(7), %r13(3)
+      addq %r12(6), %r14(7), $1
+      movq %r11(5), %r12(6)
+      movq %r10(10), %r15(4)
+      addq %r9(9), %r10(10), $1
+      movq %r8(8), %r9(9)
+      j label4(%r11(5), %r8(8))
     label6(local=false)():
       j label2(%rax(0))
     |}]
