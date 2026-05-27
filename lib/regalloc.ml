@@ -474,6 +474,147 @@ let%expect_test "Nested loops register allocation" =
       end) in
   let spill_state = Spill'.init state in
   let cfg = Spill'.spill spill_state cfg in
+  let module Reconstruct = Reconstruct.Make (X86.Target) (X86.Cfg) (Dom) in
+  let reconstruct_copies reg _ graph =
+    let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
+    let def_blocks =
+      List.map
+        (fun r ->
+          Deadcode.IntHashtbl.find spill_state.select_state.vreg_block
+            (X86.Target.index r))
+        (reg :: copies)
+    in
+    Reconstruct.reconstruct
+      (fun () -> spill_state.select_state.fresh_vreg Int)
+      (Spill'.RegSet.singleton reg)
+      (Spill'.RegSet.of_list copies)
+      def_blocks graph
+  in
+  let cfg = Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg in
+  (* have to recalculate because added spills may have modified the instruction numbers *)
+  let liveness = Spill.Liveness.calc cfg in
+  let block_execution_frequency uid = Freq.bfreq.(Extra.position_of_uid uid) in
+  let regs = X86.Regs.int_regs |> Array.map (fun r -> X86.Target.Physical r) in
+  let num_vars = IntHashtbl.length state.vreg_block in
+  let alloc_state =
+    {
+      regs;
+      block_execution_frequency;
+      liveness;
+      dom = (module Dom);
+      reg_current_var = Array.make (Array.length regs) (-1);
+      reg_current_pref = Array.make (Array.length regs) 0.;
+      processed = Array.make Extra.size false;
+      num_vars;
+      preferences = Array.make_matrix num_vars (Array.length regs) 0.;
+      occupied = CCBV.create ~size:(Array.length regs) false;
+    }
+  in
+  build_preferences alloc_state cfg;
+  combine_congruence_classes alloc_state cfg;
+  Format.printf "%a\n" (pp_preferences alloc_state.regs) alloc_state.preferences;
+  [%expect
+    {|
+    [0 -> [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 1 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 2 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 3 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 4 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 5 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 6 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 7 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 8 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 9 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 10 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000]]
+    |}];
+  let go_block cfg pos =
+    let uid = X86.Cfg.idd (Extra.label_of_position pos) in
+    let zblock, cfg = X86.Cfg.focus uid cfg in
+    let block = color_block alloc_state (X86.Cfg.zip zblock) in
+    X86.Cfg.(unfocus (unzip block, cfg))
+  in
+  let cfg = List.fold_left go_block cfg (blockorder alloc_state) in
+  (* todo: fix test output to be correct *)
+  Format.printf "%a" X86.Printer.pp_graph cfg;
+  [%expect
+    {|
+      movq %rax(0), $0
+      j label6
+    label1(local=false)():
+      exit
+    label2(local=false)(rax(1)):
+      cmp LT %rax(1), $100, label3, label1
+    label3(local=false)():
+      movq %rbx(2), %rax(1)
+      j label4(%rax(1), %rbx(2))
+    label4(local=false)(rax(3), rbx(4)):
+      cmp LT %rbx(4), $100, label5, label2(%rax(3))
+    label5(local=false)():
+      movq %rax(7), %rax(3)
+      addq %rax(6), %rax(7), $1
+      movq %rax(5), %rax(6)
+      movq %rbx(10), %rbx(4)
+      addq %rbx(9), %rbx(10), $1
+      movq %rbx(8), %rbx(9)
+      j label4(%rax(5), %rbx(8))
+    label6(local=false)():
+      j label2(%rax(0))
+    |}]
+
+let%expect_test "Fibonacci register allocation" =
+  let fibonacci fn v =
+    let open Ast in
+    If
+      ( Bop (Le, Var v, Int 1),
+        [ Assign (fn, Var v) ],
+        [
+          Assign
+            ( fn,
+              Bop
+                ( Add,
+                  Call (fn, [ Bop (Sub, Var v, Int 1) ]),
+                  Call (fn, [ Bop (Sub, Var v, Int 2) ]) ) );
+        ] )
+  in
+  let ast = fibonacci "fibonacci" "v" in
+  let module F = Normalize.Fresh () in
+  let cfg = Normalize.(set_return "fibonacci" (normalize F.fresh [ ast ])) in
+  let state = Select_x86.State.init () in
+  let cfg = Select_x86.codegen_test_helper state [ "v" ] cfg in
+  let extra = X86.Cfg.precalculate_edges cfg in
+  let module Extra = (val extra) in
+  let module Dom = Dominator.Make (X86.Cfg) (Extra) in
+  let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
+  let module Freq = Execfreq.Make (X86.Cfg) (Loop) (X86.ExecfreqRequirements) in
+  let next_use_distances = Spill.next_use_distances (module Loop) cfg in
+  let liveness = Spill.Liveness.calc cfg in
+  let module Spill' =
+    Spill.Make
+      (Loop)
+      (struct
+        let k = 16
+        let next_use_distances = next_use_distances
+        let liveness = liveness
+      end) in
+  let spill_state = Spill'.init state in
+  let cfg = Spill'.spill spill_state cfg in
+  let module Reconstruct = Reconstruct.Make (X86.Target) (X86.Cfg) (Dom) in
+  let reconstruct_copies reg _ graph =
+    let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
+    let def_blocks =
+      List.map
+        (fun r ->
+          Deadcode.IntHashtbl.find spill_state.select_state.vreg_block
+            (X86.Target.index r))
+        (reg :: copies)
+    in
+    Reconstruct.reconstruct
+      (fun () -> spill_state.select_state.fresh_vreg Int)
+      (Spill'.RegSet.singleton reg)
+      (Spill'.RegSet.of_list copies)
+      def_blocks graph
+  in
+  let cfg = Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg in
   (* have to recalculate because added spills may have modified the instruction numbers *)
   let liveness = Spill.Liveness.calc cfg in
   let block_execution_frequency uid = Freq.bfreq.(Extra.position_of_uid uid) in

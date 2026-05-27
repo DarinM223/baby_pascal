@@ -418,10 +418,14 @@ struct
     IntHashtbl.mem state.spill_mapping (X86.Target.index v)
 
   let reload (state : spill_state) v =
-    let slot = IntHashtbl.find state.spill_mapping (X86.Target.index v) in
-    let v' = state.select_state.fresh_vreg Int in
-    RegHashtbl.add state.copies v v';
-    X86.Target.mov ~dest:(X86.Target.Reg v') ~src:slot
+    try
+      let slot = IntHashtbl.find state.spill_mapping (X86.Target.index v) in
+      let v' = state.select_state.fresh_vreg Int in
+      RegHashtbl.add state.copies v v';
+      X86.Target.mov ~dest:(X86.Target.Reg v') ~src:slot
+    with Not_found ->
+      failwith
+      @@ Format.asprintf "Couldn't find spill slot for %a" X86.Target.pp_reg v
 
   let limit ~add_spills (state : spill_state) ({ w; s } : min_state)
       (block_uid : X86.Cfg.uid) (instr_num : int) (head : X86.Cfg.head)
