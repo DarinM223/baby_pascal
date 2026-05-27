@@ -534,7 +534,8 @@ struct
     in
     go 0 w s zblock
 
-  let spill (state : spill_state) (graph : X86.Cfg.graph) : X86.Cfg.graph =
+  let spill ?(args = []) (state : spill_state) (graph : X86.Cfg.graph) :
+      X86.Cfg.graph =
     let processed = Array.make Loop.Dom.size false in
     let saved_w_entry = Array.make Loop.Dom.size RegSet.empty in
     let saved_s_entry = Array.make Loop.Dom.size RegSet.empty in
@@ -567,6 +568,7 @@ struct
       let pos = Loop.Dom.position_of_uid block_uid in
       let w_entry =
         if Loop.PositionSet.mem pos Loop.loop_headers then init_loop_header pos
+        else if block_uid = X86.Cfg.entry_uid then RegSet.of_list args
         else init_usual (fun pos -> saved_w_exit.(pos)) pos
       in
       (* intersection(union(s_exit for all predecessors), w_entry) *)

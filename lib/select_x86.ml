@@ -158,7 +158,6 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
   | Undag.Target.Call (dest, f, args) ->
     let open Target in
     let dest = assign_vreg Int dest in
-    let rax = Reg (constrained Regs.rax (fresh_vreg Int)) in
     let* f = translate_operand f in
     let f =
       match f with
@@ -169,6 +168,14 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
     let dests = List.(init (length args) (call_conv_int state)) in
     let defs =
       List.map (fun r -> Reg (constrained r (fresh_vreg Int))) Regs.caller_save
+    in
+    let rax =
+      List.find
+        (function
+          | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = Regs.rax ->
+            true
+          | _ -> false)
+        defs
     in
     pcopy ~dests ~srcs:args
     @> instr "call" ~defs ~uses:[ Label (f, []) ]
@@ -209,8 +216,8 @@ let codegen_block state ((first, tail) : Undag.Cfg.block) : Cfg.block =
   let tail = go_tail tail in
   (first, tail)
 
-let codegen_function ~args (state : State.t) (graph : Undag.Cfg.graph) :
-    Cfg.graph =
+let codegen_function ?(args = []) (state : State.t) (graph : Undag.Cfg.graph) :
+    Target.operand list * Cfg.graph =
   let srcs = List.init (List.length args) (call_conv_int state) in
   let dests =
     List.map
@@ -229,10 +236,10 @@ let codegen_function ~args (state : State.t) (graph : Undag.Cfg.graph) :
   let zblock, graph = X86.Cfg.focus_entry graph in
   match zblock with
   | First Entry, tail when not (List.is_empty args) ->
-    X86.Cfg.unfocus ((First Entry, Tail (pcopy, tail)), graph)
-  | _ -> X86.Cfg.unfocus (zblock, graph)
+    (srcs, X86.Cfg.unfocus ((First Entry, Tail (pcopy, tail)), graph))
+  | _ -> (srcs, X86.Cfg.unfocus (zblock, graph))
 
-let codegen_test_helper state args cfg =
+let codegen_test_helper ?(args = []) state cfg =
   let extra = Normalize.Cfg.precalculate_edges cfg in
   let module Extra = (val extra) in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
@@ -265,33 +272,33 @@ let%expect_test "Fibonacci code generation" =
   let ast = fibonacci "fibonacci" "v" in
   let module F = Normalize.Fresh () in
   let cfg = Normalize.(set_return "fibonacci" (normalize F.fresh [ ast ])) in
-  let cfg = codegen_test_helper (State.init ()) [ "v" ] cfg in
+  let _, cfg = codegen_test_helper ~args:[ "v" ] (State.init ()) cfg in
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
       pcopy [(%1any, %0(%rdi))]
       cmp LE %1any, $1, label2, label3
-    label1(local=false)(34any):
-      movq %35(%rax), %34any
-      ret %35(%rax)
+    label1(local=false)(32any):
+      movq %33(%rax), %32any
+      ret %33(%rax)
     label2(local=false)():
       movq %2any, %1any
       j label1(%2any)
     label3(local=false)():
-      movq %6any, %1any
-      subq %5(reuse=%6), %6any, $1
-      pcopy [(%7(%rdi), %5(reuse=%6))]
-      call %8(%rax), %9(%rcx), %10(%rdx), %11(%rsi), %12(%rdi), %13(%r8), %14(%r9), %15(%r10), %16(%r11), fibonacci
-      movq %3any, %4(%rax)
-      movq %20any, %1any
-      subq %19(reuse=%20), %20any, $2
-      pcopy [(%21(%rdi), %19(reuse=%20))]
-      call %22(%rax), %23(%rcx), %24(%rdx), %25(%rsi), %26(%rdi), %27(%r8), %28(%r9), %29(%r10), %30(%r11), fibonacci
-      movq %17any, %18(%rax)
-      movq %33any, %3any
-      addq %32(reuse=%33), %33any, %17any
-      movq %31any, %32(reuse=%33)
-      j label1(%31any)
+      movq %5any, %1any
+      subq %4(reuse=%5), %5any, $1
+      pcopy [(%6(%rdi), %4(reuse=%5))]
+      call %7(%rax), %8(%rcx), %9(%rdx), %10(%rsi), %11(%rdi), %12(%r8), %13(%r9), %14(%r10), %15(%r11), fibonacci
+      movq %3any, %7(%rax)
+      movq %18any, %1any
+      subq %17(reuse=%18), %18any, $2
+      pcopy [(%19(%rdi), %17(reuse=%18))]
+      call %20(%rax), %21(%rcx), %22(%rdx), %23(%rsi), %24(%rdi), %25(%r8), %26(%r9), %27(%r10), %28(%r11), fibonacci
+      movq %16any, %20(%rax)
+      movq %31any, %3any
+      addq %30(reuse=%31), %31any, %16any
+      movq %29any, %30(reuse=%31)
+      j label1(%29any)
     |}]
 
 let%expect_test "Nested loops code generation" =
@@ -314,7 +321,7 @@ let%expect_test "Nested loops code generation" =
   in
   let module F = Normalize.Fresh () in
   let cfg = Normalize.normalize F.fresh ast in
-  let cfg = codegen_test_helper (State.init ()) [] cfg in
+  let _, cfg = codegen_test_helper (State.init ()) cfg in
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|

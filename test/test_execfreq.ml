@@ -34,7 +34,7 @@ let test_nested_loops () =
   in
   let module F = Normalize.Fresh () in
   let cfg = Normalize.normalize F.fresh ast in
-  let cfg = Select_x86.(codegen_test_helper (State.init ()) [] cfg) in
+  let _, cfg = Select_x86.(codegen_test_helper (State.init ()) cfg) in
   Logs.debug (fun m -> m "%a" X86.Printer.pp_graph cfg);
   let extra = X86.Cfg.precalculate_edges cfg in
   let module Extra = (val extra) in
