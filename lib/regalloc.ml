@@ -156,7 +156,7 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       (X86.Target.uses instr);
     X86.Target.RegSet.fold
       (function
-        | X86.Target.Virtual r' as r ->
+        | X86.Target.Virtual r' as r when not (dies state uid r instr_num) ->
           fun head ->
             let reg, pref, head = get_register state uid r head in
             r'.reg <- state.regs.(reg);
@@ -706,6 +706,20 @@ let%expect_test "Fibonacci register allocation" =
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 33 ->
     [rax: 0.000000, rbx: -2.000000, rcx: -2.000000, rdx: -2.000000, rsi: -2.000000, rdi: -2.000000, rsp: -2.000000, rbp: -2.000000, r8: -2.000000, r9: -2.000000, r10: -2.000000, r11: -2.000000, r12: -2.000000, r13: -2.000000, r14: -2.000000, r15: -2.000000]]
     |}];
+  let rec reg =
+    X86.Target.Virtual
+      { id = 8; reg_class = Int; reg; reg_constr = UsePhysical X86.Regs.rcx }
+  in
+  let label = X86.Cfg.(block_label (zip (fst (X86.Cfg.focus 3 cfg)))) in
+  Format.printf "Label: %a\n" (Format.pp_print_option X86.Cfg.pp_label) label;
+  let dies = liveness.dies 3 reg in
+  Format.printf "8(rcx) dies at: %a\n"
+    Format.(pp_print_option pp_print_int)
+    dies;
+  [%expect {|
+    Label: (3, "label3")
+    8(rcx) dies at: 3
+    |}];
   let go_block cfg pos =
     let uid = X86.Cfg.idd (Extra.label_of_position pos) in
     let zblock, cfg = X86.Cfg.focus uid cfg in
@@ -715,4 +729,28 @@ let%expect_test "Fibonacci register allocation" =
   let cfg = List.fold_left go_block cfg (blockorder alloc_state) in
   (* todo: fix test output to be correct *)
   Format.printf "%a" X86.Printer.pp_graph cfg;
-  [%expect {||}]
+  [%expect {|
+      pcopy [(%rbx(1), %0(%rdi))]
+      cmp LE %rbx(1), $1, label2, label3
+    label1(local=false)(rax(32)):
+      movq %rax(33), %rax(32)
+      ret %rax(33)
+    label2(local=false)():
+      movq %rax(2), %rbx(1)
+      j label1(%rax(2))
+    label3(local=false)():
+      movq %rax(5), %rbx(1)
+      subq %rax(4), %rax(5), $1
+      pcopy [(%6(%rdi), %rax(4))]
+      call %rax(7), %8(%rcx), %9(%rdx), %10(%rsi), %11(%rdi), %12(%r8), %13(%r9), %14(%r10), %15(%r11), fibonacci
+      movq %r13(3), %rax(7)
+      movq %rax(18), %rbx(1)
+      subq %rax(17), %rax(18), $2
+      pcopy [(%19(%rdi), %rax(17))]
+      call %rax(20), %21(%rcx), %22(%rdx), %23(%rsi), %24(%rdi), %25(%r8), %26(%r9), %27(%r10), %28(%r11), fibonacci
+      movq %rax(16), %rax(20)
+      movq %rbx(31), %r13(3)
+      addq %rbx(30), %rbx(31), %rax(16)
+      movq %rax(29), %rbx(30)
+      j label1(%rax(29))
+    |}]

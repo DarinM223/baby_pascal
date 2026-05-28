@@ -207,7 +207,8 @@ module Liveness = struct
       (* died: uses in instruction that aren't in a's mapping *)
       let dies =
         RegSet.fold
-          (fun dead acc -> RegMap.add dead a.count acc)
+          (fun dead acc ->
+            if RegMap.mem dead acc then acc else RegMap.add dead a.count acc)
           (RegSet.diff uses a.mapping)
           a.dies
       in
@@ -228,6 +229,7 @@ module Liveness = struct
       let instr_uses = uses instr in
       let instr_defs = defs instr in
       let a = update_dead instr_uses a in
+      let a = update_dead instr_defs a in
       update_mapping
         RegSet.(union instr_uses (diff a.mapping instr_defs))
         { a with used = RegSet.union instr_uses a.used; count = a.count + 1 }
