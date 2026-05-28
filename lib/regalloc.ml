@@ -114,9 +114,20 @@ let get_register state uid var head : int * float * X86.Cfg.head =
     failwith "get_register: couldn't find non-occupied register"
   with Reg (reg, pref, head) -> (reg, pref, head)
 
-let enforce_constraints _state _instr = ()
-
-let implement_phi_copies _state ~src:_ ~dest:_ = ()
+let implement_phi_copies state cfg ~src ~dest =
+  (* todo: add_phi_permutations in libfirm *)
+  let module Dom = (val state.dom) in
+  let zblock, cfg = X86.Cfg.(focus (idd (Dom.label_of_position src)) cfg) in
+  let head, last = X86.Cfg.goto_end zblock in
+  let tail = X86.Cfg.Last last in
+  let _phis =
+    match
+      X86.Cfg.(first (fst (focus (idd (Dom.label_of_position dest)) cfg)))
+    with
+    | X86.Cfg.Label (_, info) -> info.args
+    | X86.Cfg.Entry -> []
+  in
+  X86.Cfg.unfocus ((head, tail), cfg)
 
 let dies state uid a instr_num =
   match state.liveness.dies uid a with
@@ -144,7 +155,6 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       (X86.Cfg.First first) phis
   in
   let handle_instruction instr_num head instr =
-    enforce_constraints state instr;
     X86.Target.RegSet.iter
       (function
         | X86.Target.Virtual a' as a when dies state uid a instr_num ->
@@ -186,18 +196,25 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
   let module Dom = (val state.dom) in
   let pos = Dom.position_of_uid uid in
   state.processed.(pos) <- true;
-  List.iter
-    (fun pred ->
-      if state.processed.(pred) then
-        implement_phi_copies state ~src:pred ~dest:pos)
-    (Dom.predecessors pos);
-  List.iter
-    (fun succ ->
+  block
+
+let after_color_block state (cfg : X86.Cfg.graph) pos : X86.Cfg.graph =
+  let module Dom = (val state.dom) in
+  let cfg =
+    List.fold_left
+      (fun cfg pred ->
+        if state.processed.(pred) then
+          implement_phi_copies state cfg ~src:pred ~dest:pos
+        else cfg)
+      cfg (Dom.predecessors pos)
+  in
+  List.fold_left
+    (fun cfg succ ->
       (* todo: use block.succs[0] instead *)
       if state.processed.(succ) then
-        implement_phi_copies state ~src:pos ~dest:succ)
-    (Dom.successors pos);
-  block
+        implement_phi_copies state cfg ~src:pos ~dest:succ
+      else cfg)
+    cfg (Dom.successors pos)
 
 let build_preferences state graph : unit =
   let preferences = state.preferences in
@@ -536,7 +553,8 @@ let%expect_test "Nested loops register allocation" =
     let uid = X86.Cfg.idd (Extra.label_of_position pos) in
     let zblock, cfg = X86.Cfg.focus uid cfg in
     let block = color_block alloc_state (X86.Cfg.zip zblock) in
-    X86.Cfg.(unfocus (unzip block, cfg))
+    let cfg = X86.Cfg.(unfocus (unzip block, cfg)) in
+    after_color_block alloc_state cfg pos
   in
   let cfg = List.fold_left go_block cfg (blockorder alloc_state) in
   (* todo: fix test output to be correct *)
@@ -724,12 +742,14 @@ let%expect_test "Fibonacci register allocation" =
     let uid = X86.Cfg.idd (Extra.label_of_position pos) in
     let zblock, cfg = X86.Cfg.focus uid cfg in
     let block = color_block alloc_state (X86.Cfg.zip zblock) in
-    X86.Cfg.(unfocus (unzip block, cfg))
+    let cfg = X86.Cfg.(unfocus (unzip block, cfg)) in
+    after_color_block alloc_state cfg pos
   in
   let cfg = List.fold_left go_block cfg (blockorder alloc_state) in
   (* todo: fix test output to be correct *)
   Format.printf "%a" X86.Printer.pp_graph cfg;
-  [%expect {|
+  [%expect
+    {|
       pcopy [(%rbx(1), %0(%rdi))]
       cmp LE %rbx(1), $1, label2, label3
     label1(local=false)(rax(32)):
