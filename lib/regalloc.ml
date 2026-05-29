@@ -9,6 +9,7 @@ module Weights = struct
 end
 
 type state = {
+  select_state : Select_x86.State.t;
   regs : X86.Target.reg array;
   num_vars : int;
   processed : bool array;
@@ -114,18 +115,74 @@ let get_register state uid var head : int * float * X86.Cfg.head =
     failwith "get_register: couldn't find non-occupied register"
   with Reg (reg, pref, head) -> (reg, pref, head)
 
+(* Insert parallel copy instruction in src block to move arguments
+   to assigned registers in dest block. *)
 let implement_phi_copies state cfg ~src ~dest =
-  (* todo: add_phi_permutations in libfirm *)
   let module Dom = (val state.dom) in
+  let dest_label = Dom.label_of_position dest in
   let zblock, cfg = X86.Cfg.(focus (idd (Dom.label_of_position src)) cfg) in
   let head, last = X86.Cfg.goto_end zblock in
-  let tail = X86.Cfg.Last last in
-  let _phis =
-    match
-      X86.Cfg.(first (fst (focus (idd (Dom.label_of_position dest)) cfg)))
-    with
+  let get_args instr =
+    instr.X86.Target.uses
+    |> List.find_map (function
+      | X86.Target.Label (label, args) when dest_label = Some label -> Some args
+      | _ -> None)
+    |> Option.value ~default:[]
+  in
+  let replace_args instr args =
+    {
+      instr with
+      X86.Target.uses =
+        List.map
+          (function
+            | X86.Target.Label (label, _) when dest_label = Some label ->
+              X86.Target.Label (label, args)
+            | op -> op)
+          instr.X86.Target.uses;
+    }
+  in
+  let args =
+    match last with
+    | X86.Printer.Exit -> []
+    | X86.Printer.Branch (instr, _) -> get_args instr
+    | X86.Printer.CBranch (instr, _, _) -> get_args instr
+    | X86.Printer.Return _ -> []
+  in
+  let phis =
+    match X86.Cfg.(first (fst (focus (idd dest_label) cfg))) with
     | X86.Cfg.Label (_, info) -> info.args
     | X86.Cfg.Entry -> []
+  in
+  let srcs, dests, args =
+    let open X86.Target in
+    List.fold_right
+      (fun (arg, phi) (srcs, dests, args) ->
+        match (arg, phi) with
+        | Reg (Virtual { reg = arg_reg; _ }), Virtual { reg = phi_reg; _ }
+          when X86.Target.equal_reg arg_reg phi_reg ->
+          (srcs, dests, arg :: args)
+        | _, Virtual { reg = Physical phi_reg; _ } ->
+          let copy =
+            Reg (constrained phi_reg (state.select_state.fresh_vreg Int))
+          in
+          (arg :: srcs, copy :: dests, copy :: args)
+        | _ -> failwith "Phi not a virtual register")
+      (List.combine args phis) ([], [], [])
+  in
+  let last =
+    match last with
+    | X86.Printer.Exit -> last
+    | X86.Printer.Branch (instr, l) ->
+      X86.Printer.Branch (replace_args instr args, l)
+    | X86.Printer.CBranch (instr, l1, l2) ->
+      X86.Printer.CBranch (replace_args instr args, l1, l2)
+    | X86.Printer.Return _ -> last
+  in
+  let tail =
+    let open X86 in
+    if not (List.is_empty dests) then
+      Cfg.Tail (Cfg.Instruction (Target.pcopy ~dests ~srcs), Cfg.Last last)
+    else Cfg.Last last
   in
   X86.Cfg.unfocus ((head, tail), cfg)
 
@@ -520,6 +577,7 @@ let%expect_test "Nested loops register allocation" =
   let num_vars = IntHashtbl.length state.vreg_block in
   let alloc_state =
     {
+      select_state = state;
       regs;
       block_execution_frequency;
       liveness;
@@ -551,6 +609,7 @@ let%expect_test "Nested loops register allocation" =
     |}];
   let go_block cfg pos =
     let uid = X86.Cfg.idd (Extra.label_of_position pos) in
+    alloc_state.select_state.curr_block := uid;
     let zblock, cfg = X86.Cfg.focus uid cfg in
     let block = color_block alloc_state (X86.Cfg.zip zblock) in
     let cfg = X86.Cfg.(unfocus (unzip block, cfg)) in
@@ -672,6 +731,7 @@ let%expect_test "Fibonacci register allocation" =
   let num_vars = IntHashtbl.length state.vreg_block in
   let alloc_state =
     {
+      select_state = state;
       regs;
       block_execution_frequency;
       liveness;
@@ -740,6 +800,7 @@ let%expect_test "Fibonacci register allocation" =
     |}];
   let go_block cfg pos =
     let uid = X86.Cfg.idd (Extra.label_of_position pos) in
+    alloc_state.select_state.curr_block := uid;
     let zblock, cfg = X86.Cfg.focus uid cfg in
     let block = color_block alloc_state (X86.Cfg.zip zblock) in
     let cfg = X86.Cfg.(unfocus (unzip block, cfg)) in
