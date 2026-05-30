@@ -1,8 +1,9 @@
-(lang dune 3.7)
+(lang dune 3.13)
 
 (name baby_pascal)
 
 (generate_opam_files true)
+(using menhir 3.0)
 
 (source
  (github username/reponame))

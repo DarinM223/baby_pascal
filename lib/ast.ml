@@ -1,6 +1,7 @@
 type typ =
   | TInteger
   | TBoolean
+  | TVoid
 type uop = Not [@@deriving show, eq]
 type bop =
   | Add
