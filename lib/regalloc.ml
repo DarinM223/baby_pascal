@@ -514,6 +514,83 @@ let reg_ops =
     | X86.Target.Reg r -> Some r
     | _ -> None)
 
+let spill_helper ?(args = [])
+    (module Loop : Loopnesting.S
+      with type Dom.label = X86.Cfg.label
+       and type Dom.position = int
+       and type Dom.uid = int) state cfg =
+  let next_use_distances = Spill.next_use_distances (module Loop) cfg in
+  let liveness = Spill.Liveness.calc cfg in
+  let module Spill' =
+    Spill.Make
+      (Loop)
+      (struct
+        let k = 16
+        let next_use_distances = next_use_distances
+        let liveness = liveness
+      end) in
+  let spill_state = Spill'.init state in
+  let cfg = Spill'.spill ~args spill_state cfg in
+  let module Reconstruct = Reconstruct.Make (X86.Target) (X86.Cfg) (Loop.Dom) in
+  let reconstruct_copies reg _ graph =
+    let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
+    let def_blocks =
+      List.map
+        (fun r ->
+          Deadcode.IntHashtbl.find spill_state.select_state.vreg_block
+            (X86.Target.index r))
+        (reg :: copies)
+    in
+    Reconstruct.reconstruct
+      (fun () -> spill_state.select_state.fresh_vreg Int)
+      (Spill'.RegSet.singleton reg)
+      (Spill'.RegSet.of_list copies)
+      def_blocks graph
+  in
+  Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
+
+let regalloc_helper
+    (module Loop : Loopnesting.S
+      with type Dom.label = X86.Cfg.label
+       and type Dom.position = int
+       and type Dom.uid = int
+       and type Dom.graph = X86.Cfg.graph) state cfg k_prefs =
+  (* have to recalculate because added spills may have modified the instruction numbers *)
+  let liveness = Spill.Liveness.calc cfg in
+  let module Freq = Execfreq.Make (X86.Cfg) (Loop) (X86.ExecfreqRequirements) in
+  let block_execution_frequency uid =
+    Freq.bfreq.(Loop.Dom.position_of_uid uid)
+  in
+  let regs = X86.Regs.int_regs |> Array.map (fun r -> X86.Target.Physical r) in
+  let num_vars = IntHashtbl.length state.Select_x86.State.vreg_block in
+  let alloc_state =
+    {
+      select_state = state;
+      regs;
+      block_execution_frequency;
+      liveness;
+      dom = (module Loop.Dom);
+      reg_current_var = Array.make (Array.length regs) (-1);
+      reg_current_pref = Array.make (Array.length regs) 0.;
+      processed = Array.make Loop.Dom.size false;
+      num_vars;
+      preferences = Array.make_matrix num_vars (Array.length regs) 0.;
+      occupied = CCBV.create ~size:(Array.length regs) false;
+    }
+  in
+  build_preferences alloc_state cfg;
+  combine_congruence_classes alloc_state cfg;
+  k_prefs alloc_state;
+  let go_block cfg pos =
+    let uid = X86.Cfg.idd (Loop.Dom.label_of_position pos) in
+    alloc_state.select_state.curr_block := uid;
+    let zblock, cfg = X86.Cfg.focus uid cfg in
+    let block = color_block alloc_state (X86.Cfg.zip zblock) in
+    let cfg = X86.Cfg.(unfocus (unzip block, cfg)) in
+    after_color_block alloc_state cfg pos
+  in
+  List.fold_left go_block cfg (blockorder alloc_state)
+
 let%expect_test "Nested loops register allocation" =
   let ast =
     let open Ast in
@@ -537,64 +614,14 @@ let%expect_test "Nested loops register allocation" =
   let state = Select_x86.State.init () in
   let _, cfg = Select_x86.codegen_test_helper state cfg in
   let extra = X86.Cfg.precalculate_edges cfg in
-  let module Extra = (val extra) in
-  let module Dom = Dominator.Make (X86.Cfg) (Extra) in
+  let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-  let module Freq = Execfreq.Make (X86.Cfg) (Loop) (X86.ExecfreqRequirements) in
-  let next_use_distances = Spill.next_use_distances (module Loop) cfg in
-  let liveness = Spill.Liveness.calc cfg in
-  let module Spill' =
-    Spill.Make
-      (Loop)
-      (struct
-        let k = 16
-        let next_use_distances = next_use_distances
-        let liveness = liveness
-      end) in
-  let spill_state = Spill'.init state in
-  let cfg = Spill'.spill spill_state cfg in
-  let module Reconstruct = Reconstruct.Make (X86.Target) (X86.Cfg) (Dom) in
-  let reconstruct_copies reg _ graph =
-    let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
-    let def_blocks =
-      List.map
-        (fun r ->
-          Deadcode.IntHashtbl.find spill_state.select_state.vreg_block
-            (X86.Target.index r))
-        (reg :: copies)
-    in
-    Reconstruct.reconstruct
-      (fun () -> spill_state.select_state.fresh_vreg Int)
-      (Spill'.RegSet.singleton reg)
-      (Spill'.RegSet.of_list copies)
-      def_blocks graph
-  in
-  let cfg = Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg in
-  (* have to recalculate because added spills may have modified the instruction numbers *)
-  let liveness = Spill.Liveness.calc cfg in
-  let block_execution_frequency uid = Freq.bfreq.(Extra.position_of_uid uid) in
-  let regs = X86.Regs.int_regs |> Array.map (fun r -> X86.Target.Physical r) in
-  let num_vars = IntHashtbl.length state.vreg_block in
-  let alloc_state =
-    {
-      select_state = state;
-      regs;
-      block_execution_frequency;
-      liveness;
-      dom = (module Dom);
-      reg_current_var = Array.make (Array.length regs) (-1);
-      reg_current_pref = Array.make (Array.length regs) 0.;
-      processed = Array.make Extra.size false;
-      num_vars;
-      preferences = Array.make_matrix num_vars (Array.length regs) 0.;
-      occupied = CCBV.create ~size:(Array.length regs) false;
-    }
-  in
-  build_preferences alloc_state cfg;
-  combine_congruence_classes alloc_state cfg;
-  Format.printf "%a\n" (pp_preferences alloc_state.regs) alloc_state.preferences;
-  [%expect
-    {|
+  let cfg = spill_helper (module Loop) state cfg in
+  let cfg =
+    regalloc_helper (module Loop) state cfg @@ fun state ->
+    Format.printf "%a\n" (pp_preferences state.regs) state.preferences;
+    [%expect
+      {|
     [0 -> [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 1 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 2 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 3 ->
@@ -606,17 +633,8 @@ let%expect_test "Nested loops register allocation" =
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 9 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 10 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000]]
-    |}];
-  let go_block cfg pos =
-    let uid = X86.Cfg.idd (Extra.label_of_position pos) in
-    alloc_state.select_state.curr_block := uid;
-    let zblock, cfg = X86.Cfg.focus uid cfg in
-    let block = color_block alloc_state (X86.Cfg.zip zblock) in
-    let cfg = X86.Cfg.(unfocus (unzip block, cfg)) in
-    after_color_block alloc_state cfg pos
+    |}]
   in
-  let cfg = List.fold_left go_block cfg (blockorder alloc_state) in
-  (* todo: fix test output to be correct *)
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
@@ -664,39 +682,9 @@ let%expect_test "Fibonacci register allocation" =
   let state = Select_x86.State.init () in
   let srcs, cfg = Select_x86.codegen_test_helper ~args:[ "v" ] state cfg in
   let extra = X86.Cfg.precalculate_edges cfg in
-  let module Extra = (val extra) in
-  let module Dom = Dominator.Make (X86.Cfg) (Extra) in
+  let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-  let module Freq = Execfreq.Make (X86.Cfg) (Loop) (X86.ExecfreqRequirements) in
-  let next_use_distances = Spill.next_use_distances (module Loop) cfg in
-  let liveness = Spill.Liveness.calc cfg in
-  let module Spill' =
-    Spill.Make
-      (Loop)
-      (struct
-        let k = 16
-        let next_use_distances = next_use_distances
-        let liveness = liveness
-      end) in
-  let spill_state = Spill'.init state in
-  let cfg = Spill'.spill ~args:(reg_ops srcs) spill_state cfg in
-  let module Reconstruct = Reconstruct.Make (X86.Target) (X86.Cfg) (Dom) in
-  let reconstruct_copies reg _ graph =
-    let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
-    let def_blocks =
-      List.map
-        (fun r ->
-          Deadcode.IntHashtbl.find spill_state.select_state.vreg_block
-            (X86.Target.index r))
-        (reg :: copies)
-    in
-    Reconstruct.reconstruct
-      (fun () -> spill_state.select_state.fresh_vreg Int)
-      (Spill'.RegSet.singleton reg)
-      (Spill'.RegSet.of_list copies)
-      def_blocks graph
-  in
-  let cfg = Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg in
+  let cfg = spill_helper ~args:(reg_ops srcs) (module Loop) state cfg in
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
@@ -724,31 +712,11 @@ let%expect_test "Fibonacci register allocation" =
       movq %29any, %30(reuse=%31)
       j label1(%29any)
     |}];
-  (* have to recalculate because added spills may have modified the instruction numbers *)
-  let liveness = Spill.Liveness.calc cfg in
-  let block_execution_frequency uid = Freq.bfreq.(Extra.position_of_uid uid) in
-  let regs = X86.Regs.int_regs |> Array.map (fun r -> X86.Target.Physical r) in
-  let num_vars = IntHashtbl.length state.vreg_block in
-  let alloc_state =
-    {
-      select_state = state;
-      regs;
-      block_execution_frequency;
-      liveness;
-      dom = (module Dom);
-      reg_current_var = Array.make (Array.length regs) (-1);
-      reg_current_pref = Array.make (Array.length regs) 0.;
-      processed = Array.make Extra.size false;
-      num_vars;
-      preferences = Array.make_matrix num_vars (Array.length regs) 0.;
-      occupied = CCBV.create ~size:(Array.length regs) false;
-    }
-  in
-  build_preferences alloc_state cfg;
-  combine_congruence_classes alloc_state cfg;
-  Format.printf "%a\n" (pp_preferences alloc_state.regs) alloc_state.preferences;
-  [%expect
-    {|
+  let cfg =
+    regalloc_helper (module Loop) state cfg @@ fun state ->
+    Format.printf "%a\n" (pp_preferences state.regs) state.preferences;
+    [%expect
+      {|
     [0 -> [rax: -1.000000, rbx: -1.000000, rcx: -1.000000, rdx: -1.000000, rsi: -1.000000, rdi: 0.000000, rsp: -1.000000, rbp: -1.000000, r8: -1.000000, r9: -1.000000, r10: -1.000000, r11: -1.000000, r12: -1.000000, r13: -1.000000, r14: -1.000000, r15: -1.000000], 1 ->
     [rax: -0.088000, rbx: 0.000000, rcx: -0.044000, rdx: -0.044000, rsi: -0.044000, rdi: -0.088000, rsp: 0.000000, rbp: 0.000000, r8: -0.044000, r9: -0.044000, r10: -0.044000, r11: -0.044000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 2 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 3 ->
@@ -784,30 +752,21 @@ let%expect_test "Fibonacci register allocation" =
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 33 ->
     [rax: 0.000000, rbx: -2.000000, rcx: -2.000000, rdx: -2.000000, rsi: -2.000000, rdi: -2.000000, rsp: -2.000000, rbp: -2.000000, r8: -2.000000, r9: -2.000000, r10: -2.000000, r11: -2.000000, r12: -2.000000, r13: -2.000000, r14: -2.000000, r15: -2.000000]]
     |}];
-  let rec reg =
-    X86.Target.Virtual
-      { id = 8; reg_class = Int; reg; reg_constr = UsePhysical X86.Regs.rcx }
-  in
-  let label = X86.Cfg.(block_label (zip (fst (X86.Cfg.focus 3 cfg)))) in
-  Format.printf "Label: %a\n" (Format.pp_print_option X86.Cfg.pp_label) label;
-  let dies = liveness.dies 3 reg in
-  Format.printf "8(rcx) dies at: %a\n"
-    Format.(pp_print_option pp_print_int)
-    dies;
-  [%expect {|
+    let rec reg =
+      X86.Target.Virtual
+        { id = 8; reg_class = Int; reg; reg_constr = UsePhysical X86.Regs.rcx }
+    in
+    let label = X86.Cfg.(block_label (zip (fst (X86.Cfg.focus 3 cfg)))) in
+    Format.printf "Label: %a\n" (Format.pp_print_option X86.Cfg.pp_label) label;
+    let dies = state.liveness.dies 3 reg in
+    Format.printf "8(rcx) dies at: %a\n"
+      Format.(pp_print_option pp_print_int)
+      dies;
+    [%expect {|
     Label: (3, "label3")
     8(rcx) dies at: 3
-    |}];
-  let go_block cfg pos =
-    let uid = X86.Cfg.idd (Extra.label_of_position pos) in
-    alloc_state.select_state.curr_block := uid;
-    let zblock, cfg = X86.Cfg.focus uid cfg in
-    let block = color_block alloc_state (X86.Cfg.zip zblock) in
-    let cfg = X86.Cfg.(unfocus (unzip block, cfg)) in
-    after_color_block alloc_state cfg pos
+    |}]
   in
-  let cfg = List.fold_left go_block cfg (blockorder alloc_state) in
-  (* todo: fix test output to be correct *)
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
