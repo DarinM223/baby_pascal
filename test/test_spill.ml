@@ -21,14 +21,15 @@ let test_loops () =
     (* pass_through is variables not used in either loops
        but used at the beginning and end of the program *)
     let pass_through, temps =
-      (Array.of_list (List.take 2 temps), List.drop 2 temps)
+      Spill.(Array.of_list (List.take 2 temps), List.drop 2 temps)
     in
     (* first_loop_temps are used in the body of the
        first loop and at the end of the program *)
     (* second_loop_temps are used at the beginning
        of the program and in the body of the second loop*)
     let first_loop_temps, second_loop_temps =
-      (Array.of_list (List.take 8 temps), Array.of_list (List.drop 8 temps))
+      Spill.
+        (Array.of_list (List.take 8 temps), Array.of_list (List.drop 8 temps))
     in
     state.curr_block := 1;
     let block1_arg1 = state.fresh_vreg Int in

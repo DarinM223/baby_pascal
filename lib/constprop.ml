@@ -1,6 +1,6 @@
 open Normalize
 module IntMap = Map.Make (Int)
-module IntHashtbl = Hashtbl.Make (Int)
+module IntHashtbl = Graph_intf.IntHashtbl
 module NameMap = struct
   include CCMap.Make (struct
     include Name

@@ -55,9 +55,9 @@ struct
     let open Format in
     pp_open_box fmt 0;
     pp_print_string fmt "[";
-    pp_print_array
+    pp_print_list
       ~pp_sep:(fun fmt () -> pp_print_string fmt ", ")
-      pp_elem fmt arr;
+      pp_elem fmt (Array.to_list arr);
     pp_print_string fmt "]";
     pp_close_box fmt ()
   let pp_prob = pp_array (pp_array Format.pp_print_float)
@@ -100,7 +100,7 @@ struct
         && String.sub name 0 3 = Requirements.cmp
         && cmp_zero_or_constant name not_taken_succ (Requirements.uses i))
   let is_loop_exit n ~continue:s1 ~exit:s2 =
-    let loop_nodes = Loop.(Iarray.get loop_nodes (header n)) in
+    let loop_nodes = Loop.(loop_nodes.(header n)) in
     (not Loop.(PositionSet.mem s1 loop_headers))
     && (not Loop.(PositionSet.mem s2 loop_headers))
     && Loop.PositionSet.mem s1 loop_nodes
@@ -212,13 +212,13 @@ struct
       end
     done
 
-  module IntHashtbl = Hashtbl.Make (Int)
+  module IntHashtbl = Graph_intf.IntHashtbl
 
   let inner_to_outer_loops : Dom.position array =
     let visited = IntHashtbl.create Dom.size in
-    let arr = Dynarray.create () in
+    let loops = ref [] in
     let rec go node =
-      let loop_nodes = Iarray.get Loop.loop_nodes node in
+      let loop_nodes = Loop.loop_nodes.(node) in
       Loop.PositionSet.iter
         (fun nested ->
           if
@@ -226,12 +226,12 @@ struct
             && Loop.PositionSet.mem nested Loop.loop_headers
           then go nested)
         loop_nodes;
-      Dynarray.add_last arr node;
+      loops := node :: !loops;
       IntHashtbl.replace visited node ()
     in
     let root = Dom.position_of_uid G.entry_uid in
     go root;
-    Dynarray.to_array arr
+    Array.of_list (List.rev !loops)
 
   let compute_freq () =
     let not_visited : unit IntHashtbl.t = IntHashtbl.create Dom.size in

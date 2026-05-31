@@ -6,7 +6,10 @@ module IntMap = struct
   include CCMap.Make (Int)
   let pp pp_v = pp CCInt.pp pp_v
 end
-module IntHashtbl = Hashtbl.Make (Int)
+module IntHashtbl = Hashtbl.Make (struct
+  include Int
+  let hash = Hashtbl.hash
+end)
 
 module type Target = sig
   type label

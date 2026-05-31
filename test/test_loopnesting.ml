@@ -79,9 +79,7 @@ let test_nested_loops_headers () =
       |]
   in
   (check (array Loop.PositionSet.(testable pp equal)))
-    "Loop nodes"
-    (Iarray.to_array Loop.loop_nodes)
-    expected
+    "Loop nodes" Loop.loop_nodes expected
 
 let _ =
   run "Loop nesting"

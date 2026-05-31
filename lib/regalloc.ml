@@ -8,6 +8,18 @@ module Weights = struct
   let aff_phi = 1.
 end
 
+module Array = struct
+  include Array
+  let find_index p a =
+    let n = length a in
+    let rec loop i =
+      if i = n then None
+      else if p (unsafe_get a i) then Some i
+      else loop (succ i)
+    in
+    loop 0
+end
+
 type state = {
   select_state : Select_x86.State.t;
   regs : X86.Target.reg array;
@@ -180,7 +192,7 @@ let implement_phi_copies state cfg ~src ~dest =
   in
   let tail =
     let open X86 in
-    if not (List.is_empty dests) then
+    if List.length dests > 0 then
       Cfg.Tail (Cfg.Instruction (Target.pcopy ~dests ~srcs), Cfg.Last last)
     else Cfg.Last last
   in
@@ -304,13 +316,13 @@ let build_preferences state graph : unit =
   let handle_instruction uid live (instr : X86.Target.instr) =
     List.iter (handle_operand ~def:true uid live) instr.defs;
     let defs =
-      X86.Target.defs instr |> X86.Target.RegSet.to_list
+      X86.Target.defs instr |> X86.Target.RegSet.elements
       |> List.map X86.Target.index |> CCBV.of_list
     in
     CCBV.diff_into ~into:live defs;
     List.iter (handle_operand uid live) instr.uses;
     let uses =
-      X86.Target.uses instr |> X86.Target.RegSet.to_list
+      X86.Target.uses instr |> X86.Target.RegSet.elements
       |> List.map X86.Target.index |> CCBV.of_list
     in
     CCBV.union_into ~into:live uses
@@ -320,7 +332,7 @@ let build_preferences state graph : unit =
     let live_out = state.liveness.live_out uid in
     let live =
       CCBV.of_list
-        (List.map X86.Target.index (X86.Target.RegSet.to_list live_out))
+        (List.map X86.Target.index (X86.Target.RegSet.elements live_out))
     in
     let head, last = X86.Cfg.(goto_end (unzip block)) in
     begin match last with
@@ -344,15 +356,15 @@ let create_congruence_class state classes graph block =
   let live =
     let live_out = state.liveness.live_out (X86.Cfg.id block) in
     CCBV.of_list
-      (List.map X86.Target.index (X86.Target.RegSet.to_list live_out))
+      (List.map X86.Target.index (X86.Target.RegSet.elements live_out))
   in
   let liveness_transfer instr =
     let defs =
-      X86.Target.defs instr |> X86.Target.RegSet.to_list
+      X86.Target.defs instr |> X86.Target.RegSet.elements
       |> List.map X86.Target.index |> CCBV.of_list
     in
     let uses =
-      X86.Target.uses instr |> X86.Target.RegSet.to_list
+      X86.Target.uses instr |> X86.Target.RegSet.elements
       |> List.map X86.Target.index |> CCBV.of_list
     in
     CCBV.diff_into ~into:live defs;
@@ -507,7 +519,7 @@ let blockorder state =
   let seen = Array.make Dom.size false in
   List.rev @@ Array.fold_left (add_trace (module Dom) trace seen) [] blocks
 
-module IntHashtbl = Hashtbl.Make (Int)
+module IntHashtbl = Graph_intf.IntHashtbl
 
 let reg_ops =
   List.filter_map (function

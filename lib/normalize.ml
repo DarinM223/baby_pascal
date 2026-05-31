@@ -117,14 +117,15 @@ let normalize (fresh : unit -> Target.reg) (stmts : Ast.stmt list) : Cfg.graph =
     | Ast.Uop (uop, e) ->
       let* e = go_expr e in
       let tmp = Target.Reg (fresh ()) in
-      Fun.compose (Cfg.instruction (Target.uop uop ~src:e ~dest:tmp)) (k tmp)
+      fun zgraph ->
+        Cfg.instruction (Target.uop uop ~src:e ~dest:tmp) @@ k tmp @@ zgraph
     | Ast.Bop (bop, e1, e2) ->
       let* e1 = go_expr e1 in
       let* e2 = go_expr e2 in
       let tmp = Target.Reg (fresh ()) in
-      Fun.compose
-        (Cfg.instruction (Target.bop bop ~src1:e1 ~src2:e2 ~dest:tmp))
-        (k tmp)
+      fun zgraph ->
+        Cfg.instruction (Target.bop bop ~src1:e1 ~src2:e2 ~dest:tmp)
+        @@ k tmp @@ zgraph
     | Ast.Call (f, es) -> go_call (Target.Label ((-1, f), [])) es k
   and short_circuit t f = function
     | Ast.Bool b -> Cfg.branch (if b then t else f)
@@ -151,7 +152,8 @@ let normalize (fresh : unit -> Target.reg) (stmts : Ast.stmt list) : Cfg.graph =
       | [] ->
         let es = List.rev acc in
         let tmp = Target.Reg (fresh ()) in
-        Fun.compose (Cfg.instruction (Target.call ~dest:tmp f es)) (k tmp)
+        fun zgraph ->
+          Cfg.instruction (Target.call ~dest:tmp f es) @@ k tmp @@ zgraph
     in
     go [] es
   and go_stmt (next : Cfg.label) = function

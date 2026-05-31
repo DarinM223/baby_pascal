@@ -1,5 +1,5 @@
 module IntMap = Map.Make (Int)
-module IntHashtbl = Hashtbl.Make (Int)
+module IntHashtbl = Graph_intf.IntHashtbl
 let hashtbl_size = 100
 
 module Make

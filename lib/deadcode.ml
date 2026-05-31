@@ -1,4 +1,4 @@
-module IntHashtbl = Hashtbl.Make (Int)
+module IntHashtbl = Graph_intf.IntHashtbl
 
 module type Target = sig
   include Graph.Target with type label = int * string

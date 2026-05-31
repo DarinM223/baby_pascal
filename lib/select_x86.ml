@@ -4,7 +4,7 @@ module NameHashtbl = Hashtbl.Make (struct
   let equal = equal
   let hash = Hashtbl.hash
 end)
-module IntHashtbl = Hashtbl.Make (Int)
+module IntHashtbl = Graph_intf.IntHashtbl
 
 let ( let* ) = ( @@ )
 let hashtbl_size = 100
@@ -235,7 +235,7 @@ let codegen_function ?(args = []) (state : State.t) (graph : Undag.Cfg.graph) :
   in
   let zblock, graph = X86.Cfg.focus_entry graph in
   match zblock with
-  | First Entry, tail when not (List.is_empty args) ->
+  | First Entry, tail when List.length args > 0 ->
     (srcs, X86.Cfg.unfocus ((First Entry, Tail (pcopy, tail)), graph))
   | _ -> (srcs, X86.Cfg.unfocus (zblock, graph))
 

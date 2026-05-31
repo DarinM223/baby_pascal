@@ -1,8 +1,24 @@
 let hashtbl_size = 100
 let m = 10_000
 
-module IntHashtbl = Hashtbl.Make (Int)
+module IntHashtbl = Graph_intf.IntHashtbl
 module IntMap = Graph_intf.IntMap
+module List = struct
+  include List
+  let take n l =
+    let[@tail_mod_cons] rec aux n l =
+      match (n, l) with
+      | 0, _ | _, [] -> []
+      | n, x :: l -> x :: aux (n - 1) l
+    in
+    if n <= 0 then [] else aux n l
+  let drop n l =
+    let rec aux i = function
+      | _x :: l when i < n -> aux (i + 1) l
+      | rest -> rest
+    in
+    if n <= 0 then l else aux 0 l
+end
 
 let count_instructions (tail : X86.Cfg.tail) =
   let rec go acc = function
@@ -189,7 +205,7 @@ module Liveness = struct
       ops
       |> List.concat_map (function
         | X86.Target.Reg r -> [ r ]
-        | X86.Target.Label (_, uses) -> RegSet.to_list (convert_operands uses)
+        | X86.Target.Label (_, uses) -> RegSet.elements (convert_operands uses)
         | _ -> [])
       |> RegSet.of_list
     in
@@ -296,7 +312,7 @@ struct
   module RegHashtbl = Hashtbl.Make (struct
     type t = X86.Target.reg
     let equal r1 r2 = Int.equal (X86.Target.index r1) (X86.Target.index r2)
-    let hash r = Int.hash (X86.Target.index r)
+    let hash r = Hashtbl.hash (X86.Target.index r)
   end)
 
   let init_usual (wexit : Loop.Dom.position -> RegSet.t)
@@ -320,11 +336,11 @@ struct
           (wexit pred))
       (Loop.Dom.predecessors block);
     let dists = M.next_use_distances.at_block (uid block) in
-    let cand = List.sort (compare dists) (RegSet.to_list !cand) in
+    let cand = List.sort (compare dists) (RegSet.elements !cand) in
     RegSet.(union !take (of_list (List.take (M.k - cardinal !take) cand)))
 
   let rec get_loop_nodes (node : Loop.Dom.position) : Loop.PositionSet.t =
-    let nodes = Iarray.get Loop.loop_nodes node in
+    let nodes = Loop.loop_nodes.(node) in
     let add_loop_node node acc =
       if Loop.PositionSet.mem node Loop.loop_headers then
         Loop.PositionSet.(union (get_loop_nodes node) (add node acc))
@@ -337,11 +353,11 @@ struct
     Logs.debug (fun m ->
         m "Loop nodes: %s\n"
           ([%show: X86.Cfg.label option list]
-             (Loop.PositionSet.to_list loop
+             (Loop.PositionSet.elements loop
              |> List.map Loop.Dom.label_of_position)));
     let alive = M.liveness.live_in (uid block) in
     Logs.debug (fun m ->
-        m "Alive: %s\n" ([%show: X86.Cfg.regs] (RegSet.to_list alive)));
+        m "Alive: %s\n" ([%show: X86.Cfg.regs] (RegSet.elements alive)));
     let used_in_loop =
       Loop.PositionSet.fold
         (fun node -> RegSet.union (M.liveness.used_in_block (uid node)))
@@ -349,10 +365,10 @@ struct
     in
     Logs.debug (fun m ->
         m "Used in loop: %s\n"
-          ([%show: X86.Cfg.regs] (RegSet.to_list used_in_loop)));
+          ([%show: X86.Cfg.regs] (RegSet.elements used_in_loop)));
     let cand = RegSet.inter alive used_in_loop in
     Logs.debug (fun m ->
-        m "Cand: %s\n" ([%show: X86.Cfg.regs] (RegSet.to_list cand)));
+        m "Cand: %s\n" ([%show: X86.Cfg.regs] (RegSet.elements cand)));
     let dists = M.next_use_distances.at_block (uid block) in
     let max_pressure =
       Loop.PositionSet.fold
@@ -364,24 +380,24 @@ struct
       let live_through = RegSet.diff alive cand in
       Logs.debug (fun m ->
           m "Live through: %s\n"
-            ([%show: X86.Cfg.regs] (RegSet.to_list live_through)));
+            ([%show: X86.Cfg.regs] (RegSet.elements live_through)));
       let free_loop =
         min
           (M.k - RegSet.cardinal cand)
           (M.k - (max_pressure - RegSet.cardinal live_through))
       in
       let live_through =
-        List.sort (compare dists) (RegSet.to_list live_through)
+        List.sort (compare dists) (RegSet.elements live_through)
       in
       let cand =
         RegSet.(union cand (of_list (List.take free_loop live_through)))
       in
       Logs.debug (fun m ->
-          m "Final Cand: %s\n" ([%show: X86.Cfg.regs] (RegSet.to_list cand)));
+          m "Final Cand: %s\n" ([%show: X86.Cfg.regs] (RegSet.elements cand)));
       cand
     end
     else
-      let cand = List.sort (compare dists) (RegSet.to_list cand) in
+      let cand = List.sort (compare dists) (RegSet.elements cand) in
       RegSet.of_list (List.take M.k cand)
 
   type min_state = {
@@ -443,8 +459,8 @@ struct
           (List.map
              (fun v ->
                (X86.Target.index v, IntMap.find_opt (X86.Target.index v) dists))
-             (RegSet.to_list w)));
-    let w = List.sort (compare dists) (RegSet.to_list w) in
+             (RegSet.elements w)));
+    let w = List.sort (compare dists) (RegSet.elements w) in
     let head, s =
       List.fold_left
         (fun (head, s) v ->
@@ -485,7 +501,7 @@ struct
         Logs.debug (fun m ->
             m "W after adding uses in block %d: %s\n"
               X86.Cfg.(id (zip zblock))
-              ([%show: X86.Cfg.regs] (RegSet.to_list w)));
+              ([%show: X86.Cfg.regs] (RegSet.elements w)));
         let head, { w; s } =
           limit ~add_spills state { w; s } uid instr_num head M.k
         in

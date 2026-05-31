@@ -85,7 +85,7 @@ functor
         let rec build_tree level node k =
           let children =
             children_mapping.(Extra.int_of_position node)
-            |> IntSet.to_list
+            |> IntSet.elements
             |> List.map Extra.position_of_int
             |> List.filter (fun p -> p <> node)
           in
@@ -167,7 +167,7 @@ functor
           graph;
         fun p ->
           frontier.(Extra.int_of_position p)
-          |> IntSet.to_list
+          |> IntSet.elements
           |> List.map Extra.position_of_int
       end
   end

@@ -14,7 +14,7 @@ module type S = sig
   end
   val loop_headers : PositionSet.t
   val loop_header : Dom.position -> Dom.position
-  val loop_nodes : PositionSet.t iarray
+  val loop_nodes : PositionSet.t array
 end
 module Make
     (G : Graph.S)
@@ -100,5 +100,5 @@ module Make
       children.(header) <- PositionSet.add w children.(header)
     done
   let loop_header p = header.(p)
-  let loop_nodes = Iarray.of_array children
+  let loop_nodes = children
 end

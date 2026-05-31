@@ -1,5 +1,5 @@
 open Normalize
-module IntHashtbl = Hashtbl.Make (Int)
+module IntHashtbl = Graph_intf.IntHashtbl
 module NameHashtbl = Hashtbl.Make (struct
   include Name
   let equal n1 n2 = label n1 = label n2
@@ -119,7 +119,7 @@ let insert_phis (test : Cfg.uid -> Name.t -> bool)
         let df =
           l |> Dom.position_of_label
           |> Lazy.force Dom.dominator_frontier
-          |> List.map (Fun.compose uid_of_label Dom.label_of_position)
+          |> List.map (fun pos -> uid_of_label (Dom.label_of_position pos))
         in
         let worklist, graph =
           List.fold_left go_frontier_node (worklist, graph) df
