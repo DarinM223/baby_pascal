@@ -4,7 +4,7 @@ module NameHashtbl = Hashtbl.Make (struct
   let equal = equal
   let hash = Hashtbl.hash
 end)
-module IntHashtbl = Graph_intf.IntHashtbl
+module IntHashtbl = Utils.IntHashtbl
 
 let ( let* ) = ( @@ )
 let hashtbl_size = 100

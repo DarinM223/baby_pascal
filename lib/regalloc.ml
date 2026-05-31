@@ -8,18 +8,6 @@ module Weights = struct
   let aff_phi = 1.
 end
 
-module Array = struct
-  include Array
-  let find_index p a =
-    let n = length a in
-    let rec loop i =
-      if i = n then None
-      else if p (unsafe_get a i) then Some i
-      else loop (succ i)
-    in
-    loop 0
-end
-
 type state = {
   select_state : Select_x86.State.t;
   regs : X86.Target.reg array;
@@ -63,8 +51,8 @@ let pp_preferences regs fmt preferences =
   pp_close_box fmt ()
 
 let find_reg_index regs reg : int =
-  match Array.find_index (X86.Target.equal_reg reg) regs with
-  | Some index -> index
+  match CCArray.find_idx (X86.Target.equal_reg reg) regs with
+  | Some (index, _) -> index
   | None ->
     failwith
       (Format.asprintf "find_reg: couldn't find index for register %a"
@@ -519,7 +507,7 @@ let blockorder state =
   let seen = Array.make Dom.size false in
   List.rev @@ Array.fold_left (add_trace (module Dom) trace seen) [] blocks
 
-module IntHashtbl = Graph_intf.IntHashtbl
+module IntHashtbl = Utils.IntHashtbl
 
 let reg_ops =
   List.filter_map (function

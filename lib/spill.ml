@@ -1,24 +1,8 @@
 let hashtbl_size = 100
 let m = 10_000
 
-module IntHashtbl = Graph_intf.IntHashtbl
-module IntMap = Graph_intf.IntMap
-module List = struct
-  include List
-  let take n l =
-    let[@tail_mod_cons] rec aux n l =
-      match (n, l) with
-      | 0, _ | _, [] -> []
-      | n, x :: l -> x :: aux (n - 1) l
-    in
-    if n <= 0 then [] else aux n l
-  let drop n l =
-    let rec aux i = function
-      | _x :: l when i < n -> aux (i + 1) l
-      | rest -> rest
-    in
-    if n <= 0 then l else aux 0 l
-end
+module IntHashtbl = Utils.IntHashtbl
+module IntMap = Utils.IntMap
 
 let count_instructions (tail : X86.Cfg.tail) =
   let rec go acc = function
@@ -337,7 +321,7 @@ struct
       (Loop.Dom.predecessors block);
     let dists = M.next_use_distances.at_block (uid block) in
     let cand = List.sort (compare dists) (RegSet.elements !cand) in
-    RegSet.(union !take (of_list (List.take (M.k - cardinal !take) cand)))
+    RegSet.(union !take (of_list (CCList.take (M.k - cardinal !take) cand)))
 
   let rec get_loop_nodes (node : Loop.Dom.position) : Loop.PositionSet.t =
     let nodes = Loop.loop_nodes.(node) in
@@ -390,7 +374,7 @@ struct
         List.sort (compare dists) (RegSet.elements live_through)
       in
       let cand =
-        RegSet.(union cand (of_list (List.take free_loop live_through)))
+        RegSet.(union cand (of_list (CCList.take free_loop live_through)))
       in
       Logs.debug (fun m ->
           m "Final Cand: %s\n" ([%show: X86.Cfg.regs] (RegSet.elements cand)));
@@ -398,7 +382,7 @@ struct
     end
     else
       let cand = List.sort (compare dists) (RegSet.elements cand) in
-      RegSet.of_list (List.take M.k cand)
+      RegSet.of_list (CCList.take M.k cand)
 
   type min_state = {
     w : RegSet.t;
@@ -476,9 +460,9 @@ struct
             else head
           in
           (head, RegSet.remove v s))
-        (head, s) (List.drop m w)
+        (head, s) (CCList.drop m w)
     in
-    let w = RegSet.of_list (List.take m w) in
+    let w = RegSet.of_list (CCList.take m w) in
     (head, { w; s })
 
   let min_algorithm ~add_spills (state : spill_state) (zblock : X86.Cfg.zblock)

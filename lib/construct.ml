@@ -1,11 +1,11 @@
 open Normalize
-module IntHashtbl = Graph_intf.IntHashtbl
+module IntHashtbl = Utils.IntHashtbl
 module NameHashtbl = Hashtbl.Make (struct
   include Name
   let equal n1 n2 = label n1 = label n2
   let hash n = Hashtbl.hash (label n)
 end)
-module IntSet = Graph_intf.IntSet
+module IntSet = Utils.IntSet
 
 type liveness = {
   live_in : Cfg.uid -> NameSet.t;

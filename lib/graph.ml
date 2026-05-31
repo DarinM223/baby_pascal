@@ -1,4 +1,7 @@
 include Graph_intf
+module IntMap = Utils.IntMap
+module IntSet = Utils.IntSet
+module IntHashtbl = Utils.IntHashtbl
 
 module Make : Maker =
 functor

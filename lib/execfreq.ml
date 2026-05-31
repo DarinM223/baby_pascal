@@ -212,11 +212,11 @@ struct
       end
     done
 
-  module IntHashtbl = Graph_intf.IntHashtbl
+  module IntHashtbl = Utils.IntHashtbl
 
   let inner_to_outer_loops : Dom.position array =
     let visited = IntHashtbl.create Dom.size in
-    let loops = ref [] in
+    let loops = CCVector.create () in
     let rec go node =
       let loop_nodes = Loop.loop_nodes.(node) in
       Loop.PositionSet.iter
@@ -226,12 +226,12 @@ struct
             && Loop.PositionSet.mem nested Loop.loop_headers
           then go nested)
         loop_nodes;
-      loops := node :: !loops;
+      CCVector.push loops node;
       IntHashtbl.replace visited node ()
     in
     let root = Dom.position_of_uid G.entry_uid in
     go root;
-    Array.of_list (List.rev !loops)
+    CCVector.to_array loops
 
   let compute_freq () =
     let not_visited : unit IntHashtbl.t = IntHashtbl.create Dom.size in
