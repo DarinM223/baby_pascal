@@ -2,6 +2,7 @@ type typ =
   | TInteger
   | TBoolean
   | TVoid
+  | TFunction of typ list * typ option
 type uop = Not [@@deriving show, eq]
 type bop =
   | Add
