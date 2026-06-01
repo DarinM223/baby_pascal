@@ -119,18 +119,18 @@ let test_figure_19_4 () =
         Assign ("k", Int 0);
         While
           ( Bop (Lt, Var "k", Int 100),
-            [
-              If
-                ( Bop (Lt, Var "j", Int 20),
+            If
+              ( Bop (Lt, Var "j", Int 20),
+                Group
                   [
                     Assign ("j", Var "i");
                     Assign ("k", Bop (Add, Var "k", Int 1));
                   ],
+                Group
                   [
                     Assign ("j", Var "k");
                     Assign ("k", Bop (Add, Var "k", Int 2));
-                  ] );
-            ] );
+                  ] ) );
         Assign ("result", Var "j");
       ]
   in
@@ -191,14 +191,8 @@ let test_pruned () =
   let ast =
     Ast.
       [
-        If
-          ( Bop (Lt, Var "i", Int 2),
-            [ Assign ("y", Int 1) ],
-            [ Assign ("y", Var "x") ] );
-        If
-          ( Bop (Lt, Var "i", Int 2),
-            [ Assign ("z", Int 1) ],
-            [ Assign ("z", Var "x") ] );
+        If (Bop (Lt, Var "i", Int 2), Assign ("y", Int 1), Assign ("y", Var "x"));
+        If (Bop (Lt, Var "i", Int 2), Assign ("z", Int 1), Assign ("z", Var "x"));
         Assign ("result", Var "z");
       ]
   in

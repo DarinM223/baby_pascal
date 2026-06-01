@@ -160,28 +160,23 @@ let normalize (fresh : unit -> Target.reg) (stmts : Ast.stmt list) : Cfg.graph =
     | Ast.Assign (v, e) ->
       let* e = go_expr e in
       Cfg.instruction @@ Target.assign ~dest:(Target.reg v) ~src:e
-    | Ast.If (test, thn, []) ->
+    | Ast.Group stmts -> List.fold_right (go_stmt next) stmts
+    | Ast.If (test, thn, Group []) ->
       let t = new_label () in
       fun zgraph ->
-        short_circuit t next test @@ Cfg.label t
-        @@ List.fold_right (go_stmt next) thn
-        @@ zgraph
+        short_circuit t next test @@ Cfg.label t @@ go_stmt next thn @@ zgraph
     | Ast.If (test, thn, els) ->
       let t = new_label () in
       let f = new_label () in
       fun zgraph ->
-        short_circuit t f test @@ Cfg.label t
-        @@ List.fold_right (go_stmt next) thn
-        @@ Cfg.branch next @@ Cfg.label f
-        @@ List.fold_right (go_stmt next) els
-        @@ zgraph
+        short_circuit t f test @@ Cfg.label t @@ go_stmt next thn
+        @@ Cfg.branch next @@ Cfg.label f @@ go_stmt next els @@ zgraph
     | Ast.While (test, body) ->
       let begin_label = new_label () in
       let t = new_label () in
       fun zgraph ->
         Cfg.label begin_label @@ short_circuit t next test @@ Cfg.label t
-        @@ List.fold_right (go_stmt begin_label) body
-        @@ Cfg.branch begin_label @@ zgraph
+        @@ go_stmt begin_label body @@ Cfg.branch begin_label @@ zgraph
     | Ast.Call (f, es) -> go_call (Target.Label ((-1, f), [])) es Fun.(const id)
   in
   Cfg.unfocus

@@ -8,12 +8,10 @@ let test_example_1 () =
         Assign ("a", Bop (Add, Int 1, Bop (Mul, Int 2, Int 3)));
         If
           ( Bop (And, Bop (Eq, Var "a", Int 1), Bop (Lt, Var "a", Int 5)),
-            [
-              While
-                ( Bop (And, Bop (Eq, Var "a", Int 1), Bop (Lt, Var "a", Int 5)),
-                  [ Assign ("a", Bop (Add, Var "a", Int 1)) ] );
-            ],
-            [ Assign ("result", Int 60) ] );
+            While
+              ( Bop (And, Bop (Eq, Var "a", Int 1), Bop (Lt, Var "a", Int 5)),
+                Assign ("a", Bop (Add, Var "a", Int 1)) ),
+            Assign ("result", Int 60) );
       ]
   in
   let module Fresh = Normalize.Fresh () in

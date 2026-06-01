@@ -23,15 +23,17 @@ let test_nested_loops_headers () =
       Assign ("i", Int 0);
       While
         ( Bop (Lt, Var "i", Int 100),
-          [
-            Assign ("j", Var "i");
-            While
-              ( Bop (Lt, Var "j", Int 100),
-                [
-                  Assign ("j", Bop (Add, Var "j", Int 1));
-                  Assign ("i", Bop (Add, Var "i", Int 1));
-                ] );
-          ] );
+          Group
+            [
+              Assign ("j", Var "i");
+              While
+                ( Bop (Lt, Var "j", Int 100),
+                  Group
+                    [
+                      Assign ("j", Bop (Add, Var "j", Int 1));
+                      Assign ("i", Bop (Add, Var "i", Int 1));
+                    ] );
+            ] );
     ]
   in
   let module F = Normalize.Fresh () in

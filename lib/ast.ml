@@ -28,16 +28,17 @@ type expr =
 
 type stmt =
   | Assign of string * expr
-  | If of expr * stmt list * stmt list
-  | While of expr * stmt list
+  | If of expr * stmt * stmt
+  | While of expr * stmt
   | Call of string * expr list
+  | Group of stmt list
 
 type decl =
-  | Function of string * (string * typ) list * typ * stmt list
-  | Procedure of string * (string * typ) list * stmt list
+  | Function of string * (string * typ) list * typ * stmt
+  | Procedure of string * (string * typ) list * stmt
 
 type program = {
   globals : (string * typ) list;
   decls : decl list;
-  main : stmt list;
+  main : stmt;
 }

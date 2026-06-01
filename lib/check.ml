@@ -20,16 +20,19 @@ let rec check_expr venv fenv = function
 
 let rec check_stmt venv fenv = function
   | Assign (x, e) -> M.add x (check_expr venv fenv e) venv
+  | Group stmts ->
+    let _ = List.fold_left (fun venv -> check_stmt venv fenv) venv stmts in
+    venv
   | If (test, thn, els) ->
     if check_expr venv fenv test <> TBoolean then
       failwith "Expected test to be boolean type";
-    let _ = List.fold_left (fun venv -> check_stmt venv fenv) venv thn in
-    let _ = List.fold_left (fun venv -> check_stmt venv fenv) venv els in
+    ignore (check_stmt venv fenv thn);
+    ignore (check_stmt venv fenv els);
     venv
   | While (test, body) ->
     if check_expr venv fenv test <> TBoolean then
       failwith "Expected test to be boolean type";
-    let _ = List.fold_left (fun venv -> check_stmt venv fenv) venv body in
+    ignore (check_stmt venv fenv body);
     venv
   | Call (f, xs) ->
     let xs = List.map (check_expr venv fenv) xs in
@@ -48,11 +51,11 @@ let check_decl venv fenv decl =
     | Procedure (f, _, body) -> (f, None, body)
     | Function (f, _, typ, body) -> (f, Some typ, body)
   in
-  let venv = List.fold_left (fun venv -> check_stmt venv fenv) venv body in
+  let venv = check_stmt venv fenv body in
   if M.find_opt f venv <> typ then failwith "Function return types do not match"
 
 let check_program p =
   let venv = List.fold_left (fun m (k, v) -> M.add k v m) M.empty p.globals in
   let fenv = List.fold_left insert_header M.empty p.decls in
   List.iter (check_decl venv fenv) p.decls;
-  ignore @@ List.fold_left (fun venv -> check_stmt venv fenv) venv p.main
+  ignore @@ check_stmt venv fenv p.main
