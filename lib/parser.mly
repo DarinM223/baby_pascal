@@ -2,7 +2,7 @@
 %token PLUS MINUS TIMES NOT AND OR LT LE GT GE
 %token VAR
 %token TRUE FALSE
-%token FUNCTION BEGIN END IF THEN ELSE WHILE DO
+%token FUNCTION PROCEDURE BEGIN END IF THEN ELSE WHILE DO
 %token INTEGER BOOLEAN VOID
 %token<string> IDENT
 %token<int> INT
@@ -25,9 +25,10 @@
 %%
 
 program:
-| g = global SEMI p = program { { p with globals = p.Ast.globals @ [g] }}
-| d = decl p = program { { p with decls = p.Ast.decls @ [d] }}
-| EOF { {Ast.globals = []; decls = []; main = Group []} }
+| g = global SEMI p = program {{ p with globals = p.Ast.globals @ [g] }}
+| d = decl p = program {{ p with decls = p.Ast.decls @ [d] }}
+| main = statement p = program {{ p with main }}
+| EOF {{ Ast.globals = []; decls = []; main = Group [] }}
 
 global:
 | VAR r = separated_pair(IDENT, COLON, typ) {r}
@@ -42,12 +43,13 @@ decl:
 | FUNCTION i = IDENT LPAREN params = separated_list(COMMA, separated_pair(IDENT, COLON, typ))
   RPAREN COLON ret = typ SEMI stmt = statement
   {Ast.Function (i, params, ret, stmt)}
-| FUNCTION i = IDENT LPAREN params = separated_list(COMMA, separated_pair(IDENT, COLON, typ))
+| PROCEDURE i = IDENT LPAREN params = separated_list(COMMA, separated_pair(IDENT, COLON, typ))
   RPAREN SEMI stmt = statement
   {Ast.Procedure (i, params, stmt)}
 
 statement:
 | BEGIN stmts = list(terminated(statement, SEMI)) END {Ast.Group stmts}
+| IF e = expr THEN thn = statement {Ast.If (e, thn, Group [])}
 | IF e = expr THEN thn = statement ELSE els = statement {Ast.If (e, thn, els)}
 | WHILE e = expr DO body = statement {Ast.While (e, body)}
 | i = IDENT ASSIGN e = expr {Ast.Assign (i, e)}
