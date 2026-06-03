@@ -592,28 +592,7 @@ let regalloc_helper
   List.fold_left go_block cfg (blockorder alloc_state)
 
 let%expect_test "Nested loops register allocation" =
-  let ast =
-    let open Ast in
-    Group
-      [
-        Assign ("i", Int 0);
-        While
-          ( Bop (Lt, Var "i", Int 100),
-            Group
-              [
-                Assign ("j", Var "i");
-                While
-                  ( Bop (Lt, Var "j", Int 100),
-                    Group
-                      [
-                        Assign ("j", Bop (Add, Var "j", Int 1));
-                        Assign ("i", Bop (Add, Var "i", Int 1));
-                      ] );
-              ] );
-      ]
-  in
-  let module F = Normalize.Fresh () in
-  let cfg = Normalize.normalize F.fresh ast in
+  let cfg = Examples.nested_loops in
   let state = Select_x86.State.init () in
   let _, cfg = Select_x86.codegen_test_helper state cfg in
   let extra = X86.Cfg.precalculate_edges cfg in
@@ -665,21 +644,7 @@ let%expect_test "Nested loops register allocation" =
     |}]
 
 let%expect_test "Fibonacci register allocation" =
-  let fibonacci fn v =
-    let open Ast in
-    If
-      ( Bop (Le, Var v, Int 1),
-        Assign (fn, Var v),
-        Assign
-          ( fn,
-            Bop
-              ( Add,
-                Call (fn, [ Bop (Sub, Var v, Int 1) ]),
-                Call (fn, [ Bop (Sub, Var v, Int 2) ]) ) ) )
-  in
-  let ast = fibonacci "fibonacci" "v" in
-  let module F = Normalize.Fresh () in
-  let cfg = Normalize.(set_return "fibonacci" (normalize F.fresh ast)) in
+  let cfg = Examples.fibonacci in
   let state = Select_x86.State.init () in
   let srcs, cfg = Select_x86.codegen_test_helper ~args:[ "v" ] state cfg in
   let extra = X86.Cfg.precalculate_edges cfg in
