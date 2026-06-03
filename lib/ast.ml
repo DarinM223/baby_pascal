@@ -36,14 +36,14 @@ type stmt =
   | Group of stmt list
 [@@deriving show, eq]
 
-type decl =
-  | Function of string * (string * typ) list * typ * stmt
-  | Procedure of string * (string * typ) list * stmt
+type 'a decl =
+  | Function of string * (string * typ) list * typ * 'a
+  | Procedure of string * (string * typ) list * 'a
 [@@deriving show, eq]
 
-type program = {
+type 'a program = {
   globals : (string * typ) list;
-  decls : decl list;
-  main : stmt;
+  decls : 'a decl list;
+  main : 'a;
 }
 [@@deriving show, eq]

@@ -112,7 +112,7 @@ let test_figure_19_3 () =
 
 let test_figure_19_4 () =
   let ast =
-    Ast.
+    Ast.Group
       [
         Assign ("i", Int 1);
         Assign ("j", Int 1);
@@ -189,7 +189,7 @@ let test_figure_19_4 () =
 
 let test_pruned () =
   let ast =
-    Ast.
+    Ast.Group
       [
         If (Bop (Lt, Var "i", Int 2), Assign ("y", Int 1), Assign ("y", Var "x"));
         If (Bop (Lt, Var "i", Int 2), Assign ("z", Int 1), Assign ("z", Var "x"));

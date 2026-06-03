@@ -66,7 +66,8 @@ end
           ];
     }
   in
-  (check (option (testable Ast.pp_program Ast.equal_program)))
+  (check
+     (option Ast.(testable (pp_program pp_stmt) (equal_program equal_stmt))))
     "Produces proper program" program (Some expected)
 
 let _ =

@@ -15,10 +15,10 @@
 %left TIMES
 %nonassoc NOT
 
-%start <Ast.program> program
+%start <Ast.stmt Ast.program> program
 %type <string * Ast.typ> global
 %type <Ast.typ> typ
-%type <Ast.decl> decl
+%type <Ast.stmt Ast.decl> decl
 %type <Ast.stmt> statement
 %type <Ast.expr> expr
 
@@ -28,7 +28,7 @@ program:
 | g = global SEMI p = program {{ p with globals = p.Ast.globals @ [g] }}
 | d = decl p = program {{ p with decls = p.Ast.decls @ [d] }}
 | main = statement p = program {{ p with main }}
-| EOF {{ Ast.globals = []; decls = []; main = Group [] }}
+| EOF {{ Ast.globals = []; decls = []; main = Ast.Group [] }}
 
 global:
 | VAR r = separated_pair(IDENT, COLON, typ) {r}

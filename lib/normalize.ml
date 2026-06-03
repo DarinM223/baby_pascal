@@ -100,7 +100,7 @@ module Fresh () = struct
   let reset () = c := -1
 end
 
-let normalize (fresh : unit -> Target.reg) (stmts : Ast.stmt list) : Cfg.graph =
+let normalize (fresh : unit -> Target.reg) (stmt : Ast.stmt) : Cfg.graph =
   let ( let* ) = ( @@ ) in
   let new_label : unit -> Cfg.label =
     let c = ref 0 in
@@ -179,13 +179,19 @@ let normalize (fresh : unit -> Target.reg) (stmts : Ast.stmt list) : Cfg.graph =
         @@ go_stmt begin_label body @@ Cfg.branch begin_label @@ zgraph
     | Ast.Call (f, es) -> go_call (Target.Label ((-1, f), [])) es Fun.(const id)
   in
-  Cfg.unfocus
-  @@ List.fold_right
-       (fun stmt acc ->
-         let next = new_label () in
-         go_stmt next stmt @@ Cfg.label next @@ acc)
-       stmts
-       Cfg.(focus_entry empty)
+  (* todo: create labels for every group statment, not just the top level one *)
+  match stmt with
+  | Ast.Group stmts ->
+    Cfg.unfocus
+    @@ List.fold_right
+         (fun stmt acc ->
+           let next = new_label () in
+           go_stmt next stmt @@ Cfg.label next @@ acc)
+         stmts
+         Cfg.(focus_entry empty)
+  | stmt ->
+    let next = new_label () in
+    Cfg.(unfocus (go_stmt next stmt @@ label next @@ focus_entry empty))
 
 let set_return fn_name (graph : Cfg.graph) : Cfg.graph =
   let zblock, rest = Cfg.focus_exit graph in

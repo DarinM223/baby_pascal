@@ -3,7 +3,7 @@ open Baby_pascal
 
 let test_example_1 () =
   let expr =
-    Ast.
+    Ast.Group
       [
         Assign ("a", Bop (Add, Int 1, Bop (Mul, Int 2, Int 3)));
         If
