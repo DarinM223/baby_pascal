@@ -148,40 +148,32 @@ let test_figure_19_4 () =
     let open Normalize.Cfg in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg' "i" 1))
-    @@ branch (9, "label9")
-    @@ label (1, "label1")
-    @@ exit
-    @@ label (2, "label2")
-    @@ instruction (assign ~src:(reg' "j" 2) ~dest:(reg' "result" 1))
-    @@ branch (1, "label1")
-    @@ label ~args:[ name' "k" 2; name' "j" 2 ] (3, "label3")
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg' "j" 1))
+    @@ instruction (assign ~src:(Const 0) ~dest:(reg' "k" 1))
+    @@ branch ~args:[ reg' "k" 1; reg' "j" 1 ] (1, "label1")
+    @@ label ~args:[ name' "k" 2; name' "j" 2 ] (1, "label1")
     @@ cbranch
          ~args:[ reg' "k" 2; Const 100 ]
-         LT ~ifso:(4, "label4") ~ifnot:(2, "label2")
-    @@ label (4, "label4")
+         LT ~ifso:(2, "label2") ~ifnot:(3, "label3")
+    @@ label (2, "label2")
     @@ cbranch
          ~args:[ reg' "j" 2; Const 20 ]
-         LT ~ifso:(5, "label5") ~ifnot:(6, "label6")
-    @@ label (5, "label5")
+         LT ~ifso:(4, "label4") ~ifnot:(5, "label5")
+    @@ label (3, "label3")
+    @@ instruction (assign ~src:(reg' "j" 2) ~dest:(reg' "result" 1))
+    @@ exit
+    @@ label (4, "label4")
     @@ instruction (assign ~src:(reg' "i" 1) ~dest:(reg' "j" 3))
     @@ instruction
-         (bop Add ~dest:(reg' "tmp1" 1) ~src1:(reg' "k" 2) ~src2:(Const 1))
-    @@ instruction (assign ~src:(reg' "tmp1" 1) ~dest:(reg' "k" 3))
-    @@ branch ~args:[ reg' "k" 3; reg' "j" 3 ] (3, "label3")
-    @@ label (6, "label6")
+         (bop Add ~dest:(reg' "tmp0" 1) ~src1:(reg' "k" 2) ~src2:(Const 1))
+    @@ instruction (assign ~src:(reg' "tmp0" 1) ~dest:(reg' "k" 3))
+    @@ branch ~args:[ reg' "k" 3; reg' "j" 3 ] (1, "label1")
+    @@ label (5, "label5")
     @@ instruction (assign ~src:(reg' "k" 2) ~dest:(reg' "j" 4))
     @@ instruction
-         (bop Add ~dest:(reg' "tmp0" 1) ~src1:(reg' "k" 2) ~src2:(Const 2))
-    @@ instruction (assign ~src:(reg' "tmp0" 1) ~dest:(reg' "k" 4))
-    @@ branch ~args:[ reg' "k" 4; reg' "j" 4 ] (3, "label3")
-    @@ label (7, "label7")
-    @@ branch ~args:[ reg' "k" 1; reg' "j" 1 ] (3, "label3")
-    @@ label (8, "label8")
-    @@ instruction (assign ~src:(Const 0) ~dest:(reg' "k" 1))
-    @@ branch (7, "label7")
-    @@ label (9, "label9")
-    @@ instruction (assign ~src:(Const 1) ~dest:(reg' "j" 1))
-    @@ branch (8, "label8")
+         (bop Add ~dest:(reg' "tmp1" 1) ~src1:(reg' "k" 2) ~src2:(Const 2))
+    @@ instruction (assign ~src:(reg' "tmp1" 1) ~dest:(reg' "k" 4))
+    @@ branch ~args:[ reg' "k" 4; reg' "j" 4 ] (1, "label1")
     @@ focus_entry empty
   in
   (check Normalize.Cfg.(testable pp_graph equal_graph))
@@ -211,28 +203,25 @@ let test_pruned () =
     unfocus
     @@ cbranch
          ~args:[ reg' "i" 0; Const 2 ]
-         LT ~ifso:(6, "label6") ~ifnot:(7, "label7")
+         LT ~ifso:(1, "label1") ~ifnot:(2, "label2")
     @@ label (1, "label1")
-    @@ exit
-    @@ label ~args:[ name' "z" 3 ] (2, "label2")
-    @@ instruction (assign ~src:(reg' "z" 3) ~dest:(reg' "result" 1))
-    @@ branch (1, "label1")
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg' "y" 1))
+    @@ branch (3, "label3")
+    @@ label (2, "label2")
+    @@ instruction (assign ~src:(reg' "x" 0) ~dest:(reg' "y" 2))
+    @@ branch (3, "label3")
     @@ label (3, "label3")
-    @@ instruction (assign ~src:(Const 1) ~dest:(reg' "z" 1))
-    @@ branch ~args:[ reg' "z" 1 ] (2, "label2")
-    @@ label (4, "label4")
-    @@ instruction (assign ~src:(reg' "x" 0) ~dest:(reg' "z" 2))
-    @@ branch ~args:[ reg' "z" 2 ] (2, "label2")
-    @@ label (5, "label5")
     @@ cbranch
          ~args:[ reg' "i" 0; Const 2 ]
-         LT ~ifso:(3, "label3") ~ifnot:(4, "label4")
-    @@ label (6, "label6")
-    @@ instruction (assign ~src:(Const 1) ~dest:(reg' "y" 1))
-    @@ branch (5, "label5")
-    @@ label (7, "label7")
-    @@ instruction (assign ~src:(reg' "x" 0) ~dest:(reg' "y" 2))
-    @@ branch (5, "label5")
+         LT ~ifso:(4, "label4") ~ifnot:(5, "label5")
+    @@ label (4, "label4")
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg' "z" 1))
+    @@ branch ~args:[ reg' "z" 1 ] (6, "label6")
+    @@ label (5, "label5")
+    @@ instruction (assign ~src:(reg' "x" 0) ~dest:(reg' "z" 2))
+    @@ branch ~args:[ reg' "z" 2 ] (6, "label6")
+    @@ label ~args:[ name' "z" 3 ] (6, "label6")
+    @@ instruction (assign ~src:(reg' "z" 3) ~dest:(reg' "result" 1))
     @@ focus_entry empty
   in
   (check Normalize.Cfg.(testable pp_graph equal_graph))

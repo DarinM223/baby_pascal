@@ -17,28 +17,7 @@ open Baby_pascal
        5
 *)
 let test_nested_loops_headers () =
-  let ast =
-    let open Ast in
-    Group
-      [
-        Assign ("i", Int 0);
-        While
-          ( Bop (Lt, Var "i", Int 100),
-            Group
-              [
-                Assign ("j", Var "i");
-                While
-                  ( Bop (Lt, Var "j", Int 100),
-                    Group
-                      [
-                        Assign ("j", Bop (Add, Var "j", Int 1));
-                        Assign ("i", Bop (Add, Var "i", Int 1));
-                      ] );
-              ] );
-      ]
-  in
-  let module F = Normalize.Fresh () in
-  let cfg = Normalize.normalize F.fresh ast in
+  let cfg = Examples.nested_loops in
   let extra = Normalize.Cfg.precalculate_edges cfg in
   let module Extra = (val extra) in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in

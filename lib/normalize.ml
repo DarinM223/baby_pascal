@@ -109,6 +109,9 @@ let normalize (fresh : unit -> Target.reg) (stmt : Ast.stmt) : Cfg.graph =
       let i = !c in
       (i, "label" ^ string_of_int i)
   in
+  let label l =
+    if Lazy.is_val l then Cfg.label (Lazy.force l) else fun a -> a
+  in
   let rec go_expr exp (k : Target.operand -> Cfg.nodes) : Cfg.nodes =
     match exp with
     | Ast.Int i -> k (Target.Const i)
@@ -117,15 +120,17 @@ let normalize (fresh : unit -> Target.reg) (stmt : Ast.stmt) : Cfg.graph =
     | Ast.Uop (uop, e) ->
       let* e = go_expr e in
       let tmp = Target.Reg (fresh ()) in
+      let rest = k tmp in
       fun zgraph ->
-        Cfg.instruction (Target.uop uop ~src:e ~dest:tmp) @@ k tmp @@ zgraph
+        Cfg.instruction (Target.uop uop ~src:e ~dest:tmp) @@ rest @@ zgraph
     | Ast.Bop (bop, e1, e2) ->
       let* e1 = go_expr e1 in
       let* e2 = go_expr e2 in
       let tmp = Target.Reg (fresh ()) in
+      let rest = k tmp in
       fun zgraph ->
         Cfg.instruction (Target.bop bop ~src1:e1 ~src2:e2 ~dest:tmp)
-        @@ k tmp @@ zgraph
+        @@ rest @@ zgraph
     | Ast.Call (f, es) -> go_call (Target.Label ((-1, f), [])) es k
   and short_circuit t f = function
     | Ast.Bool b -> Cfg.branch (if b then t else f)
@@ -152,46 +157,56 @@ let normalize (fresh : unit -> Target.reg) (stmt : Ast.stmt) : Cfg.graph =
       | [] ->
         let es = List.rev acc in
         let tmp = Target.Reg (fresh ()) in
+        let rest = k tmp in
         fun zgraph ->
-          Cfg.instruction (Target.call ~dest:tmp f es) @@ k tmp @@ zgraph
+          Cfg.instruction (Target.call ~dest:tmp f es) @@ rest @@ zgraph
     in
     go [] es
-  and go_stmt (next : Cfg.label) = function
+  and go_stmt (next : Cfg.label Lazy.t) = function
     | Ast.Assign (v, e) ->
       let* e = go_expr e in
       Cfg.instruction @@ Target.assign ~dest:(Target.reg v) ~src:e
-    | Ast.Group stmts -> List.fold_right (go_stmt next) stmts
+    | Ast.Group stmts ->
+      let len = List.length stmts in
+      let stmts =
+        List.mapi
+          (fun i stmt ->
+            if i = len - 1 then go_stmt next stmt
+            else
+              let next = lazy (new_label ()) in
+              let stmt = go_stmt next stmt in
+              fun zgraph -> stmt @@ label next @@ zgraph)
+          stmts
+      in
+      List.fold_right ( @@ ) stmts
     | Ast.If (test, thn, Group []) ->
       let t = new_label () in
-      fun zgraph ->
-        short_circuit t next test @@ Cfg.label t @@ go_stmt next thn @@ zgraph
+      let branch_cond = short_circuit t (Lazy.force next) test in
+      let thn = go_stmt next thn in
+      fun zgraph -> branch_cond @@ Cfg.label t @@ thn @@ zgraph
     | Ast.If (test, thn, els) ->
       let t = new_label () in
       let f = new_label () in
+      let branch_cond = short_circuit t f test in
+      let thn = go_stmt next thn in
+      let els = go_stmt next els in
+      let jump = Cfg.branch (Lazy.force next) in
       fun zgraph ->
-        short_circuit t f test @@ Cfg.label t @@ go_stmt next thn
-        @@ Cfg.branch next @@ Cfg.label f @@ go_stmt next els @@ zgraph
+        branch_cond @@ Cfg.label t @@ thn @@ jump @@ Cfg.label f @@ els
+        @@ zgraph
     | Ast.While (test, body) ->
       let begin_label = new_label () in
       let t = new_label () in
+      let branch_cond = short_circuit t (Lazy.force next) test in
+      let body = go_stmt (lazy begin_label) body in
       fun zgraph ->
-        Cfg.label begin_label @@ short_circuit t next test @@ Cfg.label t
-        @@ go_stmt begin_label body @@ Cfg.branch begin_label @@ zgraph
+        Cfg.label begin_label @@ branch_cond @@ Cfg.label t @@ body
+        @@ Cfg.branch begin_label @@ zgraph
     | Ast.Call (f, es) -> go_call (Target.Label ((-1, f), [])) es Fun.(const id)
   in
-  (* todo: create labels for every group statment, not just the top level one *)
-  match stmt with
-  | Ast.Group stmts ->
-    Cfg.unfocus
-    @@ List.fold_right
-         (fun stmt acc ->
-           let next = new_label () in
-           go_stmt next stmt @@ Cfg.label next @@ acc)
-         stmts
-         Cfg.(focus_entry empty)
-  | stmt ->
-    let next = new_label () in
-    Cfg.(unfocus (go_stmt next stmt @@ label next @@ focus_entry empty))
+  let next = lazy (new_label ()) in
+  let stmt = go_stmt next stmt in
+  Cfg.unfocus (stmt @@ label next @@ Cfg.focus_entry Cfg.empty)
 
 let set_return fn_name (graph : Cfg.graph) : Cfg.graph =
   let zblock, rest = Cfg.focus_exit graph in

@@ -256,7 +256,8 @@ functor
 
     let unreachable = function
       | Last (Branch _ | Exit) -> ()
-      | _ -> failwith "unreachable code"
+      | tail ->
+        failwith @@ Format.asprintf "unreachable code, missing: %a" pp_tail tail
 
     let branch ?(args = []) label ((head, tail), graph) =
       unreachable tail;

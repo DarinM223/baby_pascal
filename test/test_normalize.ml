@@ -21,39 +21,37 @@ let test_example_1 () =
     let open Normalize.Cfg in
     unfocus
     @@ instruction
-         (bop Ast.Mul ~src1:(Const 2) ~src2:(Const 3) ~dest:(reg "tmp1"))
+         (bop Ast.Mul ~src1:(Const 2) ~src2:(Const 3) ~dest:(reg "tmp0"))
     @@ instruction
-         (bop Ast.Add ~src1:(Const 1) ~src2:(reg "tmp1") ~dest:(reg "tmp2"))
-    @@ instruction (assign ~src:(reg "tmp2") ~dest:(reg "a"))
-    @@ branch (8, "label8")
+         (bop Ast.Add ~src1:(Const 1) ~src2:(reg "tmp0") ~dest:(reg "tmp1"))
+    @@ instruction (assign ~src:(reg "tmp1") ~dest:(reg "a"))
+    @@ cbranch
+         ~args:[ reg "a"; Const 1 ]
+         EQ ~ifso:(3, "label3") ~ifnot:(2, "label2")
     @@ label (1, "label1")
-    @@ exit
-    @@ label (2, "label2")
     @@ branch (4, "label4")
-    @@ label (3, "label3")
+    @@ label (2, "label2")
     @@ instruction (assign ~src:(Const 60) ~dest:(reg "result"))
-    @@ branch (1, "label1")
+    @@ branch (6, "label6")
+    @@ label (3, "label3")
+    @@ cbranch
+         ~args:[ reg "a"; Const 5 ]
+         LT ~ifso:(1, "label1") ~ifnot:(2, "label2")
     @@ label (4, "label4")
     @@ cbranch
          ~args:[ reg "a"; Const 1 ]
-         EQ ~ifso:(6, "label6") ~ifnot:(1, "label1")
+         EQ ~ifso:(7, "label7") ~ifnot:(6, "label6")
     @@ label (5, "label5")
     @@ instruction
-         (bop Ast.Add ~src1:(reg "a") ~src2:(Const 1) ~dest:(reg "tmp0"))
-    @@ instruction (assign ~src:(reg "tmp0") ~dest:(reg "a"))
+         (bop Ast.Add ~src1:(reg "a") ~src2:(Const 1) ~dest:(reg "tmp2"))
+    @@ instruction (assign ~src:(reg "tmp2") ~dest:(reg "a"))
     @@ branch (4, "label4")
     @@ label (6, "label6")
-    @@ cbranch
-         ~args:[ reg "a"; Const 5 ]
-         LT ~ifso:(5, "label5") ~ifnot:(1, "label1")
+    @@ exit
     @@ label (7, "label7")
     @@ cbranch
          ~args:[ reg "a"; Const 5 ]
-         LT ~ifso:(2, "label2") ~ifnot:(3, "label3")
-    @@ label (8, "label8")
-    @@ cbranch
-         ~args:[ reg "a"; Const 1 ]
-         EQ ~ifso:(7, "label7") ~ifnot:(3, "label3")
+         LT ~ifso:(5, "label5") ~ifnot:(6, "label6")
     @@ focus_entry empty
   in
   (check Normalize.Cfg.(testable pp_graph equal_graph))
