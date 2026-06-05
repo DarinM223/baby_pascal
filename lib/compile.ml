@@ -1,4 +1,5 @@
 let compile program =
+  Check.check_program program;
   let module F = Normalize.Fresh () in
   let program =
     let open Ast in
@@ -29,7 +30,10 @@ let compile program =
     let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
     let cfg = Construct.rename_variables (module Dom) cfg in
     let args = List.map (fun arg -> (arg, 0)) args in
-    let cfg = round args cfg in
+    ignore (round args cfg);
+    (* Format.printf "Graph: %a\n" Normalize.Cfg.pp_graph cfg;
+    let cfg = round args cfg in *)
+    (* Format.printf "Graph: %a\n" Normalize.Cfg.pp_graph cfg; *)
     let cfg =
       Normalize.Cfg.Blocks.fold
         (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
@@ -37,6 +41,7 @@ let compile program =
     in
     let state = Select_x86.State.init () in
     let srcs, cfg = Select_x86.codegen_function ~args state cfg in
+    Format.printf "Graph: %a\n" X86.Printer.pp_graph cfg;
     let extra = X86.Cfg.precalculate_edges cfg in
     let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
     let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
@@ -55,5 +60,20 @@ let compile program =
   in
   let decls = List.map lower_decl program.decls in
   let main = lower_cfg [] program.main in
-  (* todo: write out program to assembly file *)
   { program with decls; main }
+
+let write_file out program =
+  let write_cfg out cfg =
+    Format.(fprintf (formatter_of_out_channel out))
+      "%a\n" X86.Writer.pp_graph cfg
+  in
+  let write_decl = function
+    | Ast.Function (f, _args, _ret, body) ->
+      Printf.fprintf out "%s:\n" f;
+      write_cfg out body
+    | Ast.Procedure (f, _args, body) ->
+      Printf.fprintf out "%s:\n" f;
+      write_cfg out body
+  in
+  List.iter write_decl program.Ast.decls;
+  write_cfg out program.main

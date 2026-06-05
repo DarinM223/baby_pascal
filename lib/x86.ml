@@ -71,7 +71,7 @@ module Target = struct
     | Label of label * operand list
   [@@deriving eq]
   let pp_sep fmt () = Format.fprintf fmt ", "
-  let rec pp_operand fmt = function
+  let rec pp_operand' pp_reg fmt = function
     | Imm i -> Format.fprintf fmt "$%d" i
     | Reg r -> Format.fprintf fmt "%%%a" pp_reg r
     | MemAddr addr ->
@@ -81,9 +81,10 @@ module Target = struct
     | Label (l, []) -> Format.fprintf fmt "%s" (snd l)
     | Label (l, args) ->
       Format.fprintf fmt "%s(%a)" (snd l)
-        (Format.pp_print_list ~pp_sep pp_operand)
+        (Format.pp_print_list ~pp_sep (pp_operand' pp_reg))
         args
-  let show_operand = Format.asprintf "%a" pp_operand
+  let pp_operand = pp_operand' pp_reg
+  let show_operand = Format.asprintf "%a" (pp_operand' pp_reg)
   let label label args = Label (label, args)
   let destruct_label = function
     | Label (l, args) -> Some (l, args)
@@ -257,6 +258,60 @@ module Printer = struct
     | Exit -> Format.fprintf fmt "exit"
     | Branch (i, _) | CBranch (i, _, _) | Return i ->
       Format.fprintf fmt "%a" Target.pp_instr i
+
+  type head = Cfg.head =
+    | First of first
+    | Head of head * middle
+  let rec pp_head fmt = function
+    | First f -> Format.fprintf fmt "%a@\n" pp_first f
+    | Head (h, m) -> Format.fprintf fmt "%a  %a@\n" pp_head h pp_middle m
+  type tail = Cfg.tail =
+    | Last of last
+    | Tail of middle * tail
+  let rec pp_tail fmt = function
+    | Last l -> Format.fprintf fmt "%a@\n" pp_last l
+    | Tail (m, t) -> Format.fprintf fmt "%a@\n  %a" pp_middle m pp_tail t
+  type block = first * tail
+  let pp_block fmt (f, t) = Format.fprintf fmt "%a@\n  %a" pp_first f pp_tail t
+  let pp_graph fmt =
+    Cfg.Blocks.iter (fun _ block -> Format.fprintf fmt "%a" pp_block block)
+end
+module Writer = struct
+  type label = Cfg.label
+  let rec pp_reg fmt = function
+    | Target.Physical (_, _, s) -> Format.fprintf fmt "%s" s
+    | Virtual v ->
+      begin match v.reg with
+      | Physical _ as r -> Format.fprintf fmt "%a" pp_reg r
+      | _ ->
+        failwith
+        @@ Format.asprintf "Uncolored virtual register %d%a%a" v.id
+             Target.pp_reg_class v.reg_class Target.pp_reg_constr v.reg_constr
+      end
+    | Tombstone -> ()
+  let pp_operand = Target.pp_operand' pp_reg
+  let pp_instr fmt i =
+    let pp_operands = Format.pp_print_list ~pp_sep:Target.pp_sep pp_operand in
+    Format.fprintf fmt "%s %a" i.Target.instr pp_operands (i.defs @ i.uses)
+  let pp_label fmt (_, l) = Format.fprintf fmt "%s" l
+  type first = Cfg.first =
+    | Entry
+    | Label of label * Cfg.info
+  type middle = Cfg.middle = Instruction of Target.instr
+  type last = Cfg.last =
+    | Exit
+    | Branch of Target.instr * label
+    | CBranch of Target.instr * label * label
+    | Return of Target.instr
+  let pp_sep fmt () = Format.fprintf fmt ", "
+  let pp_first fmt = function
+    | Entry -> ()
+    | Label (l, _info) -> Format.fprintf fmt "%a:" pp_label l
+  let pp_middle fmt (Instruction instr) = Format.fprintf fmt "%a" pp_instr instr
+  let pp_last fmt = function
+    | Exit -> Format.fprintf fmt "ret"
+    | Branch (i, _) | CBranch (i, _, _) | Return i ->
+      Format.fprintf fmt "%a" pp_instr i
 
   type head = Cfg.head =
     | First of first
