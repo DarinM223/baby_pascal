@@ -15,14 +15,11 @@ let compile program =
       decls = List.map normalize_decl program.decls;
     }
   in
-  let rec round _args cfg =
+  let rec round args cfg =
     let cfg, changed = Deadcode.M.deadcode cfg in
-    (* let block_args = Constprop.block_args cfg in *)
-    (* let cfg, changed' = Constprop.constprop block_args args cfg in *)
-    (* if changed || changed' then round args cfg else cfg *)
-    ignore changed;
-    (* ignore (changed || changed'); *)
-    cfg
+    let block_args = Constprop.block_args cfg in
+    let cfg, changed' = Constprop.constprop block_args args cfg in
+    if changed || changed' then round args cfg else cfg
   in
   let lower_cfg args cfg =
     let extra = Normalize.Cfg.precalculate_edges cfg in

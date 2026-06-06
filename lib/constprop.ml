@@ -204,7 +204,7 @@ let constprop (block_args : OperandSet.t NameMap.t)
         { acc with mapping = NameMap.add arg OverDefined acc.mapping })
       fact.init_info function_args
   in
-  fact.set Cfg.entry_uid init_info;
+  let fact = { fact with init_info } in
   let first_out = function
     | Cfg.Entry -> Flow.Dataflow (fact.get Cfg.entry_uid)
     | Cfg.Label (((uid, _) as l), info) ->
