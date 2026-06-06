@@ -15,11 +15,14 @@ let compile program =
       decls = List.map normalize_decl program.decls;
     }
   in
-  let rec round args cfg =
+  let rec round _args cfg =
     let cfg, changed = Deadcode.M.deadcode cfg in
-    let block_args = Constprop.block_args cfg in
-    let cfg, changed' = Constprop.constprop block_args args cfg in
-    if changed || changed' then round args cfg else cfg
+    (* let block_args = Constprop.block_args cfg in *)
+    (* let cfg, changed' = Constprop.constprop block_args args cfg in *)
+    (* if changed || changed' then round args cfg else cfg *)
+    ignore changed;
+    (* ignore (changed || changed'); *)
+    cfg
   in
   let lower_cfg args cfg =
     let extra = Normalize.Cfg.precalculate_edges cfg in
@@ -30,10 +33,9 @@ let compile program =
     let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
     let cfg = Construct.rename_variables (module Dom) cfg in
     let args = List.map (fun arg -> (arg, 0)) args in
-    ignore (round args cfg);
-    (* Format.printf "Graph: %a\n" Normalize.Cfg.pp_graph cfg;
-    let cfg = round args cfg in *)
-    (* Format.printf "Graph: %a\n" Normalize.Cfg.pp_graph cfg; *)
+    Format.printf "Graph: %a\n" Normalize.Cfg.pp_graph cfg;
+    let cfg = round args cfg in
+    Format.printf "Graph: %a\n" Normalize.Cfg.pp_graph cfg;
     let cfg =
       Normalize.Cfg.Blocks.fold
         (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
@@ -48,8 +50,14 @@ let compile program =
     let cfg =
       Regalloc.(spill_helper ~args:(reg_ops srcs) (module Loop) state cfg)
     in
-    let cfg = Regalloc.regalloc_helper (module Loop) state cfg (fun _ -> ()) in
-    (* todo: cleanup redundant moves, moves with two memory operands, lower parallel copies, etc *)
+    let cfg =
+      Regalloc.regalloc_helper
+        ~args:(X86.Target.RegSet.of_list (Regalloc.reg_ops srcs))
+        (module Loop)
+        state cfg
+        (fun _ -> ())
+    in
+    (* todo: cleanup call operands, redundant moves, moves with two memory operands, lower parallel copies, etc *)
     cfg
   in
   let lower_decl = function

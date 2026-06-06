@@ -231,6 +231,11 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
             state.reg_current_pref.(reg) <- pref;
             CCBV.set state.occupied reg;
             head
+        | X86.Target.Virtual ({ reg_constr = UsePhysical physical; _ } as r') ->
+          (* color immediately dying constrained virtual registers (mostly used for temporary caller save registers) *)
+          fun head ->
+            r'.reg <- Physical physical;
+            head
         | _ -> fun head -> head)
       (X86.Target.defs instr) head
   in
@@ -549,7 +554,7 @@ let spill_helper ?(args = [])
   in
   Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
 
-let regalloc_helper
+let regalloc_helper ?(args = RegSet.empty)
     (module Loop : Loopnesting.S
       with type Dom.label = X86.Cfg.label
        and type Dom.position = int
@@ -585,6 +590,28 @@ let regalloc_helper
     let uid = X86.Cfg.idd (Loop.Dom.label_of_position pos) in
     alloc_state.select_state.curr_block := uid;
     let zblock, cfg = X86.Cfg.focus uid cfg in
+    let zblock =
+      if uid = X86.Cfg.entry_uid then
+        let head, tail = zblock in
+        let head =
+          RegSet.fold
+            (function
+              | X86.Target.Virtual r' as r ->
+                fun head ->
+                  let reg, pref, head =
+                    get_register alloc_state X86.Cfg.entry_uid r head
+                  in
+                  r'.reg <- alloc_state.regs.(reg);
+                  alloc_state.reg_current_var.(reg) <- r'.id;
+                  alloc_state.reg_current_pref.(reg) <- pref;
+                  CCBV.set alloc_state.occupied reg;
+                  head
+              | _ -> fun head -> head)
+            args head
+        in
+        (head, tail)
+      else zblock
+    in
     let block = color_block alloc_state (X86.Cfg.zip zblock) in
     let cfg = X86.Cfg.(unfocus (unzip block, cfg)) in
     after_color_block alloc_state cfg pos
@@ -679,7 +706,11 @@ let%expect_test "Fibonacci register allocation" =
       j label1(%29any)
     |}];
   let cfg =
-    regalloc_helper (module Loop) state cfg @@ fun state ->
+    regalloc_helper
+      ~args:(RegSet.of_list (reg_ops srcs))
+      (module Loop)
+      state cfg
+    @@ fun state ->
     Format.printf "%a\n" (pp_preferences state.regs) state.preferences;
     [%expect
       {|
@@ -736,7 +767,7 @@ let%expect_test "Fibonacci register allocation" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      pcopy [(%rbx(1), %0(%rdi))]
+      pcopy [(%rbx(1), %rdi(0))]
       cmp LE %rbx(1), $1, label2, label3
     label1(local=false)(rax(32)):
       movq %rax(33), %rax(32)
@@ -747,13 +778,13 @@ let%expect_test "Fibonacci register allocation" =
     label3(local=false)():
       movq %rax(5), %rbx(1)
       subq %rax(4), %rax(5), $1
-      pcopy [(%6(%rdi), %rax(4))]
-      call %rax(7), %8(%rcx), %9(%rdx), %10(%rsi), %11(%rdi), %12(%r8), %13(%r9), %14(%r10), %15(%r11), fibonacci
+      pcopy [(%rdi(6), %rax(4))]
+      call %rax(7), %rcx(8), %rdx(9), %rsi(10), %rdi(11), %r8(12), %r9(13), %r10(14), %r11(15), fibonacci
       movq %r13(3), %rax(7)
       movq %rax(18), %rbx(1)
       subq %rax(17), %rax(18), $2
-      pcopy [(%19(%rdi), %rax(17))]
-      call %rax(20), %21(%rcx), %22(%rdx), %23(%rsi), %24(%rdi), %25(%r8), %26(%r9), %27(%r10), %28(%r11), fibonacci
+      pcopy [(%rdi(19), %rax(17))]
+      call %rax(20), %rcx(21), %rdx(22), %rsi(23), %rdi(24), %r8(25), %r9(26), %r10(27), %r11(28), fibonacci
       movq %rax(16), %rax(20)
       movq %rbx(31), %r13(3)
       addq %rbx(30), %rbx(31), %rax(16)

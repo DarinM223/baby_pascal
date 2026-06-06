@@ -105,6 +105,7 @@ module Target = struct
       | r -> r
   end
   module RegSet = Set.Make (Reg)
+  module RegMap = Map.Make (Reg)
   let is_tombstone = function
     | Reg Tombstone -> true
     | _ -> false
