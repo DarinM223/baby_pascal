@@ -223,18 +223,13 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       (X86.Target.uses instr);
     X86.Target.RegSet.fold
       (function
-        | X86.Target.Virtual r' as r when not (dies state uid r instr_num) ->
+        | X86.Target.Virtual r' as r ->
           fun head ->
             let reg, pref, head = get_register state uid r head in
             r'.reg <- state.regs.(reg);
             state.reg_current_var.(reg) <- r'.id;
             state.reg_current_pref.(reg) <- pref;
-            CCBV.set state.occupied reg;
-            head
-        | X86.Target.Virtual ({ reg_constr = UsePhysical physical; _ } as r') ->
-          (* color immediately dying constrained virtual registers (mostly used for temporary caller save registers) *)
-          fun head ->
-            r'.reg <- Physical physical;
+            if not (dies state uid r instr_num) then CCBV.set state.occupied reg;
             head
         | _ -> fun head -> head)
       (X86.Target.defs instr) head
