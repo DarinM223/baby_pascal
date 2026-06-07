@@ -88,6 +88,10 @@ module Target = struct
   let defs instr =
     dests instr |> List.map regset_of_operand
     |> List.fold_left RegSet.union RegSet.empty
+
+  let is_side_effectful = function
+    | Call _ | Return _ -> true
+    | _ -> false
 end
 
 module Cfg = Graph.Make (Target)

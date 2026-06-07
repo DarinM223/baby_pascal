@@ -188,6 +188,7 @@ module Target = struct
   let instr instr ~defs ~uses = { instr; defs; uses }
   let mov ~dest ~src = instr "movq" ~defs:[ dest ] ~uses:[ src ]
   let pcopy ~dests ~srcs = instr "pcopy" ~defs:dests ~uses:srcs
+  let is_side_effectful _ = true
 end
 
 module Regs = struct

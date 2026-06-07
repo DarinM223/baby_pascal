@@ -178,10 +178,6 @@ let fold_conditional = function
     else Cfg.Branch (Target.Goto (l2, l2args), l2')
   | i -> i
 
-let is_side_effectful = function
-  | Target.(Call _ | Return _) -> true
-  | _ -> false
-
 let constprop (block_args : OperandSet.t NameMap.t)
     (function_args : Name.t list) graph =
   let fact = state_fact () in
@@ -290,8 +286,9 @@ let constprop (block_args : OperandSet.t NameMap.t)
         | _ -> false)
     in
     if not !converged then Flow.Dataflow (handle_instruction a instr)
-    else if all_defs_defined () && not (is_side_effectful instr) then
-      Flow.Rewrite Cfg.empty
+    else if
+      all_defs_defined () && not (Normalize.Target.is_side_effectful instr)
+    then Flow.Rewrite Cfg.empty
     else
       let instr, changed = rewrite_uses lookup_operand a instr in
       if changed then

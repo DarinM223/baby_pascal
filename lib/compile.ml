@@ -81,4 +81,5 @@ let write_file out program =
       write_cfg out body
   in
   List.iter write_decl program.Ast.decls;
+  Printf.fprintf out "_start:\n";
   write_cfg out program.main

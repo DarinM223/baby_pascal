@@ -119,7 +119,7 @@ let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
             acc + try NameMap.find def count with Not_found -> 0)
           (Normalize.Target.defs i) 0
       in
-      if num_uses <= 1 && not (Constprop.is_side_effectful i) then
+      if num_uses <= 1 && not (Normalize.Target.is_side_effectful i) then
         let acc =
           NameSet.fold
             (fun def acc -> NameMap.add def rewritten acc)

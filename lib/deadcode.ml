@@ -16,6 +16,7 @@ module type Target = sig
   module RegSet : Set.S with type elt = reg
   val uses : instr -> RegSet.t
   val defs : instr -> RegSet.t
+  val is_side_effectful : instr -> bool
 end
 
 module Make
@@ -84,8 +85,10 @@ struct
         (Target.RegSet.diff a (Target.defs instr))
     in
     let middle_in a (G.Instruction instr) =
-      if Target.RegSet.(is_empty (inter (Target.defs instr) a)) then
-        Flow.Rewrite G.empty
+      if
+        Target.RegSet.(is_empty (inter (Target.defs instr) a))
+        && not (Target.is_side_effectful instr)
+      then Flow.Rewrite G.empty
       else Flow.Dataflow (handle_instruction instr a)
     in
     let calc_live_out = function
