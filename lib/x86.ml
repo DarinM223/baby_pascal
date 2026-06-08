@@ -89,6 +89,18 @@ module Target = struct
   let destruct_label = function
     | Label (l, args) -> Some (l, args)
     | _ -> None
+  let rec to_colored =
+    let to_colored_reg = function
+      | Virtual { reg; _ } -> reg
+      | reg -> reg
+    in
+    function
+    | Reg r -> Reg (to_colored_reg r)
+    | MemAddr ({ base : reg; index : reg; _ } as addr) ->
+      MemAddr
+        { addr with base = to_colored_reg base; index = to_colored_reg index }
+    | Label (l, ops) -> Label (l, List.map to_colored ops)
+    | (Imm _ | StackSlot _) as op -> op
   module Reg = struct
     type t = reg
     let is_tombstone = function
@@ -349,4 +361,13 @@ module ExecfreqRequirements :
   let ret = "ret"
   let cmp = "cmp"
   let exit = "exit"
+end
+module SeqpcopyRequirements :
+  Seqpcopy.Requirements with module Target = Target = struct
+  module Target = Target
+  let temp = Target.Reg (Target.Physical Regs.r8)
+  let is_pcopy instr = instr.Target.instr = "pcopy"
+  let mov = Target.mov
+  let uses instr = List.map Target.to_colored instr.Target.uses
+  let defs instr = List.map Target.to_colored instr.Target.defs
 end
