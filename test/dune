@@ -10,7 +10,8 @@
   test_undag
   test_select_x86
   test_spill
-  test_execfreq)
+  test_execfreq
+  test_seqpcopy)
  (modes
   (byte exe))
  (flags (:standard))

@@ -6,7 +6,7 @@ module type Requirements = sig
   val uses : Target.instr -> Target.operands
   val defs : Target.instr -> Target.operands
 end
-module SequentializePcopies
+module Make
     (G : Graph.S)
     (Requirements : Requirements with module Target = G.Target) =
 struct
@@ -22,7 +22,7 @@ struct
   let parallel_copy ~srcs ~dests temp tail =
     let n = Array.length srcs in
     let status = Array.make n To_move in
-    let tail = ref tail in
+    let build_tail = ref (fun tail -> tail) in
     let rec move_one i =
       if srcs.(i) <> dests.(i) then begin
         status.(i) <- Being_moved;
@@ -31,24 +31,24 @@ struct
             match status.(j) with
             | To_move -> move_one j
             | Being_moved ->
-              tail :=
-                G.Tail
-                  ( G.Instruction (Requirements.mov ~dest:temp ~src:srcs.(j)),
-                    !tail );
+              let old_build_tail = !build_tail in
+              let mov = Requirements.mov ~dest:temp ~src:srcs.(j) in
+              (build_tail :=
+                 fun tail -> old_build_tail (G.Tail (G.Instruction mov, tail)));
               srcs.(j) <- temp
             | Moved -> ()
         done;
-        tail :=
-          G.Tail
-            ( G.Instruction (Requirements.mov ~dest:dests.(i) ~src:srcs.(i)),
-              !tail );
+        let old_build_tail = !build_tail in
+        let mov = Requirements.mov ~dest:dests.(i) ~src:srcs.(i) in
+        (build_tail :=
+           fun tail -> old_build_tail (G.Tail (G.Instruction mov, tail)));
         status.(i) <- Moved
       end
     in
     for i = 0 to n - 1 do
       if status.(i) = To_move then move_one i
     done;
-    !tail
+    !build_tail tail
 
   (** Takes a control flow graph and returns an updated control flow graph with
       all parallel copies sequentialized into moves *)
