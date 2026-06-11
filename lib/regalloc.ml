@@ -550,6 +550,9 @@ let spill_helper ?(args = [])
   Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
 
 let regalloc_helper ?(args = RegSet.empty)
+    ?(regs =
+      X86.Regs.int_regs |> Array.of_list
+      |> Array.map (fun r -> X86.Target.Physical r))
     (module Loop : Loopnesting.S
       with type Dom.label = X86.Cfg.label
        and type Dom.position = int
@@ -561,7 +564,6 @@ let regalloc_helper ?(args = RegSet.empty)
   let block_execution_frequency uid =
     Freq.bfreq.(Loop.Dom.position_of_uid uid)
   in
-  let regs = X86.Regs.int_regs |> Array.map (fun r -> X86.Target.Physical r) in
   let num_vars = IntHashtbl.length state.Select_x86.State.vreg_block in
   let alloc_state =
     {

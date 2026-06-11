@@ -224,7 +224,7 @@ module Regs = struct
 
   let caller_save = [ rax; rcx; rdx; rsi; rdi; r8; r9; r10; r11 ]
   let int_regs =
-    [|
+    [
       rax;
       rbx;
       rcx;
@@ -241,7 +241,7 @@ module Regs = struct
       r13;
       r14;
       r15;
-    |]
+    ]
 end
 
 module Cfg = Graph.Make (Target)

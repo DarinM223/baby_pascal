@@ -62,7 +62,7 @@ struct
               ~srcs:(Array.of_list (Requirements.uses i))
               ~dests:(Array.of_list (Requirements.defs i))
               Requirements.temp (go_tail tail)
-          else go_tail tail
+          else G.Tail (Instruction i, go_tail tail)
         | G.Last last -> G.Last last
       in
       let tail = go_tail tail in

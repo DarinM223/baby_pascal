@@ -47,14 +47,25 @@ let compile program =
     let cfg =
       Regalloc.(spill_helper ~args:(reg_ops srcs) (module Loop) state cfg)
     in
+    let regs =
+      X86.Regs.int_regs
+      |> List.filter_map (fun ((_, _, reg) as r) ->
+          if reg <> "r8" then Some (X86.Target.Physical r) else None)
+      |> Array.of_list
+    in
     let cfg =
       Regalloc.regalloc_helper
         ~args:(X86.Target.RegSet.of_list (Regalloc.reg_ops srcs))
+        ~regs
         (module Loop)
         state cfg
         (fun _ -> ())
     in
-    (* todo: cleanup call operands, redundant moves, moves with two memory operands, lower parallel copies, etc *)
+    let module Sequentialize =
+      Seqpcopy.Make (X86.Cfg) (X86.SeqpcopyRequirements)
+    in
+    let cfg = Sequentialize.sequentialize cfg in
+    (* todo: cleanup call operands, redundant moves, moves with two memory operands, etc *)
     cfg
   in
   let lower_decl = function
