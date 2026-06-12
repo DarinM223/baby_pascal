@@ -23,9 +23,17 @@ let cleanup (tmp : Target.physical_reg) (cfg : Cfg.graph) : Cfg.graph =
         | { Target.instr = "movq"; defs = [ dest ]; uses = [ src ] }
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->
           go_tail tail
-        (* todo: lower cmp instructions into cmp + j* *)
+        (* todo: eliminate reuse operand uses *)
         | _ -> i @> go_tail tail
         end
+      (* lower cmp instructions into cmp + j* *)
+      | Cfg.Last
+          (CBranch ({ instr; uses = _ :: _ :: first_use :: uses; _ }, l1, l2))
+        when List.exists (fun (_, i) -> i = instr) Target.cond_mapping ->
+        Target.mov ~dest:(Reg (Physical tmp)) ~src:first_use
+        @> Target.instr "cmp" ~defs:[ Reg (Physical tmp) ] ~uses
+        @> Target.instr instr ~defs:[] ~uses:[ Label (l1, []) ]
+        @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last l -> Cfg.Last l
     in
     let tail = go_tail tail in

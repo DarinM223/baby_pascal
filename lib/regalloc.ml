@@ -649,12 +649,12 @@ let%expect_test "Nested loops register allocation" =
     label1(local=false)():
       exit
     label2(local=false)(rax(1)):
-      cmp LT %rax(1), $100, label3, label1
+      jl label3, label1, %rax(1), $100
     label3(local=false)():
       movq %rbx(2), %rax(1)
       j label4(%rax(1), %rbx(2))
     label4(local=false)(rax(3), rbx(4)):
-      cmp LT %rbx(4), $100, label5, label2(%rax(3))
+      jl label5, label2(%rax(3)), %rbx(4), $100
     label5(local=false)():
       movq %rax(7), %rax(3)
       addq %rax(6), %rax(7), $1
@@ -679,7 +679,7 @@ let%expect_test "Fibonacci register allocation" =
   [%expect
     {|
       pcopy [(%1any, %0(%rdi))]
-      cmp LE %1any, $1, label2, label3
+      je label2, label3, %1any, $1
     label1(local=false)(32any):
       movq %33(%rax), %32any
       ret %33(%rax)
@@ -765,7 +765,7 @@ let%expect_test "Fibonacci register allocation" =
   [%expect
     {|
       pcopy [(%rbx(1), %rdi(0))]
-      cmp LE %rbx(1), $1, label2, label3
+      je label2, label3, %rbx(1), $1
     label1(local=false)(rax(32)):
       movq %rax(33), %rax(32)
       ret %rax(33)

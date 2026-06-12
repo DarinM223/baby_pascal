@@ -32,7 +32,7 @@ module type Requirements = sig
   val uses : Target.instr -> Target.operands
   val call : string
   val ret : string
-  val cmp : string
+  val cond_mapping : (Instruction.Cond.t * string) list
   val exit : string
 end
 
@@ -50,6 +50,13 @@ module Make
     (Requirements : Requirements with module Target = G.Target) =
 struct
   module Dom = Loop.Dom
+  let lt, le, eq =
+    let get cond =
+      snd (List.find (fun (c, _) -> c = cond) Requirements.cond_mapping)
+    in
+    match List.map get Instruction.Cond.[ LT; LE; EQ ] with
+    | [ lt; le; eq ] -> (lt, le, eq)
+    | _ -> failwith "Could not find instructions for lt, le, and eq"
 
   let pp_array pp_elem fmt arr =
     let open Format in
@@ -81,11 +88,8 @@ struct
   let calls_exit = Array.init Dom.size (contains_instr_name Requirements.exit)
 
   let cmp_zero_or_constant name not_taken_succ ops =
-    let lt = Requirements.cmp ^ " " ^ "LT" in
-    let le = Requirements.cmp ^ " " ^ "LE" in
-    let eq = Requirements.cmp ^ " " ^ "EQ" in
     match ops with
-    | [ _; b; _; l2 ] ->
+    | [ _; l2; _; b ] ->
       Requirements.label l2 = Some not_taken_succ
       && begin match Requirements.imm b with
       | Some 0 when name = lt || name = le || name = eq -> true
@@ -93,11 +97,13 @@ struct
       | _ -> false
       end
     | _ -> false
+
+  (* todo: this doesn't do anything because cmp + jump instructions are always in the Last part of the graph
+     todo: after this is fixed, remove the labels operands from jump instructions *)
   let contains_opcode not_taken_succ =
     contains_instr (fun i ->
         let name = Requirements.instr_name i in
-        String.length name >= 3
-        && String.sub name 0 3 = Requirements.cmp
+        List.exists (fun (_, i) -> i = name) Requirements.cond_mapping
         && cmp_zero_or_constant name not_taken_succ (Requirements.uses i))
   let is_loop_exit n ~continue:s1 ~exit:s2 =
     let loop_nodes = Loop.(loop_nodes.(header n)) in

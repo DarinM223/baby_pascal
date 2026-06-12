@@ -190,10 +190,17 @@ module Target = struct
     | Reg reg, Reg dest -> Reg (reuse reg dest)
     | _ -> failwith "reuse_op: expected register"
   let goto l ops = { instr = "j"; defs = []; uses = [ Label (l, ops) ] }
+  let cond_mapping =
+    Instruction.Cond.
+      [
+        (LT, "jl"); (LE, "je"); (GT, "jg"); (GE, "jge"); (EQ, "jz"); (NE, "jnz");
+      ]
+
   let cbranch ~args cond l1 l1args l2 l2args =
+    let jmp = snd @@ List.find (fun (c, _) -> cond = c) cond_mapping in
     {
-      instr = Format.asprintf "cmp %a" Instruction.Cond.pp cond;
-      uses = args @ [ Label (l1, l1args); Label (l2, l2args) ];
+      instr = jmp;
+      uses = Label (l1, l1args) :: Label (l2, l2args) :: args;
       defs = [];
     }
   let return ~uses = { instr = "ret"; uses; defs = [] }
@@ -308,7 +315,7 @@ module Writer = struct
     | op -> Target.pp_operand' pp_reg fmt op
   let pp_instr fmt i =
     let pp_operands = Format.pp_print_list ~pp_sep:Target.pp_sep pp_operand in
-    Format.fprintf fmt "%s %a" i.Target.instr pp_operands (i.defs @ i.uses)
+    Format.fprintf fmt "%s %a" i.Target.instr pp_operands (i.uses @ i.defs)
   let pp_label fmt (_, l) = Format.fprintf fmt "%s" l
   type first = Cfg.first =
     | Entry
@@ -360,7 +367,7 @@ module ExecfreqRequirements :
   let uses = fun i -> i.Target.uses
   let call = "call"
   let ret = "ret"
-  let cmp = "cmp"
+  let cond_mapping = Target.cond_mapping
   let exit = "exit"
 end
 module SeqpcopyRequirements :

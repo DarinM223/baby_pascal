@@ -15,7 +15,7 @@ module Cond = struct
     | GE
     | EQ
     | NE
-  [@@deriving show { with_path = false }, eq]
+  [@@deriving show { with_path = false }, eq, ord]
 
   let of_bop = function
     | Ast.Lt -> LT

@@ -186,7 +186,7 @@ let test_loops () =
   movq %0any, $0
   j label1(%9any)
 label1(local=false)(18any):
-  cmp LT %3any, %2any, label3(%18any), label2(%18any)
+  jl label3(%18any), label2(%18any), %3any, %2any
 label2(local=false)(19any):
   addq %20any, %2any, %3any
   subq %21any, %20any, %2any
@@ -201,7 +201,7 @@ label3(local=false)(27any):
   movq %40any, 8(%rsp)
   j label4(%17any)
 label4(local=false)(28any):
-  cmp LT %11any, %10any, label6(%28any), label5(%28any)
+  jl label6(%28any), label5(%28any), %11any, %10any
 label5(local=false)(29any):
   addq %30any, %10any, %11any
   subq %31any, %30any, %12any
@@ -263,7 +263,7 @@ label6(local=false)(35any):
   movq %0any, $0
   j label1(%9any)
 label1(local=false)(18any):
-  cmp LT %3any, %2any, label3(%18any), label2(%18any)
+  jl label3(%18any), label2(%18any), %3any, %2any
 label2(local=false)(19any):
   addq %20any, %2any, %3any
   subq %21any, %20any, %2any
@@ -278,7 +278,7 @@ label3(local=false)(27any):
   movq %40any, 8(%rsp)
   j label4(%17any)
 label4(local=false)(28any):
-  cmp LT %11any, %10any, label6(%28any), label5(%28any)
+  jl label6(%28any), label5(%28any), %11any, %10any
 label5(local=false)(29any):
   addq %30any, %10any, %11any
   subq %31any, %30any, %12any
