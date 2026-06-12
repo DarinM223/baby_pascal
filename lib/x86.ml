@@ -303,7 +303,9 @@ module Writer = struct
              Target.pp_reg_class v.reg_class Target.pp_reg_constr v.reg_constr
       end
     | Tombstone -> ()
-  let pp_operand = Target.pp_operand' pp_reg
+  let pp_operand fmt = function
+    | Target.Label (l, _) -> Format.fprintf fmt "%s" (snd l)
+    | op -> Target.pp_operand' pp_reg fmt op
   let pp_instr fmt i =
     let pp_operands = Format.pp_print_list ~pp_sep:Target.pp_sep pp_operand in
     Format.fprintf fmt "%s %a" i.Target.instr pp_operands (i.defs @ i.uses)
@@ -323,9 +325,8 @@ module Writer = struct
     | Label (l, _info) -> Format.fprintf fmt "%a:" pp_label l
   let pp_middle fmt (Instruction instr) = Format.fprintf fmt "%a" pp_instr instr
   let pp_last fmt = function
-    | Exit -> Format.fprintf fmt "ret"
-    | Branch (i, _) | CBranch (i, _, _) | Return i ->
-      Format.fprintf fmt "%a" pp_instr i
+    | Exit | Return _ -> Format.fprintf fmt "ret"
+    | Branch (i, _) | CBranch (i, _, _) -> Format.fprintf fmt "%a" pp_instr i
 
   type head = Cfg.head =
     | First of first

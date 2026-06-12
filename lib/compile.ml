@@ -30,9 +30,7 @@ let compile program =
     let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
     let cfg = Construct.rename_variables (module Dom) cfg in
     let args = List.map (fun arg -> (arg, 0)) args in
-    Format.printf "Graph: %a\n" Normalize.Cfg.pp_graph cfg;
     let cfg = round args cfg in
-    Format.printf "Graph: %a\n" Normalize.Cfg.pp_graph cfg;
     let cfg =
       Normalize.Cfg.Blocks.fold
         (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
@@ -40,7 +38,6 @@ let compile program =
     in
     let state = Select_x86.State.init () in
     let srcs, cfg = Select_x86.codegen_function ~args state cfg in
-    Format.printf "Graph: %a\n" X86.Printer.pp_graph cfg;
     let extra = X86.Cfg.precalculate_edges cfg in
     let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
     let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
@@ -65,8 +62,7 @@ let compile program =
       Seqpcopy.Make (X86.Cfg) (X86.SeqpcopyRequirements)
     in
     let cfg = Sequentialize.sequentialize cfg in
-    (* todo: cleanup call operands, redundant moves, moves with two memory operands, etc *)
-    cfg
+    Cleanup_x86.cleanup X86.Regs.r8 cfg
   in
   let lower_decl = function
     | Ast.Function (f, args, ret, body) ->
@@ -79,18 +75,12 @@ let compile program =
   { program with decls; main }
 
 let write_file out program =
-  let write_cfg out cfg =
-    Format.(fprintf (formatter_of_out_channel out))
-      "%a\n" X86.Writer.pp_graph cfg
-  in
+  let out = Format.formatter_of_out_channel out in
   let write_decl = function
     | Ast.Function (f, _args, _ret, body) ->
-      Printf.fprintf out "%s:\n" f;
-      write_cfg out body
+      Format.fprintf out "%s: %a\n" f X86.Writer.pp_graph body
     | Ast.Procedure (f, _args, body) ->
-      Printf.fprintf out "%s:\n" f;
-      write_cfg out body
+      Format.fprintf out "%s: %a\n" f X86.Writer.pp_graph body
   in
   List.iter write_decl program.Ast.decls;
-  Printf.fprintf out "_start:\n";
-  write_cfg out program.main
+  Format.fprintf out "_start: %a\n" X86.Writer.pp_graph program.main

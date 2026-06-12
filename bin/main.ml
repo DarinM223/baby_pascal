@@ -10,6 +10,8 @@ let process_file filename =
   | Some program ->
     let program = Compile.compile program in
     let out = open_out (Format.sprintf "%s.s" (Filename.basename filename)) in
-    Compile.write_file out program
+    Compile.write_file out program;
+    flush out;
+    close_out out
   | None -> Format.printf "Error parsing file\n"
 let () = List.iter process_file !input_files
