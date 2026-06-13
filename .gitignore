@@ -1,3 +1,6 @@
 .vscode/
 _build/
 *.s
+*.o
+fibonacci.pas
+funswap.pas

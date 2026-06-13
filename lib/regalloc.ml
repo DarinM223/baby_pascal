@@ -645,14 +645,14 @@ let%expect_test "Nested loops register allocation" =
   [%expect
     {|
       movq %rax(0), $0
-      j label6
+      jmp label6
     label1(local=false)():
       exit
     label2(local=false)(rax(1)):
       jl label3, label1, %rax(1), $100
     label3(local=false)():
       movq %rbx(2), %rax(1)
-      j label4(%rax(1), %rbx(2))
+      jmp label4(%rax(1), %rbx(2))
     label4(local=false)(rax(3), rbx(4)):
       jl label5, label2(%rax(3)), %rbx(4), $100
     label5(local=false)():
@@ -662,9 +662,9 @@ let%expect_test "Nested loops register allocation" =
       movq %rbx(10), %rbx(4)
       addq %rbx(9), %rbx(10), $1
       movq %rbx(8), %rbx(9)
-      j label4(%rax(5), %rbx(8))
+      jmp label4(%rax(5), %rbx(8))
     label6(local=false)():
-      j label2(%rax(0))
+      jmp label2(%rax(0))
     |}]
 
 let%expect_test "Fibonacci register allocation" =
@@ -685,7 +685,7 @@ let%expect_test "Fibonacci register allocation" =
       ret %33(%rax)
     label2(local=false)():
       movq %2any, %1any
-      j label1(%2any)
+      jmp label1(%2any)
     label3(local=false)():
       movq %5any, %1any
       subq %4(reuse=%5), %5any, $1
@@ -700,7 +700,7 @@ let%expect_test "Fibonacci register allocation" =
       movq %31any, %3any
       addq %30(reuse=%31), %31any, %16any
       movq %29any, %30(reuse=%31)
-      j label1(%29any)
+      jmp label1(%29any)
     |}];
   let cfg =
     regalloc_helper
@@ -771,7 +771,7 @@ let%expect_test "Fibonacci register allocation" =
       ret %rax(33)
     label2(local=false)():
       movq %rax(2), %rbx(1)
-      j label1(%rax(2))
+      jmp label1(%rax(2))
     label3(local=false)():
       movq %rax(5), %rbx(1)
       subq %rax(4), %rax(5), $1
@@ -786,5 +786,5 @@ let%expect_test "Fibonacci register allocation" =
       movq %rbx(31), %r13(3)
       addq %rbx(30), %rbx(31), %rax(16)
       movq %rax(29), %rbx(30)
-      j label1(%rax(29))
+      jmp label1(%rax(29))
     |}]

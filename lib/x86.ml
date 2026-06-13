@@ -189,7 +189,7 @@ module Target = struct
     match (op, dest) with
     | Reg reg, Reg dest -> Reg (reuse reg dest)
     | _ -> failwith "reuse_op: expected register"
-  let goto l ops = { instr = "j"; defs = []; uses = [ Label (l, ops) ] }
+  let goto l ops = { instr = "jmp"; defs = []; uses = [ Label (l, ops) ] }
   let cond_mapping =
     Instruction.Cond.
       [

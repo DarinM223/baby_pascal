@@ -267,7 +267,7 @@ let%expect_test "Fibonacci code generation" =
       ret %33(%rax)
     label2(local=false)():
       movq %2any, %1any
-      j label1(%2any)
+      jmp label1(%2any)
     label3(local=false)():
       movq %5any, %1any
       subq %4(reuse=%5), %5any, $1
@@ -282,7 +282,7 @@ let%expect_test "Fibonacci code generation" =
       movq %31any, %3any
       addq %30(reuse=%31), %31any, %16any
       movq %29any, %30(reuse=%31)
-      j label1(%29any)
+      jmp label1(%29any)
     |}]
 
 let%expect_test "Nested loops code generation" =
@@ -292,14 +292,14 @@ let%expect_test "Nested loops code generation" =
   [%expect
     {|
       movq %0any, $0
-      j label6
+      jmp label6
     label1(local=false)():
       exit
     label2(local=false)(1any):
       jl label3, label1, %1any, $100
     label3(local=false)():
       movq %2any, %1any
-      j label4(%1any, %2any)
+      jmp label4(%1any, %2any)
     label4(local=false)(3any, 4any):
       jl label5, label2(%3any), %4any, $100
     label5(local=false)():
@@ -309,7 +309,7 @@ let%expect_test "Nested loops code generation" =
       movq %10any, %4any
       addq %9(reuse=%10), %10any, $1
       movq %8any, %9(reuse=%10)
-      j label4(%5any, %8any)
+      jmp label4(%5any, %8any)
     label6(local=false)():
-      j label2(%0any)
+      jmp label2(%0any)
     |}]

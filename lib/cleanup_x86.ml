@@ -1,5 +1,6 @@
 open X86
 
+(* todo: save and restore callee save registers used in graph *)
 let cleanup (tmp : Target.physical_reg) (cfg : Cfg.graph) : Cfg.graph =
   let go_block _ block cfg =
     let head, tail = Cfg.unzip block in
@@ -23,8 +24,26 @@ let cleanup (tmp : Target.physical_reg) (cfg : Cfg.graph) : Cfg.graph =
         | { Target.instr = "movq"; defs = [ dest ]; uses = [ src ] }
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->
           go_tail tail
-        (* todo: eliminate reuse operand uses *)
-        | _ -> i @> go_tail tail
+        | _ ->
+          (* eliminate reuse operand uses *)
+          let reused =
+            List.filter_map
+              (function
+                | Target.Reg (Virtual { reg_constr = ReuseOperand reg; _ }) ->
+                  Some reg
+                | _ -> None)
+              i.defs
+          in
+          let uses =
+            List.filter
+              (function
+                | Target.Reg reg when List.exists (Target.equal_reg reg) reused
+                  ->
+                  false
+                | _ -> true)
+              i.uses
+          in
+          { i with uses } @> go_tail tail
         end
       (* lower cmp instructions into cmp + j* *)
       | Cfg.Last
