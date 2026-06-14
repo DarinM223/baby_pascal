@@ -28,7 +28,6 @@ module type Requirements = sig
   module Target : Graph.Target
   val instr_name : Target.instr -> string
   val imm : Target.operand -> int option
-  val label : Target.operand -> Target.label option
   val uses : Target.instr -> Target.operands
   val call : string
   val ret : string
@@ -74,37 +73,38 @@ struct
     Loop.(if PositionSet.mem n loop_headers then n else loop_header n)
   let is_back_edge a b = Dom.dominates b a
 
-  let contains_instr (f : G.Target.instr -> bool) (pos : Dom.position) : bool =
+  let contains_instr (f : G.Target.instr -> bool) (g : G.last -> bool)
+      (pos : Dom.position) : bool =
     let uid = G.idd (Dom.label_of_position pos) in
     let (_, tail), _ = G.focus uid Dom.graph in
     let rec go_tail (tail : G.tail) =
       match tail with
-      | G.Last _ -> false
+      | G.Last l -> g l
       | G.Tail (G.Instruction i, tail) -> f i || go_tail tail
     in
     go_tail tail
   let contains_instr_name name =
-    contains_instr (fun i -> Requirements.instr_name i = name)
+    contains_instr (fun i -> Requirements.instr_name i = name) (Fun.const false)
   let calls_exit = Array.init Dom.size (contains_instr_name Requirements.exit)
 
-  let cmp_zero_or_constant name not_taken_succ ops =
+  let cmp_zero_or_constant name ops =
     match ops with
-    | [ _; l2; _; b ] ->
-      Requirements.label l2 = Some not_taken_succ
-      && begin match Requirements.imm b with
+    | [ _; _; _; b ] ->
+      begin match Requirements.imm b with
       | Some 0 when name = lt || name = le || name = eq -> true
       | Some _ when name = eq -> true
       | _ -> false
       end
     | _ -> false
 
-  (* todo: this doesn't do anything because cmp + jump instructions are always in the Last part of the graph
-     todo: after this is fixed, remove the labels operands from jump instructions *)
   let contains_opcode not_taken_succ =
-    contains_instr (fun i ->
+    contains_instr (Fun.const false) (function
+      | G.CBranch (i, _l1, l2) ->
         let name = Requirements.instr_name i in
         List.exists (fun (_, i) -> i = name) Requirements.cond_mapping
-        && cmp_zero_or_constant name not_taken_succ (Requirements.uses i))
+        && l2 = not_taken_succ
+        && cmp_zero_or_constant name (Requirements.uses i)
+      | _ -> false)
   let is_loop_exit n ~continue:s1 ~exit:s2 =
     let loop_nodes = Loop.(loop_nodes.(header n)) in
     (not Loop.(PositionSet.mem s1 loop_headers))

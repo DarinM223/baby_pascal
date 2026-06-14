@@ -361,9 +361,6 @@ module ExecfreqRequirements :
   let imm = function
     | Target.Imm i -> Some i
     | _ -> None
-  let label = function
-    | Target.Label (l, _) -> Some l
-    | _ -> None
   let uses = fun i -> i.Target.uses
   let call = "call"
   let ret = "ret"
