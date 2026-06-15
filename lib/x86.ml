@@ -111,7 +111,9 @@ module Target = struct
       | Reg r -> Some r
       | _ -> None
     let to_operand r = Reg r
+    let equal r1 r2 = Int.equal (index r1) (index r2)
     let compare r1 r2 = Int.compare (index r1) (index r2)
+    let hash r = CCInt.hash (index r)
     let reg = function
       | Virtual v -> v.reg
       | r -> r
@@ -193,7 +195,7 @@ module Target = struct
   let cond_mapping =
     Instruction.Cond.
       [
-        (LT, "jl"); (LE, "je"); (GT, "jg"); (GE, "jge"); (EQ, "jz"); (NE, "jnz");
+        (LT, "jl"); (LE, "jle"); (GT, "jg"); (GE, "jge"); (EQ, "jz"); (NE, "jnz");
       ]
 
   let cbranch ~args cond l1 l1args l2 l2args =
@@ -230,6 +232,7 @@ module Regs = struct
   let r15 = (15, Target.Int, "r15")
 
   let caller_save = [ rax; rcx; rdx; rsi; rdi; r8; r9; r10; r11 ]
+  let callee_save = [ r12; r13; r14; r15; rbx; rsp; rbp ]
   let int_regs =
     [
       rax;

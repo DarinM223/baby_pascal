@@ -62,7 +62,7 @@ let compile program =
       Seqpcopy.Make (X86.Cfg) (X86.SeqpcopyRequirements)
     in
     let cfg = Sequentialize.sequentialize cfg in
-    Cleanup_x86.cleanup X86.Regs.r8 cfg
+    Cleanup_x86.cleanup state X86.Regs.r8 cfg
   in
   let lower_decl = function
     | Ast.Function (f, args, ret, body) ->
