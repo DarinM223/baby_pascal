@@ -47,7 +47,8 @@ let compile program =
     let regs =
       X86.Regs.int_regs
       |> List.filter_map (fun ((_, _, reg) as r) ->
-          if reg <> "r8" then Some (X86.Target.Physical r) else None)
+          if reg <> "r8" && reg <> "rsp" then Some (X86.Target.Physical r)
+          else None)
       |> Array.of_list
     in
     let cfg =
@@ -76,6 +77,7 @@ let compile program =
 
 let write_file out program =
   let out = Format.formatter_of_out_channel out in
+  Format.fprintf out ".global main\n.text\n";
   let write_decl = function
     | Ast.Function (f, _args, _ret, body) ->
       Format.fprintf out "%s: %a\n" f X86.Writer.pp_graph body
@@ -83,4 +85,4 @@ let write_file out program =
       Format.fprintf out "%s: %a\n" f X86.Writer.pp_graph body
   in
   List.iter write_decl program.Ast.decls;
-  Format.fprintf out "_start: %a\n" X86.Writer.pp_graph program.main
+  Format.fprintf out "main: %a\n" X86.Writer.pp_graph program.main

@@ -4,6 +4,10 @@ module IntSet = Utils.IntSet
 module RegSet = Set.Make (X86.Target.Reg)
 module RegHashtbl = CCHashtbl.Make (X86.Target.Reg)
 
+(** aligns stack offset to multiple of 16 if a function is called *)
+let align_stack_offset called_function offset =
+  if called_function && offset mod 16 = 0 then offset + 8 else offset
+
 let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
     (cfg : Cfg.graph) : Cfg.graph =
   let callee_save =
@@ -25,8 +29,9 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
     | _ -> ()
   in
   let restore tail =
-    (* todo: align stack offset to multiple of 16 *)
-    let aligned_stack_offset = !(state.stack_offset) in
+    let aligned_stack_offset =
+      align_stack_offset !called_function !(state.stack_offset)
+    in
     let tail =
       if aligned_stack_offset > 0 then
         Cfg.Tail
@@ -43,14 +48,17 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
       used_callee_saves tail
   in
   let prelude head =
+    let aligned_stack_offset =
+      align_stack_offset !called_function !(state.stack_offset)
+    in
     let head =
-      if !(state.stack_offset) > 0 then
+      if aligned_stack_offset > 0 then
         Cfg.Head
           ( head,
             Instruction
               (Target.instr "subq"
                  ~defs:[ Reg (Physical Regs.rsp) ]
-                 ~uses:[ Imm !(state.stack_offset) ]) )
+                 ~uses:[ Imm aligned_stack_offset ]) )
       else head
     in
     RegHashtbl.fold
