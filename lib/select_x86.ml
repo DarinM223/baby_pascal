@@ -35,8 +35,9 @@ module State = struct
     let stack_offset = ref 0 in
     let mapping = NameHashtbl.create hashtbl_size in
     let new_stack_slot size =
+      let slot = !stack_offset in
       stack_offset := !stack_offset + size;
-      Target.StackSlot !stack_offset
+      Target.StackSlot slot
     in
     {
       fresh_vreg;
@@ -261,7 +262,7 @@ let%expect_test "Fibonacci code generation" =
   [%expect
     {|
       pcopy [(%1any, %0(%rdi))]
-      je label2, label3, %1any, $1
+      jle label2, label3, %1any, $1
     label1(local=false)(32any):
       movq %33(%rax), %32any
       ret %33(%rax)

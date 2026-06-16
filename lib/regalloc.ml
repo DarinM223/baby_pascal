@@ -679,7 +679,7 @@ let%expect_test "Fibonacci register allocation" =
   [%expect
     {|
       pcopy [(%1any, %0(%rdi))]
-      je label2, label3, %1any, $1
+      jle label2, label3, %1any, $1
     label1(local=false)(32any):
       movq %33(%rax), %32any
       ret %33(%rax)
@@ -765,7 +765,7 @@ let%expect_test "Fibonacci register allocation" =
   [%expect
     {|
       pcopy [(%rbx(1), %rdi(0))]
-      je label2, label3, %rbx(1), $1
+      jle label2, label3, %rbx(1), $1
     label1(local=false)(rax(32)):
       movq %rax(33), %rax(32)
       ret %rax(33)

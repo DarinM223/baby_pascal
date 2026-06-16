@@ -180,9 +180,9 @@ let test_loops () =
   movq %4any, $4
   movq %3any, $3
   movq %2any, $2
-  movq 8(%rsp), %16any
+  movq 0(%rsp), %16any
   movq %1any, $1
-  movq 16(%rsp), %1any
+  movq 8(%rsp), %1any
   movq %0any, $0
   jmp label1(%9any)
 label1(local=false)(18any):
@@ -197,8 +197,8 @@ label2(local=false)(19any):
   addq %26any, %25any, %24any, %22any
   jmp label1(%26any)
 label3(local=false)(27any):
-  movq %39any, 16(%rsp)
-  movq %40any, 8(%rsp)
+  movq %39any, 8(%rsp)
+  movq %40any, 0(%rsp)
   jmp label4(%17any)
 label4(local=false)(28any):
   jl label6(%28any), label5(%28any), %11any, %10any
@@ -257,9 +257,9 @@ label6(local=false)(35any):
   movq %4any, $4
   movq %3any, $3
   movq %2any, $2
-  movq 8(%rsp), %16any
+  movq 0(%rsp), %16any
   movq %1any, $1
-  movq 16(%rsp), %1any
+  movq 8(%rsp), %1any
   movq %0any, $0
   jmp label1(%9any)
 label1(local=false)(18any):
@@ -274,8 +274,8 @@ label2(local=false)(19any):
   addq %26any, %25any, %24any, %22any
   jmp label1(%26any)
 label3(local=false)(27any):
-  movq %39any, 16(%rsp)
-  movq %40any, 8(%rsp)
+  movq %39any, 8(%rsp)
+  movq %40any, 0(%rsp)
   jmp label4(%17any)
 label4(local=false)(28any):
   jl label6(%28any), label5(%28any), %11any, %10any
