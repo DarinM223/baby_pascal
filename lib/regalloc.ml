@@ -73,6 +73,10 @@ let get_register state uid var head : int * float * X86.Cfg.head =
     state.preferences.(X86.Target.index var)
     |> Array.mapi (fun i pref -> (i, pref))
   in
+  Logs.debug (fun m ->
+      m "Preferences for %a are: %a\n" X86.Target.pp_reg var
+        (pp_preferences state.regs)
+        [| Array.map snd preferences |]);
   Array.sort
     (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
     preferences;
@@ -113,7 +117,13 @@ let get_register state uid var head : int * float * X86.Cfg.head =
           end
     done;
     failwith "get_register: couldn't find non-occupied register"
-  with Reg (reg, pref, head) -> (reg, pref, head)
+  with Reg (reg, pref, head) ->
+    Logs.debug (fun m -> m "Found reg: %a\n" X86.Target.pp_reg state.regs.(reg));
+    (reg, pref, head)
+
+let enforce_constraints _state _instr =
+  (* todo: enforce_constraints in ir/be/beprefalloc.c *)
+  ()
 
 (* Insert parallel copy instruction in src block to move arguments
    to assigned registers in dest block. *)
@@ -212,6 +222,7 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       (X86.Cfg.First first) phis
   in
   let handle_instruction instr_num head instr =
+    enforce_constraints state instr;
     X86.Target.RegSet.iter
       (function
         | X86.Target.Virtual a' as a when dies state uid a instr_num ->
@@ -283,21 +294,25 @@ let build_preferences state graph : unit =
       for i = 0 to Array.length preferences.(op) - 1 do
         preferences.(op).(i) <- preferences.(op).(i) +. preferences.(id).(i)
       done
-    | X86.Target.(Reg (Virtual { id; reg_constr = UsePhysical (reg, _, _); _ }))
-      ->
-      let weight = state.block_execution_frequency uid in
-      let penalty =
-        weight *. if def then Weights.def_factor else Weights.use_factor
-      in
-      (* give penalties to all registers that are not the constrained register. *)
-      for i = 0 to Array.length preferences.(id) - 1 do
-        if i <> reg then preferences.(id).(i) <- preferences.(id).(i) -. penalty
-      done;
-      let penalty = penalty *. Weights.neighbor_factor in
-      (* give penalties to all other live variables for the constrained register *)
-      CCBV.iter_true live (fun live ->
-          if live <> id then
-            preferences.(live).(reg) <- preferences.(live).(reg) -. penalty)
+    | X86.Target.(Reg (Virtual { id; reg_constr = UsePhysical phys; _ })) ->
+      begin try
+        let reg = find_reg_index state.regs (X86.Target.Physical phys) in
+        let weight = state.block_execution_frequency uid in
+        let penalty =
+          weight *. if def then Weights.def_factor else Weights.use_factor
+        in
+        (* give penalties to all registers that are not the constrained register. *)
+        for i = 0 to Array.length preferences.(id) - 1 do
+          if i <> reg then
+            preferences.(id).(i) <- preferences.(id).(i) -. penalty
+        done;
+        let penalty = penalty *. Weights.neighbor_factor in
+        (* give penalties to all other live variables for the constrained register *)
+        CCBV.iter_true live (fun live ->
+            if live <> id then
+              preferences.(live).(reg) <- preferences.(live).(reg) -. penalty)
+      with _ -> ()
+      end
     | X86.Target.Label (_, ops) -> List.iter (handle_operand uid live) ops
     | _ -> ()
   in
