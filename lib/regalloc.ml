@@ -123,6 +123,7 @@ let get_register state uid var head : int * float * X86.Cfg.head =
 
 let enforce_constraints _state _instr =
   (* todo: enforce_constraints in ir/be/beprefalloc.c *)
+  (* look into hungarian algorithm *)
   ()
 
 (* Insert parallel copy instruction in src block to move arguments
