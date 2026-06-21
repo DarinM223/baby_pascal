@@ -63,8 +63,8 @@ let solve ~cost ~num_rows ~num_cols =
     let t = ref !unmatched in
     while true do
       let q = ref 0 in
-      (* Find an uncovered zero *)
-      let exception FoundUncoveredZero of int * int in
+      (* Find an unassigned zero *)
+      let exception FoundUnassignedZero of int * int in
       try
         while true do
           (* Go over unmarked rows, setting initial slack per column
@@ -78,9 +78,9 @@ let solve ~cost ~num_rows ~num_cols =
                 if del < slack.(c) then
                   if del = 0 then begin
                     if row_mate.(c) = no_exist then
-                      raise (FoundUncoveredZero (r, c));
+                      raise (FoundUnassignedZero (r, c));
+                    (* Add assigned zero to augmenting path *)
                     slack.(c) <- 0;
-                    (* todo: why is slack_row not set here? *)
                     parent_row.(c) <- r;
                     unchosen_row.(!t) <- row_mate.(c);
                     incr t
@@ -114,22 +114,29 @@ let solve ~cost ~num_rows ~num_cols =
               if slack.(c) = 0 then
                 let r = slack_row.(c) in
                 if row_mate.(c) = no_exist then begin
+                  (* Since we are going to break out of the loop,
+                     finish canceling out the row decrease on the other columns
+                     in the tree by incrementing them by the slack minimum *)
                   for j = c + 1 to num_cols - 1 do
                     if slack.(j) = 0 then
                       col_inc.(j) <- col_inc.(j) + slack_minimum
                   done;
-                  raise (FoundUncoveredZero (r, c))
+                  raise (FoundUnassignedZero (r, c))
                 end
                 else begin
+                  (* Move slack edge into augmenting path, and uncover assigned row *)
                   parent_row.(c) <- r;
                   unchosen_row.(!t) <- row_mate.(c);
                   incr t
                 end
             end
-            else col_inc.(c) <- col_inc.(c) + slack_minimum
+            else
+              (* Column is in the alternating tree (slack = 0)
+                 Cancel out row decrease by increasing the column by minimum slack *)
+              col_inc.(c) <- col_inc.(c) + slack_minimum
           done
         done
-      with FoundUncoveredZero (r, c) ->
+      with FoundUnassignedZero (r, c) ->
         (* Walk the parent links rematching the assignments to include
            the augmenting path with the found uncovered zero *)
         let r, c = (ref r, ref c) in
