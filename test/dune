@@ -11,6 +11,7 @@
   test_select_x86
   test_spill
   test_execfreq
+  test_hungarian
   test_seqpcopy)
  (modes
   (byte exe))

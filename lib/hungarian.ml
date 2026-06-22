@@ -1,3 +1,22 @@
+let pp_cost ~num_rows ~num_cols fmt cost =
+  let open Format in
+  pp_open_box fmt 0;
+  pp_print_string fmt "[";
+  for r = 0 to num_rows - 1 do
+    pp_open_box fmt 0;
+    pp_print_string fmt "[";
+    for c = 0 to num_cols - 1 do
+      let e = cost.((r * num_cols) + c) in
+      pp_print_int fmt e;
+      if c <> num_cols - 1 then pp_print_string fmt ", "
+    done;
+    pp_print_string fmt "]";
+    pp_close_box fmt ();
+    if r <> num_rows - 1 then pp_print_string fmt ", "
+  done;
+  pp_print_string fmt "]";
+  pp_close_box fmt ()
+
 (** Hungarian algorithm, does perfect matching only *)
 let solve ~cost ~num_rows ~num_cols =
   let no_exist = -1 in
@@ -145,7 +164,7 @@ let solve ~cost ~num_rows ~num_cols =
           while true do
             let j = col_mate.(!r) in
             col_mate.(!r) <- !c;
-            col_mate.(!c) <- !r;
+            row_mate.(!c) <- !r;
             if j = no_exist then raise FinishedRematching;
             r := parent_row.(j);
             c := j
