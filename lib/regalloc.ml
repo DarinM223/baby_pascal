@@ -15,8 +15,7 @@ type state = {
   processed : bool array;
   block_execution_frequency : X86.Cfg.uid -> float;
   preferences : float array array;
-  (* initially -1 if no variable for register *)
-  reg_current_var : int array;
+  reg_current_var : X86.Target.virtual_reg option array;
   (* initially 0 *)
   reg_current_pref : float array;
   liveness : Spill.Liveness.t;
@@ -86,9 +85,9 @@ let get_register state uid var head : int * float * X86.Cfg.head =
     for i = Array.length preferences - 1 downto 0 do
       let reg, pref = preferences.(i) in
       if not (CCBV.get state.occupied reg) then raise (Reg (reg, pref, head));
-      let ovar = state.reg_current_var.(reg) in
+      let ovar = Option.get state.reg_current_var.(reg) in
       let preferences =
-        Array.mapi (fun i pref -> (i, pref)) state.preferences.(ovar)
+        Array.mapi (fun i pref -> (i, pref)) state.preferences.(ovar.id)
       in
       Array.sort
         (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
@@ -121,10 +120,60 @@ let get_register state uid var head : int * float * X86.Cfg.head =
     Logs.debug (fun m -> m "Found reg: %a\n" X86.Target.pp_reg state.regs.(reg));
     (reg, pref, head)
 
-let enforce_constraints _state _instr =
-  (* todo: enforce_constraints in ir/be/beprefalloc.c *)
-  (* look into hungarian algorithm *)
-  ()
+let dies state uid a instr_num =
+  match state.liveness.dies uid a with
+  | Some num when num <= instr_num -> true
+  | _ -> false
+
+let enforce_constraints state uid instr_num instr =
+  let num_regs = Array.length state.regs in
+  (* occupied regs - regs that die at the instruction *)
+  let live_through_regs = CCBV.copy state.occupied in
+  X86.Target.RegSet.iter
+    (function
+      | X86.Target.Virtual a' as a when dies state uid a instr_num ->
+        let reg = find_reg_index state.regs a'.reg in
+        CCBV.reset live_through_regs reg
+      | _ -> ())
+    (X86.Target.uses instr);
+  let constrained_def_regs = CCBV.create ~size:num_regs false in
+  let need_reassignment = ref false in
+  let mark_constrained_def_regs = function
+    | X86.Target.Virtual { reg_constr = UsePhysical phys; _ }
+    | X86.Target.Physical phys ->
+      let reg_index = find_reg_index state.regs (Physical phys) in
+      CCBV.set constrained_def_regs reg_index;
+      if CCBV.get live_through_regs reg_index then need_reassignment := true
+    | _ -> ()
+  in
+  X86.Target.RegSet.iter mark_constrained_def_regs (X86.Target.defs instr);
+  if !need_reassignment then begin
+    let cost = Array.make (num_regs * num_regs) 0 in
+    for l = 0 to num_regs - 1 do
+      for r = 0 to num_regs - 1 do
+        (* live through values can't use constrained def registers *)
+        if not (CCBV.get live_through_regs l && CCBV.get constrained_def_regs r)
+        then cost.((r * num_regs) + l) <- (if l = r then 9 else 8)
+      done
+    done;
+    (* Remove edges from non-constrained registers to constrained use virtual registers *)
+    X86.Target.RegSet.iter
+      (function
+        | X86.Target.Virtual { reg; reg_constr = UsePhysical phys; _ } ->
+          let curr_reg = find_reg_index state.regs reg in
+          let constraint_reg = find_reg_index state.regs (Physical phys) in
+          for r = 0 to num_regs - 1 do
+            if r <> constraint_reg then cost.((r * num_regs) + curr_reg) <- 0
+          done
+        | _ -> ())
+      (X86.Target.uses instr);
+    let _assignments =
+      Hungarian.solve ~cost ~num_rows:num_regs ~num_cols:num_regs
+    in
+    (* After, the index of assignments is the destination register
+       and the value is the source register *)
+    ()
+  end
 
 (* Insert parallel copy instruction in src block to move arguments
    to assigned registers in dest block. *)
@@ -197,11 +246,6 @@ let implement_phi_copies state cfg ~src ~dest =
   in
   X86.Cfg.unfocus ((head, tail), cfg)
 
-let dies state uid a instr_num =
-  match state.liveness.dies uid a with
-  | Some num when num <= instr_num -> true
-  | _ -> false
-
 let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
   let uid = X86.Cfg.id block in
   let phis =
@@ -215,7 +259,7 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
         | X86.Target.Virtual phi' as phi ->
           let reg, pref, head = get_register state uid phi head in
           phi'.reg <- state.regs.(reg);
-          state.reg_current_var.(reg) <- phi'.id;
+          state.reg_current_var.(reg) <- Some phi';
           state.reg_current_pref.(reg) <- pref;
           CCBV.set state.occupied reg;
           head
@@ -223,12 +267,12 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       (X86.Cfg.First first) phis
   in
   let handle_instruction instr_num head instr =
-    enforce_constraints state instr;
+    enforce_constraints state uid instr_num instr;
     X86.Target.RegSet.iter
       (function
         | X86.Target.Virtual a' as a when dies state uid a instr_num ->
           let reg = find_reg_index state.regs a'.reg in
-          state.reg_current_var.(reg) <- -1;
+          state.reg_current_var.(reg) <- None;
           state.reg_current_pref.(reg) <- 0.;
           CCBV.reset state.occupied reg
         | _ -> ())
@@ -239,7 +283,7 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
           fun head ->
             let reg, pref, head = get_register state uid r head in
             r'.reg <- state.regs.(reg);
-            state.reg_current_var.(reg) <- r'.id;
+            state.reg_current_var.(reg) <- Some r';
             state.reg_current_pref.(reg) <- pref;
             if not (dies state uid r instr_num) then CCBV.set state.occupied reg;
             head
@@ -588,7 +632,7 @@ let regalloc_helper ?(args = RegSet.empty)
       block_execution_frequency;
       liveness;
       dom = (module Loop.Dom);
-      reg_current_var = Array.make (Array.length regs) (-1);
+      reg_current_var = Array.make (Array.length regs) None;
       reg_current_pref = Array.make (Array.length regs) 0.;
       processed = Array.make Loop.Dom.size false;
       num_vars;
@@ -615,7 +659,7 @@ let regalloc_helper ?(args = RegSet.empty)
                     get_register alloc_state X86.Cfg.entry_uid r head
                   in
                   r'.reg <- alloc_state.regs.(reg);
-                  alloc_state.reg_current_var.(reg) <- r'.id;
+                  alloc_state.reg_current_var.(reg) <- Some r';
                   alloc_state.reg_current_pref.(reg) <- pref;
                   CCBV.set alloc_state.occupied reg;
                   head
