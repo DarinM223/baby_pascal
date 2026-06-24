@@ -125,7 +125,7 @@ let dies state uid a instr_num =
   | Some num when num <= instr_num -> true
   | _ -> false
 
-let enforce_constraints state uid instr_num instr =
+let enforce_constraints_pcopy state uid instr_num instr =
   let num_regs = Array.length state.regs in
   (* occupied regs - regs that die at the instruction *)
   let live_through_regs = CCBV.copy state.occupied in
@@ -147,7 +147,8 @@ let enforce_constraints state uid instr_num instr =
     | _ -> ()
   in
   X86.Target.RegSet.iter mark_constrained_def_regs (X86.Target.defs instr);
-  if !need_reassignment then begin
+  if not !need_reassignment then None
+  else begin
     let cost = Array.make (num_regs * num_regs) 0 in
     for l = 0 to num_regs - 1 do
       for r = 0 to num_regs - 1 do
@@ -167,13 +168,30 @@ let enforce_constraints state uid instr_num instr =
           done
         | _ -> ())
       (X86.Target.uses instr);
-    let _assignments =
+    let permutation =
       Hungarian.solve ~cost ~num_rows:num_regs ~num_cols:num_regs
     in
-    (* After, the index of assignments is the destination register
+    (* After, the index of permutation is the destination register
        and the value is the source register *)
-    ()
+    (* todo: also need to update the occupied registers after permutation *)
+    (* todo: split into permute_values function? *)
+    let srcs = ref [] in
+    let dests = ref [] in
+    for dest = 0 to num_regs - 1 do
+      let old_reg = permutation.(dest) in
+      match state.reg_current_var.(old_reg) with
+      | Some src ->
+        srcs := X86.Target.(Reg (Virtual src)) :: !srcs;
+        dests := X86.Target.Reg state.regs.(dest) :: !dests
+      | None -> ()
+    done;
+    Some (X86.Target.pcopy ~dests:!dests ~srcs:!srcs)
   end
+
+let enforce_constraints state uid instr_num instr head =
+  match enforce_constraints_pcopy state uid instr_num instr with
+  | Some pcopy -> X86.Cfg.Head (head, Instruction pcopy)
+  | None -> head
 
 (* Insert parallel copy instruction in src block to move arguments
    to assigned registers in dest block. *)
@@ -267,7 +285,7 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       (X86.Cfg.First first) phis
   in
   let handle_instruction instr_num head instr =
-    enforce_constraints state uid instr_num instr;
+    let head = enforce_constraints state uid instr_num instr head in
     X86.Target.RegSet.iter
       (function
         | X86.Target.Virtual a' as a when dies state uid a instr_num ->
