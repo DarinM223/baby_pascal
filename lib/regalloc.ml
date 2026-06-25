@@ -236,10 +236,11 @@ let implement_phi_copies state cfg ~src ~dest =
     List.fold_right
       (fun (arg, phi) (srcs, dests, args) ->
         match (arg, phi) with
-        | Reg (Virtual { reg = arg_reg; _ }), Virtual { reg = phi_reg; _ }
+        | ( Reg (Virtual { reg = arg_reg; _ } | (Physical _ as arg_reg)),
+            (Virtual { reg = phi_reg; _ } | (Physical _ as phi_reg)) )
           when X86.Target.equal_reg arg_reg phi_reg ->
           (srcs, dests, arg :: args)
-        | _, Virtual { reg = Physical phi_reg; _ } ->
+        | _, (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ->
           let copy =
             Reg (constrained phi_reg (state.select_state.fresh_vreg Int))
           in
@@ -285,43 +286,54 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       (X86.Cfg.First first) phis
   in
   let handle_instruction instr_num head instr =
-    let head = enforce_constraints state uid instr_num instr head in
-    X86.Target.RegSet.iter
-      (function
-        | X86.Target.Virtual a' as a when dies state uid a instr_num ->
-          let reg = find_reg_index state.regs a'.reg in
-          state.reg_current_var.(reg) <- None;
-          state.reg_current_pref.(reg) <- 0.;
-          CCBV.reset state.occupied reg
-        | _ -> ())
-      (X86.Target.uses instr);
-    X86.Target.RegSet.fold
-      (function
-        | X86.Target.Virtual r' as r ->
-          fun head ->
+    (* let head = enforce_constraints state uid instr_num instr head in *)
+    let instr =
+      X86.Target.map_uses
+        (function
+          | Reg (Virtual a' as a) ->
+            if dies state uid a instr_num then begin
+              let reg = find_reg_index state.regs a'.reg in
+              state.reg_current_var.(reg) <- None;
+              state.reg_current_pref.(reg) <- 0.;
+              CCBV.reset state.occupied reg
+            end;
+            Reg a'.reg
+          | op -> op)
+        instr
+    in
+    X86.Target.fold_defs
+      (fun head -> function
+        | Reg (Virtual r' as r) ->
+          if X86.Target.equal_reg r'.reg (Virtual r') then begin
             let reg, pref, head = get_register state uid r head in
             r'.reg <- state.regs.(reg);
             state.reg_current_var.(reg) <- Some r';
             state.reg_current_pref.(reg) <- pref;
             if not (dies state uid r instr_num) then CCBV.set state.occupied reg;
-            head
-        | _ -> fun head -> head)
-      (X86.Target.defs instr) head
+            (head, Reg r'.reg)
+          end
+          else (head, Reg r'.reg)
+        | op -> (head, op))
+      head instr
   in
   let rec go instr_num head = function
     | X86.Cfg.Tail (Instruction instr, tail) ->
-      let head = handle_instruction instr_num head instr in
+      let head, instr = handle_instruction instr_num head instr in
       go (instr_num + 1) (X86.Cfg.Head (head, Instruction instr)) tail
     | X86.Cfg.Last l ->
       (* todo: propagate branch args to the affinity chunk *)
-      let head =
-        match l with
-        | X86.Printer.Exit -> head
-        | X86.Printer.Branch (i, _) -> handle_instruction instr_num head i
-        | X86.Printer.CBranch (i, _, _) -> handle_instruction instr_num head i
-        | X86.Printer.Return i -> handle_instruction instr_num head i
-      in
-      (head, X86.Cfg.Last l)
+      begin match l with
+      | X86.Printer.Exit -> (head, X86.Cfg.Last l)
+      | X86.Printer.Branch (i, lab) ->
+        let head, i = handle_instruction instr_num head i in
+        (head, X86.Cfg.Last (X86.Printer.Branch (i, lab)))
+      | X86.Printer.CBranch (i, lab1, lab2) ->
+        let head, i = handle_instruction instr_num head i in
+        (head, X86.Cfg.Last (X86.Printer.CBranch (i, lab1, lab2)))
+      | X86.Printer.Return i ->
+        let head, i = handle_instruction instr_num head i in
+        (head, X86.Cfg.Last (X86.Printer.Return i))
+      end
   in
   let block = X86.Cfg.zip (go 0 head tail) in
   let module Dom = (val state.dom) in

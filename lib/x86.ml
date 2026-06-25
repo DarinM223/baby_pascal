@@ -153,6 +153,21 @@ module Target = struct
       i with
       defs = List.map (fun op -> if is_tombstone op then op else f op) i.defs;
     }
+  let fold_uses f init i =
+    let res, uses =
+      List.fold_left_map
+        (fun acc op -> if is_tombstone op then (acc, op) else f acc op)
+        init i.uses
+    in
+    (res, { i with uses })
+  let fold_defs f init i =
+    let res, defs =
+      List.fold_left_map
+        (fun acc op -> if is_tombstone op then (acc, op) else f acc op)
+        init i.defs
+    in
+    (res, { i with defs })
+
   let rec regset_of_operand = function
     | Label (_, args) ->
       args
