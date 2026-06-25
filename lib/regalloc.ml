@@ -154,7 +154,7 @@ let enforce_constraints_pcopy state uid instr_num instr =
       for r = 0 to num_regs - 1 do
         (* live through values can't use constrained def registers *)
         if not (CCBV.get live_through_regs l && CCBV.get constrained_def_regs r)
-        then cost.((r * num_regs) + l) <- (if l = r then 9 else 8)
+        then cost.((r * num_regs) + l) <- (if l = r then 8 else 9)
       done
     done;
     (* Remove edges from non-constrained registers to constrained use virtual registers *)
@@ -181,11 +181,14 @@ let enforce_constraints_pcopy state uid instr_num instr =
       let old_reg = permutation.(dest) in
       match state.reg_current_var.(old_reg) with
       | Some src ->
-        srcs := X86.Target.(Reg (Virtual src)) :: !srcs;
-        dests := X86.Target.Reg state.regs.(dest) :: !dests
+        if old_reg <> dest then begin
+          srcs := X86.Target.(Reg src.reg) :: !srcs;
+          dests := X86.Target.Reg state.regs.(dest) :: !dests
+        end
       | None -> ()
     done;
-    Some (X86.Target.pcopy ~dests:!dests ~srcs:!srcs)
+    if CCList.is_empty !srcs || CCList.is_empty !dests then None
+    else Some (X86.Target.pcopy ~dests:!dests ~srcs:!srcs)
   end
 
 let enforce_constraints state uid instr_num instr head =
@@ -267,26 +270,31 @@ let implement_phi_copies state cfg ~src ~dest =
 
 let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
   let uid = X86.Cfg.id block in
-  let phis =
-    match first with
-    | X86.Cfg.Entry -> []
-    | X86.Cfg.Label (_, info) -> info.args
-  in
   let head =
-    List.fold_left
-      (fun head -> function
-        | X86.Target.Virtual phi' as phi ->
-          let reg, pref, head = get_register state uid phi head in
-          phi'.reg <- state.regs.(reg);
-          state.reg_current_var.(reg) <- Some phi';
-          state.reg_current_pref.(reg) <- pref;
-          CCBV.set state.occupied reg;
-          head
-        | _ -> head)
-      (X86.Cfg.First first) phis
+    match first with
+    | X86.Cfg.Entry -> X86.Cfg.First first
+    | X86.Cfg.Label (l, info) ->
+      let head, args =
+        List.fold_left_map
+          (fun head -> function
+            | X86.Target.Virtual phi' as phi ->
+              let reg, pref, head = get_register state uid phi head in
+              phi'.reg <- state.regs.(reg);
+              state.reg_current_var.(reg) <- Some phi';
+              state.reg_current_pref.(reg) <- pref;
+              CCBV.set state.occupied reg;
+              (head, phi'.reg)
+            | r -> (head, r))
+          (X86.Cfg.First first) info.args
+      in
+      let rec replace_first first = function
+        | X86.Cfg.First _ -> X86.Cfg.First first
+        | Head (head, mid) -> Head (replace_first first head, mid)
+      in
+      replace_first (X86.Cfg.Label (l, { info with args })) head
   in
   let handle_instruction instr_num head instr =
-    (* let head = enforce_constraints state uid instr_num instr head in *)
+    let head = enforce_constraints state uid instr_num instr head in
     let instr =
       X86.Target.map_uses
         (function
