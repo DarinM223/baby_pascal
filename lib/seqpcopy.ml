@@ -58,10 +58,12 @@ struct
       let rec go_tail = function
         | G.Tail (Instruction i, tail) ->
           if Requirements.is_pcopy i then
-            parallel_copy
-              ~srcs:(Array.of_list (Requirements.uses i))
-              ~dests:(Array.of_list (Requirements.defs i))
-              Requirements.temp (go_tail tail)
+            let srcs = Array.of_list (Requirements.uses i) in
+            let dests =
+              Array.of_list
+                (CCList.take (Array.length srcs) (Requirements.defs i))
+            in
+            parallel_copy ~srcs ~dests Requirements.temp (go_tail tail)
           else G.Tail (Instruction i, go_tail tail)
         | G.Last last -> G.Last last
       in

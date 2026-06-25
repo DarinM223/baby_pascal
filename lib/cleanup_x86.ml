@@ -81,10 +81,6 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
           Target.mov ~dest:(Reg (Physical tmp)) ~src
           @> Target.mov ~dest ~src:(Reg (Physical tmp))
           @> go_tail tail
-        (* remove caller save definitions from calls *)
-        | { Target.instr = "call"; _ } as instr ->
-          called_function := true;
-          { instr with Target.defs = [] } @> go_tail tail
         (* remove redundant moves *)
         | { Target.instr = "movq"; defs = [ dest ]; uses = [ src ] }
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->

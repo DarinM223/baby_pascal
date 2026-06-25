@@ -135,7 +135,13 @@ module Target = struct
   let pp_instr fmt i =
     match i.instr with
     | "pcopy" ->
-      Format.fprintf fmt "pcopy %a" pp_pcopy (List.combine i.defs i.uses)
+      let pad_uses =
+        List.append i.uses
+          (List.init
+             (List.length i.defs - List.length i.uses)
+             (fun _ -> Reg Tombstone))
+      in
+      Format.fprintf fmt "pcopy %a" pp_pcopy (List.combine i.defs pad_uses)
     | _ ->
       let pp_operands = Format.pp_print_list ~pp_sep pp_operand in
       Format.fprintf fmt "%s %a" i.instr pp_operands (i.defs @ i.uses)

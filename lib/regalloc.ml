@@ -125,28 +125,44 @@ let dies state uid a instr_num =
   | Some num when num <= instr_num -> true
   | _ -> false
 
+(** Unlike in the normal preference based register allocation algorithm, enforce
+    constraints are only enforced on parallel copies. Constrained uses are uses
+    in the pcopy that have a corresponding def, constrained defs are definitions
+    at the end which don't have a corresponding use. *)
 let enforce_constraints_pcopy state uid instr_num instr =
   let num_regs = Array.length state.regs in
   (* occupied regs - regs that die at the instruction *)
   let live_through_regs = CCBV.copy state.occupied in
-  X86.Target.RegSet.iter
-    (function
-      | X86.Target.Virtual a' as a when dies state uid a instr_num ->
-        let reg = find_reg_index state.regs a'.reg in
-        CCBV.reset live_through_regs reg
-      | _ -> ())
-    (X86.Target.uses instr);
   let constrained_def_regs = CCBV.create ~size:num_regs false in
   let need_reassignment = ref false in
+  let remove_constrained_use_live_throughs = function
+    | X86.Target.Virtual a' as a when dies state uid a instr_num ->
+      let reg = find_reg_index state.regs a'.reg in
+      CCBV.reset live_through_regs reg
+    | _ -> ()
+  in
   let mark_constrained_def_regs = function
     | X86.Target.Virtual { reg_constr = UsePhysical phys; _ }
     | X86.Target.Physical phys ->
-      let reg_index = find_reg_index state.regs (Physical phys) in
-      CCBV.set constrained_def_regs reg_index;
-      if CCBV.get live_through_regs reg_index then need_reassignment := true
+      begin try
+        let reg_index = find_reg_index state.regs (Physical phys) in
+        CCBV.set constrained_def_regs reg_index;
+        if CCBV.get live_through_regs reg_index then need_reassignment := true
+      with _ -> ()
+      end
     | _ -> ()
   in
-  X86.Target.RegSet.iter mark_constrained_def_regs (X86.Target.defs instr);
+  let rec go_uses_defs = function
+    | X86.Target.Reg use :: uses, X86.Target.Reg _ :: defs ->
+      if use <> Tombstone then remove_constrained_use_live_throughs use;
+      go_uses_defs (uses, defs)
+    | _ :: uses, _ :: defs -> go_uses_defs (uses, defs)
+    | [], X86.Target.Reg def :: defs ->
+      if def <> Tombstone then mark_constrained_def_regs def;
+      go_uses_defs ([], defs)
+    | _ -> ()
+  in
+  go_uses_defs (instr.X86.Target.uses, instr.defs);
   if not !need_reassignment then None
   else begin
     let cost = Array.make (num_regs * num_regs) 0 in
@@ -158,16 +174,22 @@ let enforce_constraints_pcopy state uid instr_num instr =
       done
     done;
     (* Remove edges from non-constrained registers to constrained use virtual registers *)
-    X86.Target.RegSet.iter
-      (function
-        | X86.Target.Virtual { reg; reg_constr = UsePhysical phys; _ } ->
-          let curr_reg = find_reg_index state.regs reg in
-          let constraint_reg = find_reg_index state.regs (Physical phys) in
-          for r = 0 to num_regs - 1 do
-            if r <> constraint_reg then cost.((r * num_regs) + curr_reg) <- 0
-          done
-        | _ -> ())
-      (X86.Target.uses instr);
+    let remove_constrained_use_edges = function
+      | X86.Target.Virtual { reg; reg_constr = UsePhysical phys; _ } ->
+        let curr_reg = find_reg_index state.regs reg in
+        let constraint_reg = find_reg_index state.regs (Physical phys) in
+        for r = 0 to num_regs - 1 do
+          if r <> constraint_reg then cost.((r * num_regs) + curr_reg) <- 0
+        done
+      | _ -> ()
+    in
+    let rec go_constrained_uses = function
+      | _ :: uses, X86.Target.Reg def :: defs ->
+        if def <> Tombstone then remove_constrained_use_edges def;
+        go_constrained_uses (uses, defs)
+      | _ -> ()
+    in
+    go_constrained_uses (instr.uses, instr.defs);
     let permutation =
       Hungarian.solve ~cost ~num_rows:num_regs ~num_cols:num_regs
     in
@@ -185,6 +207,8 @@ let enforce_constraints_pcopy state uid instr_num instr =
         dests := X86.Target.Reg state.regs.(dest) :: !dests
       | None -> ()
     done;
+    Format.printf "Shuffling Dests: %a Srcs: %a\n" X86.Target.pp_operands !dests
+      X86.Target.pp_operands !srcs;
     Some (X86.Target.pcopy ~dests:!dests ~srcs:!srcs)
   end
 
@@ -285,7 +309,11 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       (X86.Cfg.First first) phis
   in
   let handle_instruction instr_num head instr =
-    let head = enforce_constraints state uid instr_num instr head in
+    let head =
+      if instr.X86.Target.instr = "pcopy" then
+        enforce_constraints state uid instr_num instr head
+      else head
+    in
     X86.Target.RegSet.iter
       (function
         | X86.Target.Virtual a' as a when dies state uid a instr_num ->
@@ -767,13 +795,17 @@ let%expect_test "Fibonacci register allocation" =
     label3(local=false)():
       movq %5any, %1any
       subq %4(reuse=%5), %5any, $1
-      pcopy [(%6(%rdi), %4(reuse=%5))]
-      call %7(%rax), %8(%rcx), %9(%rdx), %10(%rsi), %11(%rdi), %12(%r8), %13(%r9), %14(%r10), %15(%r11), fibonacci
+      pcopy [(%6(%rdi), %4(reuse=%5)); (%7(%rax), %); (%8(%rcx), %);
+              (%9(%rdx), %); (%10(%rsi), %); (%11(%rdi), %); (%12(%r8), %);
+              (%13(%r9), %); (%14(%r10), %); (%15(%r11), %)]
+      call fibonacci
       movq %3any, %7(%rax)
       movq %18any, %1any
       subq %17(reuse=%18), %18any, $2
-      pcopy [(%19(%rdi), %17(reuse=%18))]
-      call %20(%rax), %21(%rcx), %22(%rdx), %23(%rsi), %24(%rdi), %25(%r8), %26(%r9), %27(%r10), %28(%r11), fibonacci
+      pcopy [(%19(%rdi), %17(reuse=%18)); (%20(%rax), %); (%21(%rcx), %);
+              (%22(%rdx), %); (%23(%rsi), %); (%24(%rdi), %); (%25(%r8), %);
+              (%26(%r9), %); (%27(%r10), %); (%28(%r11), %)]
+      call fibonacci
       movq %16any, %20(%rax)
       movq %31any, %3any
       addq %30(reuse=%31), %31any, %16any
@@ -796,7 +828,7 @@ let%expect_test "Fibonacci register allocation" =
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 5 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 6 ->
     [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: 0.000000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 7 ->
-    [rax: 0.000000, rbx: -0.440000, rcx: -0.484000, rdx: -0.484000, rsi: -0.484000, rdi: -0.484000, rsp: -0.440000, rbp: -0.440000, r8: -0.484000, r9: -0.484000, r10: -0.484000, r11: -0.484000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 8 ->
+    [rax: 0.000000, rbx: -0.440000, rcx: -0.484000, rdx: -0.484000, rsi: -0.484000, rdi: -0.528000, rsp: -0.440000, rbp: -0.440000, r8: -0.484000, r9: -0.484000, r10: -0.484000, r11: -0.484000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 8 ->
     [rax: -0.220000, rbx: -0.220000, rcx: 0.000000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 9 ->
     [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: 0.000000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 10 ->
     [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: 0.000000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 11 ->
@@ -809,7 +841,7 @@ let%expect_test "Fibonacci register allocation" =
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 18 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 19 ->
     [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: 0.000000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 20 ->
-    [rax: 0.000000, rbx: -0.440000, rcx: -0.484000, rdx: -0.484000, rsi: -0.484000, rdi: -0.484000, rsp: -0.440000, rbp: -0.440000, r8: -0.484000, r9: -0.484000, r10: -0.484000, r11: -0.484000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 21 ->
+    [rax: 0.000000, rbx: -0.440000, rcx: -0.484000, rdx: -0.484000, rsi: -0.484000, rdi: -0.528000, rsp: -0.440000, rbp: -0.440000, r8: -0.484000, r9: -0.484000, r10: -0.484000, r11: -0.484000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 21 ->
     [rax: -0.220000, rbx: -0.220000, rcx: 0.000000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 22 ->
     [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: 0.000000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 23 ->
     [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: 0.000000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 24 ->
@@ -836,7 +868,7 @@ let%expect_test "Fibonacci register allocation" =
       dies;
     [%expect {|
     Label: (3, "label3")
-    8(rcx) dies at: 3
+    8(rcx) dies at: 2
     |}]
   in
   Format.printf "%a" X86.Printer.pp_graph cfg;
@@ -853,13 +885,17 @@ let%expect_test "Fibonacci register allocation" =
     label3(local=false)():
       movq %rax(5), %rbx(1)
       subq %rax(4), %rax(5), $1
-      pcopy [(%rdi(6), %rax(4))]
-      call %rax(7), %rcx(8), %rdx(9), %rsi(10), %rdi(11), %r8(12), %r9(13), %r10(14), %r11(15), fibonacci
+      pcopy [(%rdi(6), %rax(4)); (%rax(7), %); (%rcx(8), %); (%rdx(9), %);
+              (%rsi(10), %); (%rdi(11), %); (%r8(12), %); (%r9(13), %);
+              (%r10(14), %); (%r11(15), %)]
+      call fibonacci
       movq %r13(3), %rax(7)
       movq %rax(18), %rbx(1)
       subq %rax(17), %rax(18), $2
-      pcopy [(%rdi(19), %rax(17))]
-      call %rax(20), %rcx(21), %rdx(22), %rsi(23), %rdi(24), %r8(25), %r9(26), %r10(27), %r11(28), fibonacci
+      pcopy [(%rdi(19), %rax(17)); (%rax(20), %); (%rcx(21), %); (%rdx(22), %);
+              (%rsi(23), %); (%rdi(24), %); (%r8(25), %); (%r9(26), %);
+              (%r10(27), %); (%r11(28), %)]
+      call fibonacci
       movq %rax(16), %rax(20)
       movq %rbx(31), %r13(3)
       addq %rbx(30), %rbx(31), %rax(16)

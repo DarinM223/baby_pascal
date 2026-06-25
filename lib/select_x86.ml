@@ -167,19 +167,20 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
     in
     let* args = translate_operands args in
     let dests = List.(init (length args) (call_conv_int state)) in
-    let defs =
+    let clobbered =
       List.map (fun r -> Reg (constrained r (fresh_vreg Int))) Regs.caller_save
     in
+    let dests = List.append dests clobbered in
     let rax =
       List.find
         (function
           | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = Regs.rax ->
             true
           | _ -> false)
-        defs
+        clobbered
     in
     pcopy ~dests ~srcs:args
-    @> instr "call" ~defs ~uses:[ Label (f, []) ]
+    @> instr "call" ~defs:[] ~uses:[ Label (f, []) ]
     @> mov ~dest ~src:rax @> k dest
   | Undag.Target.Goto (l, args) ->
     let* args = translate_operands args in
@@ -272,13 +273,17 @@ let%expect_test "Fibonacci code generation" =
     label3(local=false)():
       movq %5any, %1any
       subq %4(reuse=%5), %5any, $1
-      pcopy [(%6(%rdi), %4(reuse=%5))]
-      call %7(%rax), %8(%rcx), %9(%rdx), %10(%rsi), %11(%rdi), %12(%r8), %13(%r9), %14(%r10), %15(%r11), fibonacci
+      pcopy [(%6(%rdi), %4(reuse=%5)); (%7(%rax), %); (%8(%rcx), %);
+              (%9(%rdx), %); (%10(%rsi), %); (%11(%rdi), %); (%12(%r8), %);
+              (%13(%r9), %); (%14(%r10), %); (%15(%r11), %)]
+      call fibonacci
       movq %3any, %7(%rax)
       movq %18any, %1any
       subq %17(reuse=%18), %18any, $2
-      pcopy [(%19(%rdi), %17(reuse=%18))]
-      call %20(%rax), %21(%rcx), %22(%rdx), %23(%rsi), %24(%rdi), %25(%r8), %26(%r9), %27(%r10), %28(%r11), fibonacci
+      pcopy [(%19(%rdi), %17(reuse=%18)); (%20(%rax), %); (%21(%rcx), %);
+              (%22(%rdx), %); (%23(%rsi), %); (%24(%rdi), %); (%25(%r8), %);
+              (%26(%r9), %); (%27(%r10), %); (%28(%r11), %)]
+      call fibonacci
       movq %16any, %20(%rax)
       movq %31any, %3any
       addq %30(reuse=%31), %31any, %16any
