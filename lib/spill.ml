@@ -139,7 +139,7 @@ let next_use_distances
 
 module Liveness = struct
   module RegSet = X86.Target.RegSet
-  module RegMap = Map.Make (X86.Target.Reg)
+  module RegMap = CCMap.Make (X86.Target.Reg)
   module State = struct
     type t = {
       mapping : RegSet.t;

@@ -1,4 +1,5 @@
 module RegSet = Spill.Liveness.RegSet
+module RegMap = Spill.Liveness.RegMap
 
 module Weights = struct
   let use_factor = 1.
@@ -25,6 +26,7 @@ type state = {
        with type label = X86.Cfg.label
         and type uid = X86.Cfg.uid
         and type position = int);
+  mutable subst : X86.Target.reg RegMap.t;
 }
 
 let pp_preferences regs fmt preferences =
@@ -131,6 +133,9 @@ let dies state uid a instr_num =
     at the end which don't have a corresponding use. *)
 let enforce_constraints_pcopy state uid instr_num instr =
   let num_regs = Array.length state.regs in
+  (* Mapping from register to destination register in original instruction.
+       Used for reusing existing virtual registers in the original pcopy. *)
+  let dest_mapping = Array.make num_regs X86.Target.Tombstone in
   (* occupied regs - regs that die at the instruction *)
   let live_through_regs = CCBV.copy state.occupied in
   let constrained_def_regs = CCBV.create ~size:num_regs false in
@@ -142,11 +147,12 @@ let enforce_constraints_pcopy state uid instr_num instr =
     | _ -> ()
   in
   let mark_constrained_def_regs = function
-    | X86.Target.Virtual { reg_constr = UsePhysical phys; _ }
-    | X86.Target.Physical phys ->
+    | ( X86.Target.Virtual { reg_constr = UsePhysical phys; _ }
+      | X86.Target.Physical phys ) as r ->
       begin try
         let reg_index = find_reg_index state.regs (Physical phys) in
         CCBV.set constrained_def_regs reg_index;
+        dest_mapping.(reg_index) <- r;
         if CCBV.get live_through_regs reg_index then need_reassignment := true
       with _ -> ()
       end
@@ -175,9 +181,10 @@ let enforce_constraints_pcopy state uid instr_num instr =
     done;
     (* Remove edges from non-constrained registers to constrained use virtual registers *)
     let remove_constrained_use_edges = function
-      | X86.Target.Virtual { reg; reg_constr = UsePhysical phys; _ } ->
+      | X86.Target.Virtual { reg; reg_constr = UsePhysical phys; _ } as vreg ->
         let curr_reg = find_reg_index state.regs reg in
         let constraint_reg = find_reg_index state.regs (Physical phys) in
+        dest_mapping.(constraint_reg) <- vreg;
         for r = 0 to num_regs - 1 do
           if r <> constraint_reg then cost.((r * num_regs) + curr_reg) <- 0
         done
@@ -195,26 +202,61 @@ let enforce_constraints_pcopy state uid instr_num instr =
     in
     (* After, the index of permutation is the destination register
        and the value is the source register *)
-    (* todo: also need to update the occupied registers after permutation *)
-    (* todo: split into permute_values function? *)
     let srcs = ref [] in
     let dests = ref [] in
+    let subst = ref RegMap.empty in
+    let dest_reg_dies_immediately = Array.make num_regs false in
     for dest = 0 to num_regs - 1 do
       let old_reg = permutation.(dest) in
       match state.reg_current_var.(old_reg) with
       | Some src ->
+        state.reg_current_var.(old_reg) <- None;
+        state.reg_current_pref.(old_reg) <- 0.;
+        CCBV.reset state.occupied old_reg;
         srcs := X86.Target.(Reg (Virtual src)) :: !srcs;
-        dests := X86.Target.Reg state.regs.(dest) :: !dests
+        (* If you can't reuse an existing definition virtual register,
+           create a new virtual register constrained to the destination
+           register and substitute it for every following use of the
+           source register. *)
+        dest_mapping.(dest) <-
+          begin match dest_mapping.(dest) with
+          | Tombstone ->
+            let phys =
+              match state.regs.(dest) with
+              | Physical phys -> phys
+              | _ -> failwith "expected physical register in regs"
+            in
+            let vreg =
+              X86.Target.constrained phys (state.select_state.fresh_vreg Int)
+            in
+            subst := RegMap.add (Virtual src) vreg !subst;
+            vreg
+          | r -> r
+          end;
+        dest_reg_dies_immediately.(dest) <-
+          dies state uid (Virtual src) instr_num;
+        dests := X86.Target.Reg dest_mapping.(dest) :: !dests
       | None -> ()
+    done;
+    for dest = 0 to num_regs - 1 do
+      match dest_mapping.(dest) with
+      | Virtual vreg ->
+        state.reg_current_var.(dest) <- Some vreg;
+        state.reg_current_pref.(dest) <- state.preferences.(vreg.id).(dest);
+        if not dest_reg_dies_immediately.(dest) then
+          CCBV.set state.occupied dest
+      | _ -> ()
     done;
     Format.printf "Shuffling Dests: %a Srcs: %a\n" X86.Target.pp_operands !dests
       X86.Target.pp_operands !srcs;
-    Some (X86.Target.pcopy ~dests:!dests ~srcs:!srcs)
+    Some (X86.Target.pcopy ~dests:!dests ~srcs:!srcs, !subst)
   end
 
 let enforce_constraints state uid instr_num instr head =
   match enforce_constraints_pcopy state uid instr_num instr with
-  | Some pcopy -> X86.Cfg.Head (head, Instruction pcopy)
+  | Some (pcopy, subst) ->
+    state.subst <- RegMap.union (fun _ v _ -> Some v) subst state.subst;
+    X86.Cfg.Head (head, Instruction pcopy)
   | None -> head
 
 (* Insert parallel copy instruction in src block to move arguments
@@ -684,6 +726,7 @@ let regalloc_helper ?(args = RegSet.empty)
       num_vars;
       preferences = Array.make_matrix num_vars (Array.length regs) 0.;
       occupied = CCBV.create ~size:(Array.length regs) false;
+      subst = RegMap.empty;
     }
   in
   build_preferences alloc_state cfg;
