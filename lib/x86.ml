@@ -89,18 +89,19 @@ module Target = struct
   let destruct_label = function
     | Label (l, args) -> Some (l, args)
     | _ -> None
-  let rec to_colored =
+  let rec subst_reg_operand subst_reg = function
+    | Reg r -> Reg (subst_reg r)
+    | MemAddr ({ base : reg; index : reg; _ } as addr) ->
+      MemAddr { addr with base = subst_reg base; index = subst_reg index }
+    | Label (l, ops) -> Label (l, List.map (subst_reg_operand subst_reg) ops)
+    | (Imm _ | StackSlot _) as op -> op
+  let to_colored =
     let to_colored_reg = function
       | Virtual { reg; _ } -> reg
       | reg -> reg
     in
-    function
-    | Reg r -> Reg (to_colored_reg r)
-    | MemAddr ({ base : reg; index : reg; _ } as addr) ->
-      MemAddr
-        { addr with base = to_colored_reg base; index = to_colored_reg index }
-    | Label (l, ops) -> Label (l, List.map to_colored ops)
-    | (Imm _ | StackSlot _) as op -> op
+    subst_reg_operand to_colored_reg
+
   module Reg = struct
     type t = reg
     let is_tombstone = function
