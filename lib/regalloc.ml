@@ -701,6 +701,28 @@ let spill_helper ?(args = [])
   in
   Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
 
+let init_state ~select_state ~regs ~block_execution_frequency ~liveness
+    (module Dom : Dominator.S
+      with type label = X86.Cfg.label
+       and type position = int
+       and type uid = int
+       and type graph = X86.Cfg.graph) =
+  let num_vars = IntHashtbl.length select_state.Select_x86.State.vreg_block in
+  {
+    select_state;
+    regs;
+    block_execution_frequency;
+    liveness;
+    dom = (module Dom);
+    reg_current_var = Array.make (Array.length regs) None;
+    reg_current_pref = Array.make (Array.length regs) 0.;
+    processed = Array.make Dom.size false;
+    num_vars;
+    preferences = Array.make_matrix num_vars (Array.length regs) 0.;
+    occupied = CCBV.create ~size:(Array.length regs) false;
+    subst = RegMap.empty;
+  }
+
 let regalloc_helper ?(args = RegSet.empty)
     ?(regs =
       X86.Regs.int_regs |> Array.of_list
@@ -716,22 +738,9 @@ let regalloc_helper ?(args = RegSet.empty)
   let block_execution_frequency uid =
     Freq.bfreq.(Loop.Dom.position_of_uid uid)
   in
-  let num_vars = IntHashtbl.length state.Select_x86.State.vreg_block in
   let alloc_state =
-    {
-      select_state = state;
-      regs;
-      block_execution_frequency;
-      liveness;
-      dom = (module Loop.Dom);
-      reg_current_var = Array.make (Array.length regs) None;
-      reg_current_pref = Array.make (Array.length regs) 0.;
-      processed = Array.make Loop.Dom.size false;
-      num_vars;
-      preferences = Array.make_matrix num_vars (Array.length regs) 0.;
-      occupied = CCBV.create ~size:(Array.length regs) false;
-      subst = RegMap.empty;
-    }
+    init_state ~select_state:state ~block_execution_frequency ~liveness ~regs
+      (module Loop.Dom)
   in
   build_preferences alloc_state cfg;
   combine_congruence_classes alloc_state cfg;

@@ -12,6 +12,7 @@
   test_spill
   test_execfreq
   test_hungarian
+  test_regalloc
   test_seqpcopy)
  (modes
   (byte exe))
