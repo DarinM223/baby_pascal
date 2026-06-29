@@ -159,8 +159,11 @@ let enforce_constraints_pcopy state uid instr_num instr =
     | _ -> ()
   in
   let rec go_uses_defs = function
-    | X86.Target.Reg use :: uses, X86.Target.Reg _ :: defs ->
-      if use <> Tombstone then remove_constrained_use_live_throughs use;
+    | X86.Target.Reg use :: uses, X86.Target.Reg def :: defs ->
+      if use <> Tombstone && def <> Tombstone then begin
+        remove_constrained_use_live_throughs use;
+        mark_constrained_def_regs def
+      end;
       go_uses_defs (uses, defs)
     | _ :: uses, _ :: defs -> go_uses_defs (uses, defs)
     | [], X86.Target.Reg def :: defs ->
@@ -181,7 +184,8 @@ let enforce_constraints_pcopy state uid instr_num instr =
     done;
     (* Remove edges from non-constrained registers to constrained use virtual registers *)
     let remove_constrained_use_edges = function
-      | X86.Target.Virtual { reg; reg_constr = UsePhysical phys; _ } as vreg ->
+      | ( X86.Target.Virtual { reg; _ },
+          (X86.Target.Virtual { reg_constr = UsePhysical phys; _ } as vreg) ) ->
         let curr_reg = find_reg_index state.regs reg in
         let constraint_reg = find_reg_index state.regs (Physical phys) in
         dest_mapping.(constraint_reg) <- vreg;
@@ -191,15 +195,21 @@ let enforce_constraints_pcopy state uid instr_num instr =
       | _ -> ()
     in
     let rec go_constrained_uses = function
-      | _ :: uses, X86.Target.Reg def :: defs ->
-        if def <> Tombstone then remove_constrained_use_edges def;
+      | X86.Target.Reg use :: uses, X86.Target.Reg def :: defs ->
+        remove_constrained_use_edges (use, def);
         go_constrained_uses (uses, defs)
       | _ -> ()
     in
     go_constrained_uses (instr.uses, instr.defs);
+    Format.printf "Cost matrix: %a\n"
+      (Hungarian.pp_cost ~num_rows:num_regs ~num_cols:num_regs)
+      cost;
     let permutation =
       Hungarian.solve ~cost ~num_rows:num_regs ~num_cols:num_regs
     in
+    Format.printf "Assignment: %a\n"
+      (Hungarian.pp_assignment ~regs:state.regs)
+      permutation;
     (* After, the index of permutation is the destination register
        and the value is the source register *)
     let srcs = ref [] in
@@ -242,7 +252,8 @@ let enforce_constraints_pcopy state uid instr_num instr =
       match dest_mapping.(dest) with
       | Virtual vreg ->
         state.reg_current_var.(dest) <- Some vreg;
-        state.reg_current_pref.(dest) <- state.preferences.(vreg.id).(dest);
+        (* Preferences array doesn't this virtual register's id because it is newly created *)
+        state.reg_current_pref.(dest) <- 0.;
         if not dest_reg_dies_immediately.(dest) then
           CCBV.set state.occupied dest
       | _ -> ()

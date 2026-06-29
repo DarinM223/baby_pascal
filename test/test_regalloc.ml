@@ -13,6 +13,7 @@ let test_register_shuffle1 () =
   let select_state = Select_x86.State.init () in
   let block_execution_frequency _uid = 1. in
   let num_vregs = 15 in
+  let vregs = Array.init num_vregs (fun _ -> select_state.fresh_vreg Int) in
   let live_through = CCBV.create ~size:num_vregs false in
   let uid, instr_num = (2, 5) in
   let dies _uid = function
@@ -30,6 +31,7 @@ let test_register_shuffle1 () =
         max_register_pressure = (fun _ -> 0);
       }
   in
+  (* [ rax; rbx; rcx; rdx; rsi; rdi; rsp; rbp; r8; r9; r10; r11; r12; r13; r14; r15; ] *)
   let regs =
     X86.Regs.int_regs
     |> List.map (fun phys -> X86.Target.Physical phys)
@@ -40,16 +42,18 @@ let test_register_shuffle1 () =
       (module Dom)
   in
   (* todo: set currently occupied registers in state *)
-  let vregs = Array.init num_vregs (fun _ -> select_state.fresh_vreg Int) in
   let idx phys = Regalloc.find_reg_index regs (X86.Target.Physical phys) in
   let set_reg idx = function
     | X86.Target.Virtual vreg ->
+      vreg.reg <- regs.(idx);
       state.reg_current_var.(idx) <- Some vreg;
       state.reg_current_pref.(idx) <- state.preferences.(vreg.id).(idx)
     | _ -> failwith "Register not virtual"
   in
   (* vregs 0, 1, 2 are live through but not in the uses or defs of the instruction *)
   CCBV.set state.occupied (idx X86.Regs.rdi);
+  Format.printf "Vregs: %a\n" (CCArray.pp X86.Target.pp_reg) vregs;
+  Format.printf "Idx: %d\n" (idx X86.Regs.rdi);
   set_reg (idx X86.Regs.rdi) vregs.(0);
   CCBV.set live_through (X86.Target.index vregs.(0));
 

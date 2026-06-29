@@ -17,6 +17,12 @@ let pp_cost ~num_rows ~num_cols fmt cost =
   pp_print_string fmt "]";
   pp_close_box fmt ()
 
+let pp_assignment ~regs fmt assignment =
+  for r = 0 to Array.length assignment - 1 do
+    Format.fprintf fmt "%a -> %a\n" X86.Target.pp_reg regs.(r) X86.Target.pp_reg
+      regs.(assignment.(r))
+  done
+
 (** Hungarian algorithm, does perfect matching only *)
 let solve ~cost ~num_rows ~num_cols =
   let no_exist = -1 in
@@ -79,6 +85,7 @@ let solve ~cost ~num_rows ~num_cols =
   done;
   let exception Done in
   begin try
+    if !unmatched = 0 then raise Done;
     let t = ref !unmatched in
     while true do
       let q = ref 0 in
