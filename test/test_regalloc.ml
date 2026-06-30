@@ -37,17 +37,18 @@ let test_register_shuffle1 () =
     |> List.map (fun phys -> X86.Target.Physical phys)
     |> Array.of_list
   in
+  let open Regalloc in
   let state =
-    Regalloc.init_state ~select_state ~regs ~block_execution_frequency ~liveness
+    init_state ~select_state ~regs ~block_execution_frequency ~liveness
       (module Dom)
   in
   (* todo: set currently occupied registers in state *)
-  let idx phys = Regalloc.find_reg_index regs (X86.Target.Physical phys) in
+  let idx phys = find_reg_index regs (X86.Target.Physical phys) in
   let set_reg idx = function
     | X86.Target.Virtual vreg ->
       vreg.reg <- regs.(idx);
       state.reg_current_var.(idx) <- Some vreg;
-      state.reg_current_pref.(idx) <- state.preferences.(vreg.id).(idx)
+      state.reg_current_pref.(idx) <- state.preferences.%(vreg.id).(idx)
     | _ -> failwith "Register not virtual"
   in
   (* vregs 0, 1, 2 are live through but not in the uses or defs of the instruction *)
@@ -99,13 +100,13 @@ let test_register_shuffle1 () =
         |> List.map (fun i -> X86.Target.Reg vregs.(i)))
       ~srcs:([ 3; 4; 5 ] |> List.map (fun i -> X86.Target.Reg vregs.(i)))
   in
-  let result = Regalloc.enforce_constraints_pcopy state uid instr_num instr in
+  let result = enforce_constraints_pcopy state uid instr_num instr in
   let result_testable =
     option
       X86.Target.(
         pair
           (testable pp_instr equal_instr)
-          Regalloc.(testable (RegMap.pp pp_reg pp_reg) (RegMap.equal equal_reg)))
+          (testable (RegMap.pp pp_reg pp_reg) (RegMap.equal equal_reg)))
   in
   let fresh_vreg ~id ~phys =
     X86.Target.Virtual
@@ -128,7 +129,7 @@ let test_register_shuffle1 () =
       ~srcs:(List.map (fun i -> X86.Target.Reg vregs.(i)) [ 2; 0; 3; 4; 5; 1 ])
   in
   let expected_subst =
-    Regalloc.RegMap.of_list
+    RegMap.of_list
       [
         (vregs.(0), new_r12);
         (vregs.(1), new_rbx);

@@ -15,7 +15,7 @@ type state = {
   num_vars : int;
   processed : bool array;
   block_execution_frequency : X86.Cfg.uid -> float;
-  preferences : float array array;
+  preferences : float array CCVector.vector;
   reg_current_var : X86.Target.virtual_reg option array;
   (* initially 0 *)
   reg_current_pref : float array;
@@ -29,24 +29,26 @@ type state = {
   mutable subst : X86.Target.reg RegMap.t;
 }
 
+let ( .%() ) = CCVector.get
+
 let pp_preferences regs fmt preferences =
   let open Format in
   pp_open_box fmt 0;
   pp_print_string fmt "[";
-  for i = 0 to Array.length preferences - 1 do
+  for i = 0 to CCVector.length preferences - 1 do
     pp_print_int fmt i;
     pp_print_string fmt " -> ";
     pp_open_box fmt 0;
     pp_print_string fmt "[";
-    for j = 0 to Array.length preferences.(i) - 1 do
+    for j = 0 to Array.length preferences.%(i) - 1 do
       let reg = regs.(j) in
-      let pref = preferences.(i).(j) in
+      let pref = preferences.%(i).(j) in
       printf "%a: %f" X86.Target.pp_reg reg pref;
-      if j <> Array.length preferences.(i) - 1 then pp_print_string fmt ", "
+      if j <> Array.length preferences.%(i) - 1 then pp_print_string fmt ", "
     done;
     pp_print_string fmt "]";
     pp_close_box fmt ();
-    if i <> Array.length preferences - 1 then pp_print_string fmt ", "
+    if i <> CCVector.length preferences - 1 then pp_print_string fmt ", "
   done;
   pp_print_string fmt "]";
   pp_close_box fmt ()
@@ -65,19 +67,19 @@ let get_register state uid var head : int * float * X86.Cfg.head =
   | X86.Target.Virtual { reg_constr = ReuseOperand (Virtual r); _ } ->
     let weight = state.block_execution_frequency uid in
     let reg_index = find_reg_index state.regs r.reg in
-    state.preferences.(X86.Target.index var).(reg_index) <-
-      state.preferences.(X86.Target.index var).(reg_index)
+    state.preferences.%(X86.Target.index var).(reg_index) <-
+      state.preferences.%(X86.Target.index var).(reg_index)
       +. (weight *. Weights.aff_should_be_same)
   | _ -> ()
   end;
   let preferences =
-    state.preferences.(X86.Target.index var)
+    state.preferences.%(X86.Target.index var)
     |> Array.mapi (fun i pref -> (i, pref))
   in
   Logs.debug (fun m ->
       m "Preferences for %a are: %a\n" X86.Target.pp_reg var
         (pp_preferences state.regs)
-        [| Array.map snd preferences |]);
+        (CCVector.of_array [| Array.map snd preferences |]));
   Array.sort
     (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
     preferences;
@@ -89,7 +91,7 @@ let get_register state uid var head : int * float * X86.Cfg.head =
       if not (CCBV.get state.occupied reg) then raise (Reg (reg, pref, head));
       let ovar = Option.get state.reg_current_var.(reg) in
       let preferences =
-        Array.mapi (fun i pref -> (i, pref)) state.preferences.(ovar.id)
+        Array.mapi (fun i pref -> (i, pref)) state.preferences.%(ovar.id)
       in
       Array.sort
         (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
@@ -242,6 +244,7 @@ let enforce_constraints_pcopy state uid instr_num instr =
             let vreg =
               X86.Target.constrained phys (state.select_state.fresh_vreg Int)
             in
+            CCVector.push state.preferences state.preferences.%(src.id);
             vreg
           | r -> r
           end;
@@ -321,10 +324,11 @@ let implement_phi_copies state cfg ~src ~dest =
         | Reg (Virtual { reg = arg_reg; _ }), Virtual { reg = phi_reg; _ }
           when X86.Target.equal_reg arg_reg phi_reg ->
           (srcs, dests, arg :: args)
-        | _, Virtual { reg = Physical phi_reg; _ } ->
+        | Reg (Virtual varg), Virtual { reg = Physical phi_reg; _ } ->
           let copy =
             Reg (constrained phi_reg (state.select_state.fresh_vreg Int))
           in
+          CCVector.push state.preferences state.preferences.%(varg.id);
           (arg :: srcs, copy :: dests, copy :: args)
         | _ -> failwith "Phi not a virtual register")
       (List.combine args phis) ([], [], [])
@@ -356,7 +360,8 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
   let head =
     List.fold_left
       (fun head -> function
-        | X86.Target.Virtual phi' as phi ->
+        | X86.Target.Virtual phi' as phi when X86.Target.equal_reg phi'.reg phi
+          ->
           let reg, pref, head = get_register state uid phi head in
           phi'.reg <- state.regs.(reg);
           state.reg_current_var.(reg) <- Some phi';
@@ -387,7 +392,7 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       (X86.Target.uses instr);
     X86.Target.RegSet.fold
       (function
-        | X86.Target.Virtual r' as r ->
+        | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
           fun head ->
             let reg, pref, head = get_register state uid r head in
             r'.reg <- state.regs.(reg);
@@ -444,8 +449,8 @@ let build_preferences state graph : unit =
       when def ->
       (* add preferences to use variable when there is a reuse operand def *)
       let op = X86.Target.index reg in
-      for i = 0 to Array.length preferences.(op) - 1 do
-        preferences.(op).(i) <- preferences.(op).(i) +. preferences.(id).(i)
+      for i = 0 to Array.length preferences.%(op) - 1 do
+        preferences.%(op).(i) <- preferences.%(op).(i) +. preferences.%(id).(i)
       done
     | X86.Target.(Reg (Virtual { id; reg_constr = UsePhysical phys; _ })) ->
       begin try
@@ -455,15 +460,15 @@ let build_preferences state graph : unit =
           weight *. if def then Weights.def_factor else Weights.use_factor
         in
         (* give penalties to all registers that are not the constrained register. *)
-        for i = 0 to Array.length preferences.(id) - 1 do
+        for i = 0 to Array.length preferences.%(id) - 1 do
           if i <> reg then
-            preferences.(id).(i) <- preferences.(id).(i) -. penalty
+            preferences.%(id).(i) <- preferences.%(id).(i) -. penalty
         done;
         let penalty = penalty *. Weights.neighbor_factor in
         (* give penalties to all other live variables for the constrained register *)
         CCBV.iter_true live (fun live ->
             if live <> id then
-              preferences.(live).(reg) <- preferences.(live).(reg) -. penalty)
+              preferences.%(live).(reg) <- preferences.%(live).(reg) -. penalty)
       with _ -> ()
       end
     | X86.Target.Label (_, ops) -> List.iter (handle_operand uid live) ops
@@ -563,8 +568,8 @@ let create_congruence_class state classes graph block =
       let other_repr =
         if Unionfind.equal_repr merged_repr phi_repr then arg_repr else phi_repr
       in
-      let merged = state.preferences.(Unionfind.to_int merged_repr) in
-      let other = state.preferences.(Unionfind.to_int other_repr) in
+      let merged = state.preferences.%(Unionfind.to_int merged_repr) in
+      let other = state.preferences.%(Unionfind.to_int other_repr) in
       for r = 0 to Array.length state.regs - 1 do
         merged.(r) <- merged.(r) +. other.(r)
       done
@@ -623,14 +628,16 @@ let create_congruence_class state classes graph block =
 let set_congruence_prefs state classes v =
   let v_repr = Unionfind.(to_int (find classes v)) in
   if v <> v_repr then
-    Array.blit state.preferences.(v_repr) 0 state.preferences.(v) 0
-      (Array.length state.preferences.(v))
+    Array.blit
+      state.preferences.%(v_repr)
+      0 state.preferences.%(v) 0
+      (Array.length state.preferences.%(v))
 
 let combine_congruence_classes state graph =
   let classes = Unionfind.create state.num_vars in
   let rpo = X86.Cfg.reverse_postorder_dfs graph in
   List.iter (create_congruence_class state classes graph) rpo;
-  Array.iteri
+  CCVector.iteri
     (fun v _ -> set_congruence_prefs state classes v)
     state.preferences
 
@@ -734,7 +741,8 @@ let init_state ~select_state ~regs ~block_execution_frequency ~liveness
     reg_current_pref = Array.make (Array.length regs) 0.;
     processed = Array.make Dom.size false;
     num_vars;
-    preferences = Array.make_matrix num_vars (Array.length regs) 0.;
+    preferences =
+      CCVector.init num_vars (fun _ -> Array.make (Array.length regs) 0.);
     occupied = CCBV.create ~size:(Array.length regs) false;
     subst = RegMap.empty;
   }
@@ -771,7 +779,7 @@ let regalloc_helper ?(args = RegSet.empty)
         let head =
           RegSet.fold
             (function
-              | X86.Target.Virtual r' as r ->
+              | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
                 fun head ->
                   let reg, pref, head =
                     get_register alloc_state X86.Cfg.entry_uid r head
