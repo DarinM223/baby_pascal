@@ -201,15 +201,18 @@ let enforce_constraints_pcopy state uid instr_num instr =
       | _ -> ()
     in
     go_constrained_uses (instr.uses, instr.defs);
-    Format.printf "Cost matrix: %a\n"
-      (Hungarian.pp_cost ~num_rows:num_regs ~num_cols:num_regs)
-      cost;
+    Hungarian.min_to_max_cost ~max_cost:9 cost;
+    Logs.debug (fun m ->
+        m "Cost matrix: %a\n"
+          (Hungarian.pp_cost ~num_rows:num_regs ~num_cols:num_regs)
+          cost);
     let permutation =
       Hungarian.solve ~cost ~num_rows:num_regs ~num_cols:num_regs
     in
-    Format.printf "Assignment: %a\n"
-      (Hungarian.pp_assignment ~regs:state.regs)
-      permutation;
+    Logs.debug (fun m ->
+        m "Assignment: %a\n"
+          (Hungarian.pp_assignment ~regs:state.regs)
+          permutation);
     (* After, the index of permutation is the destination register
        and the value is the source register *)
     let srcs = ref [] in
@@ -239,10 +242,10 @@ let enforce_constraints_pcopy state uid instr_num instr =
             let vreg =
               X86.Target.constrained phys (state.select_state.fresh_vreg Int)
             in
-            subst := RegMap.add (Virtual src) vreg !subst;
             vreg
           | r -> r
           end;
+        subst := RegMap.add (Virtual src) dest_mapping.(dest) !subst;
         dest_reg_dies_immediately.(dest) <-
           dies state uid (Virtual src) instr_num;
         dests := X86.Target.Reg dest_mapping.(dest) :: !dests
@@ -251,6 +254,7 @@ let enforce_constraints_pcopy state uid instr_num instr =
     for dest = 0 to num_regs - 1 do
       match dest_mapping.(dest) with
       | Virtual vreg ->
+        vreg.reg <- state.regs.(dest);
         state.reg_current_var.(dest) <- Some vreg;
         (* Preferences array doesn't this virtual register's id because it is newly created *)
         state.reg_current_pref.(dest) <- 0.;
@@ -258,8 +262,9 @@ let enforce_constraints_pcopy state uid instr_num instr =
           CCBV.set state.occupied dest
       | _ -> ()
     done;
-    Format.printf "Shuffling Dests: %a Srcs: %a\n" X86.Target.pp_operands !dests
-      X86.Target.pp_operands !srcs;
+    Logs.debug (fun m ->
+        m "Shuffling Dests: %a Srcs: %a\n" X86.Target.pp_operands !dests
+          X86.Target.pp_operands !srcs);
     Some (X86.Target.pcopy ~dests:!dests ~srcs:!srcs, !subst)
   end
 

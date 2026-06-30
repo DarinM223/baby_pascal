@@ -107,10 +107,43 @@ let test_register_shuffle1 () =
           (testable pp_instr equal_instr)
           Regalloc.(testable (RegMap.pp pp_reg pp_reg) (RegMap.equal equal_reg)))
   in
+  let fresh_vreg ~id ~phys =
+    X86.Target.Virtual
+      {
+        id;
+        reg_class = Int;
+        reg_constr = UsePhysical phys;
+        reg = regs.(idx phys);
+      }
+  in
+  let new_rbx = fresh_vreg ~id:15 ~phys:X86.Regs.rbx in
+  let new_r12 = fresh_vreg ~id:16 ~phys:X86.Regs.r12 in
+  let new_r13 = fresh_vreg ~id:17 ~phys:X86.Regs.r13 in
+  let expected_instr =
+    X86.Target.pcopy
+      ~dests:
+        (List.map
+           (fun r -> X86.Target.Reg r)
+           [ new_r13; new_r12; vregs.(6); vregs.(7); vregs.(8); new_rbx ])
+      ~srcs:(List.map (fun i -> X86.Target.Reg vregs.(i)) [ 2; 0; 3; 4; 5; 1 ])
+  in
+  let expected_subst =
+    Regalloc.RegMap.of_list
+      [
+        (vregs.(0), new_r12);
+        (vregs.(1), new_rbx);
+        (vregs.(2), new_r13);
+        (vregs.(3), vregs.(6));
+        (vregs.(4), vregs.(7));
+        (vregs.(5), vregs.(8));
+      ]
+  in
   check result_testable "Check result instruction and substitution map" result
-    None
+    (Some (expected_instr, expected_subst))
 
 let _ =
+  Logs.set_reporter (Logs_fmt.reporter ());
+  Logs.set_level (Some Logs.Debug);
   run "Test register allocation"
     [
       ( "Tests enforce_constraints",

@@ -23,6 +23,15 @@ let pp_assignment ~regs fmt assignment =
       regs.(assignment.(r))
   done
 
+(** Goes from minimum cost matching to maximum cost matching *)
+let min_to_max_cost ?max_cost cost =
+  let max_cost =
+    match max_cost with
+    | Some max -> max
+    | None -> Array.fold_left Int.max 0 cost
+  in
+  Array.iteri (fun i cost_value -> cost.(i) <- max_cost - cost_value) cost
+
 (** Hungarian algorithm, does perfect matching only *)
 let solve ~cost ~num_rows ~num_cols =
   let no_exist = -1 in
