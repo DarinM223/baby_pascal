@@ -128,7 +128,7 @@ let test_register_shuffle1 () =
         reg = regs.(idx phys);
       }
   in
-  let new_rbx = fresh_vreg ~id:num_vregs ~phys:X86.Regs.rbx in
+  let new_rsp = fresh_vreg ~id:num_vregs ~phys:X86.Regs.rsp in
   let new_r12 = fresh_vreg ~id:(num_vregs + 1) ~phys:X86.Regs.r12 in
   let new_r13 = fresh_vreg ~id:(num_vregs + 2) ~phys:X86.Regs.r13 in
   let expected_instr =
@@ -136,18 +136,17 @@ let test_register_shuffle1 () =
       ~dests:
         (List.map
            (fun r -> X86.Target.Reg r)
-           [ new_r13; new_r12; vregs.(6); vregs.(7); vregs.(8); new_rbx ])
-      ~srcs:(List.map (fun i -> X86.Target.Reg vregs.(i)) [ 2; 0; 3; 4; 5; 1 ])
+           [ new_r13; new_r12; new_rsp; vregs.(6); vregs.(7); vregs.(8) ])
+      ~srcs:(List.map (fun i -> X86.Target.Reg vregs.(i)) [ 0; 1; 2; 3; 4; 5 ])
   in
   let expected_subst =
     RegMap.of_list
       [
-        (vregs.(0), new_r12);
-        (vregs.(1), new_rbx);
-        (vregs.(2), new_r13);
+        (vregs.(0), new_r13);
+        (vregs.(1), new_r12);
+        (vregs.(2), new_rsp);
         (vregs.(3), vregs.(6));
         (vregs.(4), vregs.(7));
-        (vregs.(5), vregs.(8));
       ]
   in
   check result_testable "Check result instruction and substitution map" result
