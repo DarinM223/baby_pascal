@@ -145,6 +145,9 @@ let enforce_constraints_pcopy state uid instr_num instr =
   let remove_constrained_use_live_throughs = function
     | X86.Target.Virtual a' as a when dies state uid a instr_num ->
       let reg = find_reg_index state.regs a'.reg in
+      Logs.debug (fun m ->
+          m "Removing %a from live throughs\n" X86.Target.pp_reg
+            state.regs.(reg));
       CCBV.reset live_through_regs reg
     | _ -> ()
   in
@@ -153,6 +156,9 @@ let enforce_constraints_pcopy state uid instr_num instr =
       | X86.Target.Physical phys ) as r ->
       begin try
         let reg_index = find_reg_index state.regs (Physical phys) in
+        Logs.debug (fun m ->
+            m "Setting %a as constrained def\n" X86.Target.pp_reg
+              state.regs.(reg_index));
         CCBV.set constrained_def_regs reg_index;
         dest_mapping.(reg_index) <- r;
         if CCBV.get live_through_regs reg_index then need_reassignment := true
@@ -163,8 +169,7 @@ let enforce_constraints_pcopy state uid instr_num instr =
   let rec go_uses_defs = function
     | X86.Target.Reg use :: uses, X86.Target.Reg def :: defs ->
       if use <> Tombstone && def <> Tombstone then begin
-        remove_constrained_use_live_throughs use;
-        mark_constrained_def_regs def
+        remove_constrained_use_live_throughs use
       end;
       go_uses_defs (uses, defs)
     | _ :: uses, _ :: defs -> go_uses_defs (uses, defs)
@@ -179,12 +184,19 @@ let enforce_constraints_pcopy state uid instr_num instr =
     let cost = Array.make (num_regs * num_regs) 0 in
     for l = 0 to num_regs - 1 do
       for r = 0 to num_regs - 1 do
-        (* live through values can't use constrained def registers *)
-        if not (CCBV.get live_through_regs l && CCBV.get constrained_def_regs r)
-        then cost.((r * num_regs) + l) <- (if l = r then 9 else 8)
+        (* Live through values can't use constrained def registers
+           In other words, you can't move a constrained def register
+           into a live through register *)
+        if CCBV.get live_through_regs l && CCBV.get constrained_def_regs r then
+          Logs.debug (fun m ->
+              m "No edge from %a to %a" X86.Target.pp_reg state.regs.(r)
+                X86.Target.pp_reg state.regs.(l))
+        else cost.((l * num_regs) + r) <- (if l = r then 9 else 8)
       done
     done;
-    (* Remove edges from non-constrained registers to constrained use virtual registers *)
+    (* Remove edges from constrained use virtual registers to non-constrained registers
+       In other words, you can only move a constrained use to the register in the constraint,
+       not to any other register *)
     let remove_constrained_use_edges = function
       | ( X86.Target.Virtual { reg; _ },
           (X86.Target.Virtual { reg_constr = UsePhysical phys; _ } as vreg) ) ->
@@ -248,7 +260,14 @@ let enforce_constraints_pcopy state uid instr_num instr =
             vreg
           | r -> r
           end;
-        subst := RegMap.add (Virtual src) dest_mapping.(dest) !subst;
+        (* If register is live-through and it isn't a
+           constrained definition register, then it will still be accessible
+           after this instruction, so don't add it as a substitution. *)
+        if
+          let src_reg = find_reg_index state.regs src.reg in
+          CCBV.get constrained_def_regs src_reg
+          || not (CCBV.get live_through_regs src_reg)
+        then subst := RegMap.add (Virtual src) dest_mapping.(dest) !subst;
         dest_reg_dies_immediately.(dest) <-
           dies state uid (Virtual src) instr_num;
         dests := X86.Target.Reg dest_mapping.(dest) :: !dests

@@ -12,10 +12,11 @@ let test_register_shuffle1 () =
   let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
   let select_state = Select_x86.State.init () in
   let block_execution_frequency _uid = 1. in
-  let num_vregs = 15 in
+  let num_vregs = 18 in
+  let uid, instr_num = (2, 5) in
+  select_state.curr_block := uid;
   let vregs = Array.init num_vregs (fun _ -> select_state.fresh_vreg Int) in
   let live_through = CCBV.create ~size:num_vregs false in
-  let uid, instr_num = (2, 5) in
   let dies _uid = function
     | X86.Target.Virtual vreg ->
       Some (if CCBV.get live_through vreg.id then instr_num + 1 else instr_num)
@@ -76,6 +77,13 @@ let test_register_shuffle1 () =
   set_reg (idx X86.Regs.rbx) vregs.(5);
   CCBV.set live_through (X86.Target.index vregs.(5));
 
+  check bool "Vreg 4 dies at instruction"
+    (dies state uid vregs.(4) instr_num)
+    true;
+  check bool "Vreg 5 doesn't die at instruction"
+    (dies state uid vregs.(5) instr_num)
+    false;
+
   (* vregs 6, 7, 8 are constrained to rdi, rsi, rdx *)
   ignore @@ X86.Target.constrained X86.Regs.rdi vregs.(6);
   CCBV.set live_through (X86.Target.index vregs.(6));
@@ -84,7 +92,7 @@ let test_register_shuffle1 () =
   ignore @@ X86.Target.constrained X86.Regs.rdx vregs.(8);
   CCBV.set live_through (X86.Target.index vregs.(8));
 
-  (* vregs 9, 10, 11, 12, 13, 14 are the constrained defs of the instruction
+  (* vregs 9, 10, 11, 12, 13, 14, 15, 16, 17 are the constrained defs of the instruction
      the def for rax lives through the instruction but the rest die *)
   ignore @@ X86.Target.constrained X86.Regs.rax vregs.(9);
   CCBV.set live_through (X86.Target.index vregs.(9));
@@ -93,10 +101,13 @@ let test_register_shuffle1 () =
   ignore @@ X86.Target.constrained X86.Regs.r9 vregs.(12);
   ignore @@ X86.Target.constrained X86.Regs.r10 vregs.(13);
   ignore @@ X86.Target.constrained X86.Regs.r11 vregs.(14);
+  ignore @@ X86.Target.constrained X86.Regs.rdx vregs.(15);
+  ignore @@ X86.Target.constrained X86.Regs.rsi vregs.(16);
+  ignore @@ X86.Target.constrained X86.Regs.rdi vregs.(17);
   let instr =
     X86.Target.pcopy
       ~dests:
-        ([ 6; 7; 8; 9; 10; 11; 12; 13; 14 ]
+        ([ 6; 7; 8; 9; 10; 11; 12; 13; 14; 15; 16; 17 ]
         |> List.map (fun i -> X86.Target.Reg vregs.(i)))
       ~srcs:([ 3; 4; 5 ] |> List.map (fun i -> X86.Target.Reg vregs.(i)))
   in
@@ -117,9 +128,9 @@ let test_register_shuffle1 () =
         reg = regs.(idx phys);
       }
   in
-  let new_rbx = fresh_vreg ~id:15 ~phys:X86.Regs.rbx in
-  let new_r12 = fresh_vreg ~id:16 ~phys:X86.Regs.r12 in
-  let new_r13 = fresh_vreg ~id:17 ~phys:X86.Regs.r13 in
+  let new_rbx = fresh_vreg ~id:num_vregs ~phys:X86.Regs.rbx in
+  let new_r12 = fresh_vreg ~id:(num_vregs + 1) ~phys:X86.Regs.r12 in
+  let new_r13 = fresh_vreg ~id:(num_vregs + 2) ~phys:X86.Regs.r13 in
   let expected_instr =
     X86.Target.pcopy
       ~dests:
