@@ -12,7 +12,7 @@ let test_register_shuffle1 () =
   let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
   let select_state = Select_x86.State.init () in
   let block_execution_frequency _uid = 1. in
-  let num_vregs = 18 in
+  let num_vregs = 25 in
   let uid, instr_num = (2, 5) in
   select_state.curr_block := uid;
   let vregs = Array.init num_vregs (fun _ -> select_state.fresh_vreg Int) in
@@ -67,8 +67,8 @@ let test_register_shuffle1 () =
   set_reg (idx X86.Regs.rdx) vregs.(2);
   CCBV.set live_through (X86.Target.index vregs.(2));
 
-  (* vregs 3, 4, 5 are the uses of the instruction in callee save registers
-     3 and 4 die at the instruction, but 5 is live through *)
+  (* vregs 3, 4, 5, 6 are the uses of the instruction in callee save registers
+     3, 4, and 6 die at the instruction, but 5 is live through *)
   CCBV.set state.occupied (idx X86.Regs.r12);
   set_reg (idx X86.Regs.r12) vregs.(3);
   CCBV.set state.occupied (idx X86.Regs.r13);
@@ -76,6 +76,8 @@ let test_register_shuffle1 () =
   CCBV.set state.occupied (idx X86.Regs.rbx);
   set_reg (idx X86.Regs.rbx) vregs.(5);
   CCBV.set live_through (X86.Target.index vregs.(5));
+  CCBV.set state.occupied (idx X86.Regs.r9);
+  set_reg (idx X86.Regs.r9) vregs.(6);
 
   check bool "Vreg 4 dies at instruction"
     (dies state uid vregs.(4) instr_num)
@@ -84,32 +86,34 @@ let test_register_shuffle1 () =
     (dies state uid vregs.(5) instr_num)
     false;
 
-  (* vregs 6, 7, 8 are constrained to rdi, rsi, rdx *)
-  ignore @@ X86.Target.constrained X86.Regs.rdi vregs.(6);
-  CCBV.set live_through (X86.Target.index vregs.(6));
-  ignore @@ X86.Target.constrained X86.Regs.rsi vregs.(7);
+  (* vregs 7, 8, 9, 10 are constrained to rdi, rsi, rdx, rcx *)
+  ignore @@ X86.Target.constrained X86.Regs.rdi vregs.(7);
   CCBV.set live_through (X86.Target.index vregs.(7));
-  ignore @@ X86.Target.constrained X86.Regs.rdx vregs.(8);
+  ignore @@ X86.Target.constrained X86.Regs.rsi vregs.(8);
   CCBV.set live_through (X86.Target.index vregs.(8));
-
-  (* vregs 9, 10, 11, 12, 13, 14, 15, 16, 17 are the constrained defs of the instruction
-     the def for rax lives through the instruction but the rest die *)
-  ignore @@ X86.Target.constrained X86.Regs.rax vregs.(9);
+  ignore @@ X86.Target.constrained X86.Regs.rdx vregs.(9);
   CCBV.set live_through (X86.Target.index vregs.(9));
   ignore @@ X86.Target.constrained X86.Regs.rcx vregs.(10);
-  ignore @@ X86.Target.constrained X86.Regs.r8 vregs.(11);
-  ignore @@ X86.Target.constrained X86.Regs.r9 vregs.(12);
-  ignore @@ X86.Target.constrained X86.Regs.r10 vregs.(13);
-  ignore @@ X86.Target.constrained X86.Regs.r11 vregs.(14);
-  ignore @@ X86.Target.constrained X86.Regs.rdx vregs.(15);
-  ignore @@ X86.Target.constrained X86.Regs.rsi vregs.(16);
-  ignore @@ X86.Target.constrained X86.Regs.rdi vregs.(17);
+  CCBV.set live_through (X86.Target.index vregs.(10));
+
+  (* vregs 11, 12, 13, 14, 15, 16, 17, 18, 19 are the constrained defs of the instruction
+     the def for rax lives through the instruction but the rest die *)
+  ignore @@ X86.Target.constrained X86.Regs.rax vregs.(11);
+  CCBV.set live_through (X86.Target.index vregs.(11));
+  ignore @@ X86.Target.constrained X86.Regs.rcx vregs.(12);
+  ignore @@ X86.Target.constrained X86.Regs.r8 vregs.(13);
+  ignore @@ X86.Target.constrained X86.Regs.r9 vregs.(14);
+  ignore @@ X86.Target.constrained X86.Regs.r10 vregs.(15);
+  ignore @@ X86.Target.constrained X86.Regs.r11 vregs.(16);
+  ignore @@ X86.Target.constrained X86.Regs.rdx vregs.(17);
+  ignore @@ X86.Target.constrained X86.Regs.rsi vregs.(18);
+  ignore @@ X86.Target.constrained X86.Regs.rdi vregs.(19);
   let instr =
     X86.Target.pcopy
       ~dests:
-        ([ 6; 7; 8; 9; 10; 11; 12; 13; 14; 15; 16; 17 ]
+        ([ 7; 8; 9; 10; 11; 12; 13; 14; 15; 16; 17; 18; 19 ]
         |> List.map (fun i -> X86.Target.Reg vregs.(i)))
-      ~srcs:([ 3; 4; 5 ] |> List.map (fun i -> X86.Target.Reg vregs.(i)))
+      ~srcs:([ 3; 4; 5; 6 ] |> List.map (fun i -> X86.Target.Reg vregs.(i)))
   in
   let result = enforce_constraints_pcopy state uid instr_num instr in
   let result_testable =
@@ -136,17 +140,27 @@ let test_register_shuffle1 () =
       ~dests:
         (List.map
            (fun r -> X86.Target.Reg r)
-           [ new_r13; new_r12; new_rsp; vregs.(6); vregs.(7); vregs.(8) ])
-      ~srcs:(List.map (fun i -> X86.Target.Reg vregs.(i)) [ 0; 1; 2; 3; 4; 5 ])
+           [
+             new_r13;
+             new_r12;
+             new_rsp;
+             vregs.(7);
+             vregs.(8);
+             vregs.(9);
+             vregs.(10);
+           ])
+      ~srcs:
+        (List.map (fun i -> X86.Target.Reg vregs.(i)) [ 1; 0; 2; 3; 4; 5; 6 ])
   in
   let expected_subst =
     RegMap.of_list
       [
-        (vregs.(0), new_r13);
-        (vregs.(1), new_r12);
+        (vregs.(0), new_r12);
+        (vregs.(1), new_r13);
         (vregs.(2), new_rsp);
-        (vregs.(3), vregs.(6));
-        (vregs.(4), vregs.(7));
+        (vregs.(3), vregs.(7));
+        (vregs.(4), vregs.(8));
+        (vregs.(6), vregs.(10));
       ]
   in
   check result_testable "Check result instruction and substitution map" result

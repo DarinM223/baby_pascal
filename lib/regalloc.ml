@@ -136,9 +136,11 @@ let dies state uid a instr_num =
 let enforce_constraints_pcopy state uid instr_num instr =
   let num_regs = Array.length state.regs in
   (* Mapping from register to destination register in original instruction.
-       Used for reusing existing virtual registers in the original pcopy. *)
+     Used for reusing existing virtual registers in the original pcopy. *)
   let dest_mapping = Array.make num_regs X86.Target.Tombstone in
-  (* occupied regs - regs that die at the instruction *)
+  (* Registers that are currently being occupied by values
+     that live through the instruction
+     occupied regs - regs that die at the instruction *)
   let live_through_regs = CCBV.copy state.occupied in
   let constrained_def_regs = CCBV.create ~size:num_regs false in
   let need_reassignment = ref false in
@@ -169,7 +171,8 @@ let enforce_constraints_pcopy state uid instr_num instr =
   let rec go_uses_defs = function
     | X86.Target.Reg use :: uses, X86.Target.Reg def :: defs ->
       if use <> Tombstone && def <> Tombstone then begin
-        remove_constrained_use_live_throughs use
+        remove_constrained_use_live_throughs use;
+        mark_constrained_def_regs def
       end;
       go_uses_defs (uses, defs)
     | _ :: uses, _ :: defs -> go_uses_defs (uses, defs)
@@ -179,15 +182,33 @@ let enforce_constraints_pcopy state uid instr_num instr =
     | _ -> ()
   in
   go_uses_defs (instr.X86.Target.uses, instr.defs);
+  CCBV.iter_true live_through_regs (fun reg ->
+      Logs.debug (fun m ->
+          m "Live through: %a\n" X86.Target.pp_reg state.regs.(reg)));
   if not !need_reassignment then None
   else begin
     let cost = Array.make (num_regs * num_regs) 0 in
     for l = 0 to num_regs - 1 do
       for r = 0 to num_regs - 1 do
-        (* Live through values can't use constrained def registers
-           In other words, you can't move a constrained def register
-           into a live through register *)
-        if CCBV.get live_through_regs l && CCBV.get constrained_def_regs r then
+        if
+          (* Don't move a constrained def register
+             into a live through register that isn't a constrained def register
+             That would clobber a live through register like a callee save register *)
+          CCBV.get live_through_regs l
+          && (not (CCBV.get constrained_def_regs l))
+          && CCBV.get constrained_def_regs r
+        then
+          Logs.debug (fun m ->
+              m "No edge from %a to %a" X86.Target.pp_reg state.regs.(r)
+                X86.Target.pp_reg state.regs.(l))
+        else if
+          (* Don't move a live through value that currently occupies a
+             constrained def register into another constrained def register
+             That register will be clobbered and won't live through the instruction *)
+          CCBV.get constrained_def_regs l
+          && CCBV.get live_through_regs r
+          && CCBV.get constrained_def_regs r
+        then
           Logs.debug (fun m ->
               m "No edge from %a to %a" X86.Target.pp_reg state.regs.(r)
                 X86.Target.pp_reg state.regs.(l))

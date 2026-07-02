@@ -19,7 +19,7 @@ let pp_cost ~num_rows ~num_cols fmt cost =
 
 let pp_assignment ~regs fmt assignment =
   for r = 0 to Array.length assignment - 1 do
-    Format.fprintf fmt "%a -> %a\n" X86.Target.pp_reg regs.(r) X86.Target.pp_reg
+    Format.fprintf fmt "%a <- %a\n" X86.Target.pp_reg regs.(r) X86.Target.pp_reg
       regs.(assignment.(r))
   done
 
