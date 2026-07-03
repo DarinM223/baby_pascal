@@ -50,21 +50,23 @@ struct
     done;
     !build_tail tail
 
+  let parallel_copy_instr instr =
+    if Requirements.is_pcopy instr then
+      let srcs = Array.of_list (Requirements.uses instr) in
+      let dests =
+        Array.of_list
+          (CCList.take (Array.length srcs) (Requirements.defs instr))
+      in
+      parallel_copy ~srcs ~dests Requirements.temp
+    else fun tail -> G.Tail (Instruction instr, tail)
+
   (** Takes a control flow graph and returns an updated control flow graph with
       all parallel copies sequentialized into moves *)
   let sequentialize cfg =
     let go_block _ block cfg =
       let head, tail = G.unzip block in
       let rec go_tail = function
-        | G.Tail (Instruction i, tail) ->
-          if Requirements.is_pcopy i then
-            let srcs = Array.of_list (Requirements.uses i) in
-            let dests =
-              Array.of_list
-                (CCList.take (Array.length srcs) (Requirements.defs i))
-            in
-            parallel_copy ~srcs ~dests Requirements.temp (go_tail tail)
-          else G.Tail (Instruction i, go_tail tail)
+        | G.Tail (Instruction i, tail) -> parallel_copy_instr i (go_tail tail)
         | G.Last last -> G.Last last
       in
       let tail = go_tail tail in

@@ -386,3 +386,4 @@ module SeqpcopyRequirements :
   let uses instr = List.map Target.to_colored instr.Target.uses
   let defs instr = List.map Target.to_colored instr.Target.defs
 end
+module Sequentialize = Seqpcopy.Make (Cfg) (SeqpcopyRequirements)

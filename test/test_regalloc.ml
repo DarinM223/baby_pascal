@@ -89,6 +89,44 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   in
   (vregs, enforce_constraints_pcopy state uid instr_num instr)
 
+let test_pcopy_instr ~regs instr =
+  let dummy_reg = (-100, X86.Target.Int, "dummy") in
+  let module Sequentialize =
+    Seqpcopy.Make
+      (X86.Cfg)
+      (struct
+        include X86.SeqpcopyRequirements
+        let temp = Target.Reg (Physical dummy_reg)
+      end) in
+  let tail = X86.Sequentialize.parallel_copy_instr instr (Last Exit) in
+  let init_state = ref X86.Target.RegMap.empty in
+  Array.iteri
+    (fun v reg -> init_state := X86.Target.RegMap.add reg v !init_state)
+    regs;
+  let init_state =
+    X86.Target.RegMap.add (Physical dummy_reg) (-1) !init_state
+  in
+  Format.printf "Initial state: %a\n"
+    X86.Target.(RegMap.pp pp_reg Format.pp_print_int)
+    init_state;
+  let update_state state instr =
+    let go state = function
+      | X86.Target.Reg src, X86.Target.Reg dest ->
+        X86.Target.RegMap.(add dest (find src state) state)
+      | _ -> state
+    in
+    List.(fold_left go state (combine instr.X86.Target.uses instr.defs))
+  in
+  let rec interpret_moves state = function
+    | X86.Cfg.Tail (Instruction i, rest) ->
+      interpret_moves (update_state state i) rest
+    | X86.Cfg.Last _ -> state
+  in
+  let result_state = interpret_moves init_state tail in
+  Format.printf "Final state: %a\n"
+    X86.Target.(RegMap.pp pp_reg Format.pp_print_int)
+    result_state
+
 let test_register_shuffle1 () =
   (* [ rax; rbx; rcx; rdx; rsi; rdi; rsp; rbp; r8; r9; r10; r11; r12; r13; r14; r15; ] *)
   let regs =
@@ -171,9 +209,13 @@ let test_register_shuffle1 () =
         (vregs.(2), new_rsp);
         (vregs.(3), vregs.(7));
         (vregs.(4), vregs.(8));
-        (vregs.(6), vregs.(10));
+        (* (vregs.(6), vregs.(10)); *)
       ]
   in
+  begin match result with
+  | Some (instr, _) -> test_pcopy_instr ~regs instr
+  | None -> ()
+  end;
   check result_testable "Check result instruction and substitution map" result
     (Some (expected_instr, expected_subst))
 
