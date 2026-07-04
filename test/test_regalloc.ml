@@ -106,9 +106,6 @@ let test_pcopy_instr ~regs instr =
   let init_state =
     X86.Target.RegMap.add (Physical dummy_reg) (-1) !init_state
   in
-  Format.printf "Initial state: %a\n"
-    X86.Target.(RegMap.pp pp_reg Format.pp_print_int)
-    init_state;
   let update_state state instr =
     let go state = function
       | X86.Target.Reg src, X86.Target.Reg dest ->
@@ -123,9 +120,59 @@ let test_pcopy_instr ~regs instr =
     | X86.Cfg.Last _ -> state
   in
   let result_state = interpret_moves init_state tail in
-  Format.printf "Final state: %a\n"
-    X86.Target.(RegMap.pp pp_reg Format.pp_print_int)
-    result_state
+  (init_state, result_state)
+
+let clobber_constrained constrained state =
+  fst
+  @@ List.fold_left
+       (fun (state, v) reg -> (X86.Target.RegMap.add reg v state, v - 1))
+       (state, -1) constrained
+
+let subst_reg reg subst = X86.Target.RegMap.get_or ~default:reg reg subst
+let get_vreg vreg =
+  match vreg with
+  | X86.Target.Virtual vreg -> vreg
+  | _ -> failwith "Not a virtual register"
+
+let check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
+    ~subst ~init_state ~result_state =
+  (* Check that values of the uses original registers are in the constrained registers *)
+  let check_use (use, _) (def, _) =
+    check int
+      (Format.asprintf "Checking that %a was moved to %a" X86.Target.pp_reg
+         (Physical use) X86.Target.pp_reg (Physical def))
+      (X86.Target.RegMap.find (Physical def) result_state)
+      (X86.Target.RegMap.find (Physical use) init_state)
+  in
+  List.iter2 check_use uses defs;
+  (* Then clobber all the constrained defs *)
+  let result_state =
+    clobber_constrained
+      (List.map
+         (fun (phys, _) -> X86.Target.Physical phys)
+         extra_clobbered_regs)
+      result_state
+  in
+  (* Then check that the live through values before the instruction
+       are still there after substitution *)
+  let live_throughs =
+    extra_curr_live @ uses
+    |> List.mapi (fun i (_, live_through) -> (i, live_through))
+    |> List.filter_map (fun (i, live_through) ->
+        if live_through then Some i else None)
+  in
+  let check_live_through vreg =
+    let vreg' = get_vreg vreg in
+    let subst_vreg = subst_reg vreg subst in
+    let subst_vreg' = get_vreg subst_vreg in
+    check int
+      (Format.asprintf
+         "Checking that %a was moved to %a and is still live through"
+         X86.Target.pp_reg vreg X86.Target.pp_reg subst_vreg)
+      (X86.Target.RegMap.find subst_vreg'.reg result_state)
+      (X86.Target.RegMap.find vreg'.reg init_state)
+  in
+  List.iter check_live_through (List.map (fun i -> vregs.(i)) live_throughs)
 
 let test_register_shuffle1 () =
   (* [ rax; rbx; rcx; rdx; rsi; rdi; rsp; rbp; r8; r9; r10; r11; r12; r13; r14; r15; ] *)
@@ -143,7 +190,7 @@ let test_register_shuffle1 () =
     X86.Regs.[ (r12, false); (r13, false); (rbx, true); (r9, false) ]
   in
   (* vregs 7, 8, 9, 10 are constrained to rdi, rsi, rdx, rcx *)
-  let defs = X86.Regs.[ (rdi, true); (rsi, true); (rdx, true); (rcx, true) ] in
+  let defs = List.map (fun r -> (r, true)) X86.Regs.[ rdi; rsi; rdx; rcx ] in
   (* vregs 11, 12, 13, 14, 15, 16, 17, 18, 19 are the constrained defs of the instruction
      the def for rax lives through the instruction but the rest die *)
   let extra_clobbered_regs =
@@ -209,11 +256,14 @@ let test_register_shuffle1 () =
         (vregs.(2), new_rsp);
         (vregs.(3), vregs.(7));
         (vregs.(4), vregs.(8));
-        (* (vregs.(6), vregs.(10)); *)
+        (vregs.(6), vregs.(10));
       ]
   in
   begin match result with
-  | Some (instr, _) -> test_pcopy_instr ~regs instr
+  | Some (instr, subst) ->
+    let init_state, result_state = test_pcopy_instr ~regs instr in
+    check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
+      ~subst ~init_state ~result_state
   | None -> ()
   end;
   check result_testable "Check result instruction and substitution map" result

@@ -412,9 +412,7 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       (X86.Cfg.First first) phis
   in
   let handle_instruction instr_num head instr =
-    let subst_reg reg =
-      Option.value ~default:reg (RegMap.find_opt reg state.subst)
-    in
+    let subst_reg reg = RegMap.get_or ~default:reg reg state.subst in
     let instr = X86.Target.(map_uses (subst_reg_operand subst_reg)) instr in
     let head =
       if instr.X86.Target.instr = "pcopy" then
