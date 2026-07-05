@@ -1,21 +1,43 @@
-let pp_cost ~num_rows ~num_cols fmt cost =
+let pad regs reg =
+  match regs.(reg) with
+  | X86.Target.Physical (_, _, reg) ->
+    if String.length reg < 3 then String.make (3 - String.length reg) ' ' ^ reg
+    else reg
+  | _ -> failwith "Not a physical register"
+
+let pp_regs fmt regs =
   let open Format in
-  pp_open_box fmt 0;
   pp_print_string fmt "[";
+  for r = 0 to Array.length regs - 1 do
+    pp_print_string fmt (pad regs r);
+    if r <> Array.length regs - 1 then pp_print_string fmt ", "
+  done;
+  pp_print_string fmt "]"
+
+let in_green text = "\027[32m" ^ text ^ "\027[0m"
+
+let pp_cost ~assignment ~regs ~num_rows ~num_cols fmt cost =
+  let open Format in
+  let color_assignment r c text =
+    match assignment with
+    | Some assignment when assignment.(r) = c -> in_green text
+    | _ -> text
+  in
+  pp_print_string fmt "    ";
+  pp_regs fmt regs;
+  pp_print_string fmt "\n";
   for r = 0 to num_rows - 1 do
-    pp_open_box fmt 0;
-    pp_print_string fmt "[";
+    pp_print_string fmt (pad regs r);
+    pp_print_string fmt " [";
     for c = 0 to num_cols - 1 do
       let e = cost.((r * num_cols) + c) in
-      pp_print_int fmt e;
+      pp_print_string fmt "  ";
+      pp_print_string fmt (color_assignment r c (string_of_int e));
       if c <> num_cols - 1 then pp_print_string fmt ", "
     done;
     pp_print_string fmt "]";
-    pp_close_box fmt ();
-    if r <> num_rows - 1 then pp_print_string fmt ", "
-  done;
-  pp_print_string fmt "]";
-  pp_close_box fmt ()
+    pp_print_string fmt "\n"
+  done
 
 let pp_assignment ~regs fmt assignment =
   for r = 0 to Array.length assignment - 1 do

@@ -170,9 +170,9 @@ let enforce_constraints_pcopy state uid instr_num instr =
   in
   let rec go_uses_defs = function
     | X86.Target.Reg use :: uses, X86.Target.Reg def :: defs ->
+      (* todo: swap if use is in a live through register and the def is in a constrained def register *)
       if use <> Tombstone && def <> Tombstone then begin
-        remove_constrained_use_live_throughs use;
-        mark_constrained_def_regs def
+        remove_constrained_use_live_throughs use
       end;
       go_uses_defs (uses, defs)
     | _ :: uses, _ :: defs -> go_uses_defs (uses, defs)
@@ -212,7 +212,7 @@ let enforce_constraints_pcopy state uid instr_num instr =
           Logs.debug (fun m ->
               m "No edge from %a to %a" X86.Target.pp_reg state.regs.(r)
                 X86.Target.pp_reg state.regs.(l))
-        else cost.((l * num_regs) + r) <- (if l = r then 9 else 8)
+        else cost.((l * num_regs) + r) <- (if l = r then 8 else 7)
       done
     done;
     (* Remove edges from constrained use virtual registers to non-constrained registers
@@ -226,6 +226,7 @@ let enforce_constraints_pcopy state uid instr_num instr =
         dest_mapping.(constraint_reg) <- vreg;
         for r = 0 to num_regs - 1 do
           if r <> constraint_reg then cost.((r * num_regs) + curr_reg) <- 0
+          else cost.((r * num_regs) + curr_reg) <- 9
         done
       | _ -> ()
     in
@@ -238,8 +239,9 @@ let enforce_constraints_pcopy state uid instr_num instr =
     go_constrained_uses (instr.uses, instr.defs);
     Hungarian.min_to_max_cost ~max_cost:9 cost;
     Logs.debug (fun m ->
-        m "Cost matrix: %a\n"
-          (Hungarian.pp_cost ~num_rows:num_regs ~num_cols:num_regs)
+        m "Cost matrix: \n%a\n"
+          (Hungarian.pp_cost ~assignment:None ~regs:state.regs
+             ~num_rows:num_regs ~num_cols:num_regs)
           cost);
     let permutation =
       Hungarian.solve ~cost ~num_rows:num_regs ~num_cols:num_regs
@@ -248,6 +250,11 @@ let enforce_constraints_pcopy state uid instr_num instr =
         m "Assignment: %a\n"
           (Hungarian.pp_assignment ~regs:state.regs)
           permutation);
+    Logs.debug (fun m ->
+        m "Cost matrix: \n%a\n"
+          (Hungarian.pp_cost ~assignment:(Some permutation) ~regs:state.regs
+             ~num_rows:num_regs ~num_cols:num_regs)
+          cost);
     (* After, the index of permutation is the destination register
        and the value is the source register *)
     let srcs = ref [] in

@@ -197,6 +197,12 @@ let fresh_vreg ~id ~phys =
       reg = regs.(idx phys);
     }
 
+let pick =
+  let regs = Array.copy regs in
+  fun num ->
+    CCArray.shuffle regs;
+    Array.to_list regs |> CCList.take num
+
 (* max # of live through = # of registers - # of constrained def registers
    max # of live + use registers <= # of registers
    # of def registers = # of use registers
@@ -210,12 +216,6 @@ let randomized_register_shuffle_test () =
   let get_physical = function
     | X86.Target.Physical p -> p
     | _ -> failwith "Not a physical register"
-  in
-  let pick =
-    let regs = Array.copy regs in
-    fun num ->
-      CCArray.shuffle regs;
-      Array.to_list regs |> CCList.take num
   in
   let num_constrained_def = CCRandom.(run (int_range 1 (Array.length regs))) in
   let extra_clobbered_regs =
