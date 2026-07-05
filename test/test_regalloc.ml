@@ -7,6 +7,13 @@ open Baby_pascal
 
 type reg_mapping = (X86.Target.physical_reg * bool) list
 
+let result_testable =
+  option
+    X86.Target.(
+      pair
+        (testable pp_instr equal_instr)
+        (testable (RegMap.pp pp_reg pp_reg) (RegMap.equal equal_reg)))
+
 let setup_register_shuffle ~(regs : X86.Target.reg array)
     ~(extra_curr_live : reg_mapping) ~(uses : reg_mapping) ~(defs : reg_mapping)
     ~(extra_clobbered_regs : reg_mapping) =
@@ -141,8 +148,8 @@ let check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
     check int
       (Format.asprintf "Checking that %a was moved to %a" X86.Target.pp_reg
          (Physical use) X86.Target.pp_reg (Physical def))
-      (X86.Target.RegMap.find (Physical def) result_state)
       (X86.Target.RegMap.find (Physical use) init_state)
+      (X86.Target.RegMap.find (Physical def) result_state)
   in
   List.iter2 check_use uses defs;
   (* Then clobber all the constrained defs *)
@@ -169,19 +176,100 @@ let check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
       (Format.asprintf
          "Checking that %a was moved to %a and is still live through"
          X86.Target.pp_reg vreg X86.Target.pp_reg subst_vreg)
-      (X86.Target.RegMap.find subst_vreg'.reg result_state)
       (X86.Target.RegMap.find vreg'.reg init_state)
+      (X86.Target.RegMap.find subst_vreg'.reg result_state)
   in
   List.iter check_live_through (List.map (fun i -> vregs.(i)) live_throughs)
 
-let test_register_shuffle1 () =
-  (* [ rax; rbx; rcx; rdx; rsi; rdi; rsp; rbp; r8; r9; r10; r11; r12; r13; r14; r15; ] *)
-  let regs =
-    X86.Regs.int_regs
-    |> List.map (fun phys -> X86.Target.Physical phys)
-    |> Array.of_list
+(* [ rax; rbx; rcx; rdx; rsi; rdi; rsp; rbp; r8; r9; r10; r11; r12; r13; r14; r15; ] *)
+let regs =
+  X86.Regs.int_regs
+  |> List.map (fun phys -> X86.Target.Physical phys)
+  |> Array.of_list
+
+let idx phys = Regalloc.find_reg_index regs (X86.Target.Physical phys)
+let fresh_vreg ~id ~phys =
+  X86.Target.Virtual
+    {
+      id;
+      reg_class = Int;
+      reg_constr = UsePhysical phys;
+      reg = regs.(idx phys);
+    }
+
+(* max # of live through = # of registers - # of constrained def registers
+   max # of live + use registers <= # of registers
+   # of def registers = # of use registers
+   1. Pick a number of constrained def registers (can be up to the # of registers)
+   2. Pick a number of live through registers (up to max # of live through)
+   3. Pick a number of live registers + use registers (up to # of of registers)
+   4. Split the live and use registers and mark them randomly as live through or not
+   5. Pick a bunch of def registers = to # of use registers
+   6. Check if the register shuffle is correct *)
+let randomized_register_shuffle_test () =
+  let get_physical = function
+    | X86.Target.Physical p -> p
+    | _ -> failwith "Not a physical register"
   in
-  let idx phys = Regalloc.find_reg_index regs (X86.Target.Physical phys) in
+  let pick =
+    let regs = Array.copy regs in
+    fun num ->
+      CCArray.shuffle regs;
+      Array.to_list regs |> CCList.take num
+  in
+  let num_constrained_def = CCRandom.(run (int_range 1 (Array.length regs))) in
+  let extra_clobbered_regs =
+    List.map (fun r -> (get_physical r, true)) (pick num_constrained_def)
+  in
+  let num_live_through =
+    try CCRandom.(run (int_range 1 (Array.length regs - num_constrained_def)))
+    with Invalid_argument _ -> 0
+  in
+  let num_init_live = CCRandom.(run (int_range 1 (Array.length regs))) in
+  let init_live = pick num_init_live in
+  let live_through, non_live_through =
+    ( CCList.take num_live_through init_live,
+      CCList.drop num_live_through init_live )
+  in
+  let init_live =
+    Array.of_list
+    @@ List.map (fun l -> (get_physical l, true)) live_through
+    @ List.map (fun l -> (get_physical l, false)) non_live_through
+  in
+  CCArray.shuffle init_live;
+  let split_live_index = Random.int (Array.length init_live) in
+  let uses, extra_curr_live =
+    Utils.split_list split_live_index (Array.to_list init_live)
+  in
+  let defs =
+    List.map (fun r -> (get_physical r, true)) @@ pick @@ List.length uses
+  in
+  let pp_phys fmt (phys, live_through) =
+    if live_through then
+      Format.fprintf fmt "!%a" X86.Target.pp_reg (Physical phys)
+    else Format.fprintf fmt "%a" X86.Target.pp_reg (Physical phys)
+  in
+  let test_name =
+    let pp_sep fmt () = Format.fprintf fmt "," in
+    let pp_phys_list = Format.pp_print_list ~pp_sep pp_phys in
+    Format.asprintf "live %a uses %a defs %a clob %a" pp_phys_list
+      extra_curr_live pp_phys_list uses pp_phys_list defs pp_phys_list
+      extra_clobbered_regs
+  in
+  test_case test_name `Quick @@ fun () ->
+  Format.printf "Test: %s\n" test_name;
+  let vregs, result =
+    setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
+      ~extra_clobbered_regs
+  in
+  match result with
+  | Some (instr, subst) ->
+    let init_state, result_state = test_pcopy_instr ~regs instr in
+    check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
+      ~subst ~init_state ~result_state
+  | None -> ()
+
+let test_register_shuffle1 () =
   (* vregs 0, 1, 2 are live through but not in the uses or defs of the instruction *)
   let extra_curr_live = X86.Regs.[ (rdi, true); (rsi, true); (rdx, true) ] in
   (* vregs 3, 4, 5, 6 are the uses of the instruction in callee save registers
@@ -212,22 +300,6 @@ let test_register_shuffle1 () =
       ~extra_clobbered_regs
   in
   let num_vregs = Array.length vregs in
-  let result_testable =
-    option
-      X86.Target.(
-        pair
-          (testable pp_instr equal_instr)
-          (testable (RegMap.pp pp_reg pp_reg) (RegMap.equal equal_reg)))
-  in
-  let fresh_vreg ~id ~phys =
-    X86.Target.Virtual
-      {
-        id;
-        reg_class = Int;
-        reg_constr = UsePhysical phys;
-        reg = regs.(idx phys);
-      }
-  in
   let new_rsp = fresh_vreg ~id:num_vregs ~phys:X86.Regs.rsp in
   let new_r12 = fresh_vreg ~id:(num_vregs + 1) ~phys:X86.Regs.r12 in
   let new_r13 = fresh_vreg ~id:(num_vregs + 2) ~phys:X86.Regs.r13 in
@@ -270,10 +342,15 @@ let test_register_shuffle1 () =
     (Some (expected_instr, expected_subst))
 
 let _ =
+  let _ = Random.set_state (Random.get_state ()) in
   Logs.set_reporter (Logs_fmt.reporter ());
   Logs.set_level (Some Logs.Debug);
-  run "Test register allocation"
+  let randomized =
+    List.init 100 (fun _ -> randomized_register_shuffle_test ())
+  in
+  run "Test_register_allocation"
     [
-      ( "Tests enforce_constraints",
-        [ test_case "simple example" `Quick test_register_shuffle1 ] );
+      ( "Tests_enforce_constraints",
+        test_case "simple example" `Quick test_register_shuffle1 :: randomized
+      );
     ]
