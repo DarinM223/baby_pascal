@@ -129,11 +129,29 @@ let dies state uid a instr_num =
   | Some num when num <= instr_num -> true
   | _ -> false
 
-(** Unlike in the normal preference based register allocation algorithm, enforce
-    constraints are only enforced on parallel copies. Constrained uses are uses
-    in the pcopy that have a corresponding def, constrained defs are definitions
-    at the end which don't have a corresponding use. *)
-let enforce_constraints_pcopy state uid instr_num instr =
+module type EnforceConstraints = sig
+  val dest_mapping : X86.Target.reg array
+  (** Mapping from register to destination register in original instruction.
+      Used for reusing existing virtual registers in the original pcopy. *)
+
+  val live_through_regs : CCBV.t
+  (** Registers that are currently being occupied by values that live through
+      the instruction occupied regs - regs that die at the instruction *)
+
+  val constrained_def_regs : CCBV.t
+  (** Registers that are constrained in parallel copy definitions without a
+      corresponding use. These registers will be clobbered after the
+      instruction, similarly to caller-save registers after a call. *)
+
+  val need_swap : CCBV.t
+  (** Registers that currently contain a live through value *)
+
+  val need_reassignment : bool
+  (** True if a parallel copy shuffling the registers to fit the constraints is
+      necessary *)
+end
+
+let enforce_constraints_state state uid instr_num instr =
   let num_regs = Array.length state.regs in
   (* Mapping from register to destination register in original instruction.
      Used for reusing existing virtual registers in the original pcopy. *)
@@ -143,14 +161,20 @@ let enforce_constraints_pcopy state uid instr_num instr =
      occupied regs - regs that die at the instruction *)
   let live_through_regs = CCBV.copy state.occupied in
   let constrained_def_regs = CCBV.create ~size:num_regs false in
+  let need_swap = CCBV.create ~size:num_regs false in
   let need_reassignment = ref false in
   let remove_constrained_use_live_throughs = function
-    | X86.Target.Virtual a' as a when dies state uid a instr_num ->
+    | (X86.Target.Virtual a' as a), _ when dies state uid a instr_num ->
       let reg = find_reg_index state.regs a'.reg in
       Logs.debug (fun m ->
           m "Removing %a from live throughs\n" X86.Target.pp_reg
             state.regs.(reg));
       CCBV.reset live_through_regs reg
+    | ( X86.Target.Virtual a',
+        ( X86.Target.Virtual { reg_constr = UsePhysical _; _ }
+        | X86.Target.Physical _ ) ) ->
+      let reg = find_reg_index state.regs a'.reg in
+      CCBV.set need_swap reg
     | _ -> ()
   in
   let mark_constrained_def_regs = function
@@ -172,7 +196,7 @@ let enforce_constraints_pcopy state uid instr_num instr =
     | X86.Target.Reg use :: uses, X86.Target.Reg def :: defs ->
       (* todo: swap if use is in a live through register and the def is in a constrained def register *)
       if use <> Tombstone && def <> Tombstone then begin
-        remove_constrained_use_live_throughs use
+        remove_constrained_use_live_throughs (use, def)
       end;
       go_uses_defs (uses, defs)
     | _ :: uses, _ :: defs -> go_uses_defs (uses, defs)
@@ -185,145 +209,159 @@ let enforce_constraints_pcopy state uid instr_num instr =
   CCBV.iter_true live_through_regs (fun reg ->
       Logs.debug (fun m ->
           m "Live through: %a\n" X86.Target.pp_reg state.regs.(reg)));
-  if not !need_reassignment then None
-  else begin
-    let cost = Array.make (num_regs * num_regs) 0 in
-    for l = 0 to num_regs - 1 do
-      for r = 0 to num_regs - 1 do
-        if
-          (* Don't move a constrained def register
+  let module EnforceConstraints = struct
+    let dest_mapping = dest_mapping
+    let live_through_regs = live_through_regs
+    let constrained_def_regs = constrained_def_regs
+    let need_swap = need_swap
+    let need_reassignment = !need_reassignment
+  end in
+  (module EnforceConstraints : EnforceConstraints)
+
+(** Unlike in the normal preference based register allocation algorithm, enforce
+    constraints are only enforced on parallel copies. Constrained uses are uses
+    in the pcopy that have a corresponding def, constrained defs are definitions
+    at the end which don't have a corresponding use. *)
+let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
+    instr_num instr =
+  let num_regs = Array.length state.regs in
+  let open State in
+  let cost = Array.make (num_regs * num_regs) 0 in
+  for l = 0 to num_regs - 1 do
+    for r = 0 to num_regs - 1 do
+      if
+        (* Don't move a constrained def register
              into a live through register that isn't a constrained def register
              That would clobber a live through register like a callee save register *)
-          CCBV.get live_through_regs l
-          && (not (CCBV.get constrained_def_regs l))
-          && CCBV.get constrained_def_regs r
-        then
-          Logs.debug (fun m ->
-              m "No edge from %a to %a" X86.Target.pp_reg state.regs.(r)
-                X86.Target.pp_reg state.regs.(l))
-        else if
-          (* Don't move a live through value that currently occupies a
+        CCBV.get live_through_regs l
+        && (not (CCBV.get constrained_def_regs l))
+        && CCBV.get constrained_def_regs r
+      then
+        Logs.debug (fun m ->
+            m "No edge from %a to %a" X86.Target.pp_reg state.regs.(r)
+              X86.Target.pp_reg state.regs.(l))
+      else if
+        (* Don't move a live through value that currently occupies a
              constrained def register into another constrained def register
              That register will be clobbered and won't live through the instruction *)
-          CCBV.get constrained_def_regs l
-          && CCBV.get live_through_regs r
-          && CCBV.get constrained_def_regs r
-        then
-          Logs.debug (fun m ->
-              m "No edge from %a to %a" X86.Target.pp_reg state.regs.(r)
-                X86.Target.pp_reg state.regs.(l))
-        else cost.((l * num_regs) + r) <- (if l = r then 8 else 7)
-      done
-    done;
-    (* Remove edges from constrained use virtual registers to non-constrained registers
+        CCBV.get constrained_def_regs l
+        && CCBV.get live_through_regs r
+        && CCBV.get constrained_def_regs r
+      then
+        Logs.debug (fun m ->
+            m "No edge from %a to %a" X86.Target.pp_reg state.regs.(r)
+              X86.Target.pp_reg state.regs.(l))
+      else cost.((l * num_regs) + r) <- (if l = r then 8 else 7)
+    done
+  done;
+  (* Remove edges from constrained use virtual registers to non-constrained registers
        In other words, you can only move a constrained use to the register in the constraint,
        not to any other register *)
-    let remove_constrained_use_edges = function
-      | ( X86.Target.Virtual { reg; _ },
-          (X86.Target.Virtual { reg_constr = UsePhysical phys; _ } as vreg) ) ->
-        let curr_reg = find_reg_index state.regs reg in
-        let constraint_reg = find_reg_index state.regs (Physical phys) in
-        dest_mapping.(constraint_reg) <- vreg;
-        for r = 0 to num_regs - 1 do
-          if r <> constraint_reg then cost.((r * num_regs) + curr_reg) <- 0
-          else cost.((r * num_regs) + curr_reg) <- 9
-        done
-      | _ -> ()
-    in
-    let rec go_constrained_uses = function
-      | X86.Target.Reg use :: uses, X86.Target.Reg def :: defs ->
-        remove_constrained_use_edges (use, def);
-        go_constrained_uses (uses, defs)
-      | _ -> ()
-    in
-    go_constrained_uses (instr.uses, instr.defs);
-    Hungarian.min_to_max_cost ~max_cost:9 cost;
-    Logs.debug (fun m ->
-        m "Cost matrix: \n%a\n"
-          (Hungarian.pp_cost ~assignment:None ~regs:state.regs
-             ~num_rows:num_regs ~num_cols:num_regs)
-          cost);
-    let permutation =
-      Hungarian.solve ~cost ~num_rows:num_regs ~num_cols:num_regs
-    in
-    Logs.debug (fun m ->
-        m "Assignment: %a\n"
-          (Hungarian.pp_assignment ~regs:state.regs)
-          permutation);
-    Logs.debug (fun m ->
-        m "Cost matrix: \n%a\n"
-          (Hungarian.pp_cost ~assignment:(Some permutation) ~regs:state.regs
-             ~num_rows:num_regs ~num_cols:num_regs)
-          cost);
-    (* After, the index of permutation is the destination register
+  let remove_constrained_use_edges = function
+    | ( X86.Target.Virtual { reg; _ },
+        (X86.Target.Virtual { reg_constr = UsePhysical phys; _ } as vreg) ) ->
+      let curr_reg = find_reg_index state.regs reg in
+      let constraint_reg = find_reg_index state.regs (Physical phys) in
+      dest_mapping.(constraint_reg) <- vreg;
+      for r = 0 to num_regs - 1 do
+        if r <> constraint_reg then cost.((r * num_regs) + curr_reg) <- 0
+        else cost.((r * num_regs) + curr_reg) <- 9
+      done
+    | _ -> ()
+  in
+  let rec go_constrained_uses = function
+    | X86.Target.Reg use :: uses, X86.Target.Reg def :: defs ->
+      remove_constrained_use_edges (use, def);
+      go_constrained_uses (uses, defs)
+    | _ -> ()
+  in
+  go_constrained_uses (instr.X86.Target.uses, instr.defs);
+  Hungarian.min_to_max_cost ~max_cost:9 cost;
+  Logs.debug (fun m ->
+      m "Cost matrix: \n%a\n"
+        (Hungarian.pp_cost ~assignment:None ~regs:state.regs ~num_rows:num_regs
+           ~num_cols:num_regs)
+        cost);
+  let permutation =
+    Hungarian.solve ~cost ~num_rows:num_regs ~num_cols:num_regs
+  in
+  Logs.debug (fun m ->
+      m "Assignment: %a\n"
+        (Hungarian.pp_assignment ~regs:state.regs)
+        permutation);
+  Logs.debug (fun m ->
+      m "Cost matrix: \n%a\n"
+        (Hungarian.pp_cost ~assignment:(Some permutation) ~regs:state.regs
+           ~num_rows:num_regs ~num_cols:num_regs)
+        cost);
+  (* After, the index of permutation is the destination register
        and the value is the source register *)
-    let srcs = ref [] in
-    let dests = ref [] in
-    let subst = ref RegMap.empty in
-    let dest_reg_dies_immediately = Array.make num_regs false in
-    for dest = 0 to num_regs - 1 do
-      let old_reg = permutation.(dest) in
-      match state.reg_current_var.(old_reg) with
-      | Some src ->
-        state.reg_current_var.(old_reg) <- None;
-        state.reg_current_pref.(old_reg) <- 0.;
-        CCBV.reset state.occupied old_reg;
-        srcs := X86.Target.(Reg (Virtual src)) :: !srcs;
-        (* If you can't reuse an existing definition virtual register,
+  let srcs = ref [] in
+  let dests = ref [] in
+  let subst = ref RegMap.empty in
+  let dest_reg_dies_immediately = Array.make num_regs false in
+  for dest = 0 to num_regs - 1 do
+    let old_reg = permutation.(dest) in
+    match state.reg_current_var.(old_reg) with
+    | Some src ->
+      state.reg_current_var.(old_reg) <- None;
+      state.reg_current_pref.(old_reg) <- 0.;
+      CCBV.reset state.occupied old_reg;
+      srcs := X86.Target.(Reg (Virtual src)) :: !srcs;
+      (* If you can't reuse an existing definition virtual register,
            create a new virtual register constrained to the destination
            register and substitute it for every following use of the
            source register. *)
-        dest_mapping.(dest) <-
-          begin match dest_mapping.(dest) with
-          | Tombstone ->
-            let phys =
-              match state.regs.(dest) with
-              | Physical phys -> phys
-              | _ -> failwith "expected physical register in regs"
-            in
-            let vreg =
-              X86.Target.constrained phys (state.select_state.fresh_vreg Int)
-            in
-            CCVector.push state.preferences state.preferences.%(src.id);
-            vreg
-          | r -> r
-          end;
-        (* If register is live-through and it isn't a
+      dest_mapping.(dest) <-
+        begin match dest_mapping.(dest) with
+        | Tombstone ->
+          let phys =
+            match state.regs.(dest) with
+            | Physical phys -> phys
+            | _ -> failwith "expected physical register in regs"
+          in
+          let vreg =
+            X86.Target.constrained phys (state.select_state.fresh_vreg Int)
+          in
+          CCVector.push state.preferences state.preferences.%(src.id);
+          vreg
+        | r -> r
+        end;
+      (* If register is live-through and it isn't a
            constrained definition register, then it will still be accessible
            after this instruction, so don't add it as a substitution. *)
-        if
-          let src_reg = find_reg_index state.regs src.reg in
-          CCBV.get constrained_def_regs src_reg
-          || not (CCBV.get live_through_regs src_reg)
-        then subst := RegMap.add (Virtual src) dest_mapping.(dest) !subst;
-        dest_reg_dies_immediately.(dest) <-
-          dies state uid (Virtual src) instr_num;
-        dests := X86.Target.Reg dest_mapping.(dest) :: !dests
-      | None -> ()
-    done;
-    for dest = 0 to num_regs - 1 do
-      match dest_mapping.(dest) with
-      | Virtual vreg ->
-        vreg.reg <- state.regs.(dest);
-        state.reg_current_var.(dest) <- Some vreg;
-        (* Preferences array doesn't this virtual register's id because it is newly created *)
-        state.reg_current_pref.(dest) <- 0.;
-        if not dest_reg_dies_immediately.(dest) then
-          CCBV.set state.occupied dest
-      | _ -> ()
-    done;
-    Logs.debug (fun m ->
-        m "Shuffling Dests: %a Srcs: %a\n" X86.Target.pp_operands !dests
-          X86.Target.pp_operands !srcs);
-    Some (X86.Target.pcopy ~dests:!dests ~srcs:!srcs, !subst)
-  end
+      if
+        let src_reg = find_reg_index state.regs src.reg in
+        CCBV.get constrained_def_regs src_reg
+        || not (CCBV.get live_through_regs src_reg)
+      then subst := RegMap.add (Virtual src) dest_mapping.(dest) !subst;
+      dest_reg_dies_immediately.(dest) <- dies state uid (Virtual src) instr_num;
+      dests := X86.Target.Reg dest_mapping.(dest) :: !dests
+    | None -> ()
+  done;
+  for dest = 0 to num_regs - 1 do
+    match dest_mapping.(dest) with
+    | Virtual vreg ->
+      vreg.reg <- state.regs.(dest);
+      state.reg_current_var.(dest) <- Some vreg;
+      (* Preferences array doesn't this virtual register's id because it is newly created *)
+      state.reg_current_pref.(dest) <- 0.;
+      if not dest_reg_dies_immediately.(dest) then CCBV.set state.occupied dest
+    | _ -> ()
+  done;
+  Logs.debug (fun m ->
+      m "Shuffling Dests: %a Srcs: %a\n" X86.Target.pp_operands !dests
+        X86.Target.pp_operands !srcs);
+  (X86.Target.pcopy ~dests:!dests ~srcs:!srcs, !subst)
 
 let enforce_constraints state uid instr_num instr head =
-  match enforce_constraints_pcopy state uid instr_num instr with
-  | Some (pcopy, subst) ->
+  let s = enforce_constraints_state state uid instr_num instr in
+  let module State = (val s) in
+  if not State.need_reassignment then head
+  else
+    let pcopy, subst = enforce_constraints_pcopy s state uid instr_num instr in
     state.subst <- RegMap.union (fun _ v _ -> Some v) subst state.subst;
     X86.Cfg.Head (head, Instruction pcopy)
-  | None -> head
 
 (* Insert parallel copy instruction in src block to move arguments
    to assigned registers in dest block. *)

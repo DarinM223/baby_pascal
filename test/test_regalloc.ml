@@ -1,18 +1,7 @@
 open Alcotest
 open Baby_pascal
 
-(* todo: registers live before enforce_constraints,
-         registers live after enforce_constraints,
-         assigned registers, etc *)
-
 type reg_mapping = (X86.Target.physical_reg * bool) list
-
-let result_testable =
-  option
-    X86.Target.(
-      pair
-        (testable pp_instr equal_instr)
-        (testable (RegMap.pp pp_reg pp_reg) (RegMap.equal equal_reg)))
 
 let setup_register_shuffle ~(regs : X86.Target.reg array)
     ~(extra_curr_live : reg_mapping) ~(uses : reg_mapping) ~(defs : reg_mapping)
@@ -94,9 +83,12 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
     X86.Target.pcopy ~dests:(CCVector.to_list dests)
       ~srcs:(CCVector.to_list srcs)
   in
-  (vregs, enforce_constraints_pcopy state uid instr_num instr)
+  let head =
+    enforce_constraints state uid instr_num instr (X86.Cfg.First Entry)
+  in
+  (vregs, (head, state.subst))
 
-let test_pcopy_instr ~regs instr =
+let test_pcopy_instr ~regs head =
   let dummy_reg = (-100, X86.Target.Int, "dummy") in
   let module Sequentialize =
     Seqpcopy.Make
@@ -105,7 +97,13 @@ let test_pcopy_instr ~regs instr =
         include X86.SeqpcopyRequirements
         let temp = Target.Reg (Physical dummy_reg)
       end) in
-  let tail = X86.Sequentialize.parallel_copy_instr instr (Last Exit) in
+  let rec expand_pcopies tail = function
+    | X86.Cfg.First _ -> tail
+    | X86.Cfg.Head (head, Instruction instr) ->
+      let tail = X86.Sequentialize.parallel_copy_instr instr tail in
+      expand_pcopies tail head
+  in
+  let tail = expand_pcopies (Last Exit) head in
   let init_state = ref X86.Target.RegMap.empty in
   Array.iteri
     (fun v reg -> init_state := X86.Target.RegMap.add reg v !init_state)
@@ -258,16 +256,13 @@ let randomized_register_shuffle_test () =
   in
   test_case test_name `Quick @@ fun () ->
   Format.printf "Test: %s\n" test_name;
-  let vregs, result =
+  let vregs, (head, subst) =
     setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
       ~extra_clobbered_regs
   in
-  match result with
-  | Some (instr, subst) ->
-    let init_state, result_state = test_pcopy_instr ~regs instr in
-    check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
-      ~subst ~init_state ~result_state
-  | None -> ()
+  let init_state, result_state = test_pcopy_instr ~regs head in
+  check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
+    ~subst ~init_state ~result_state
 
 let test_register_shuffle1 () =
   (* vregs 0, 1, 2 are live through but not in the uses or defs of the instruction *)
@@ -295,7 +290,7 @@ let test_register_shuffle1 () =
         (rdi, false);
       ]
   in
-  let vregs, result =
+  let vregs, (head, subst) =
     setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
       ~extra_clobbered_regs
   in
@@ -331,15 +326,16 @@ let test_register_shuffle1 () =
         (vregs.(6), vregs.(10));
       ]
   in
-  begin match result with
-  | Some (instr, subst) ->
-    let init_state, result_state = test_pcopy_instr ~regs instr in
-    check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
-      ~subst ~init_state ~result_state
-  | None -> ()
-  end;
-  check result_testable "Check result instruction and substitution map" result
-    (Some (expected_instr, expected_subst))
+  let init_state, result_state = test_pcopy_instr ~regs head in
+  check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
+    ~subst ~init_state ~result_state;
+  check
+    X86.Cfg.(testable pp_head equal_head)
+    "Check result instruction" head
+    (X86.Cfg.Head (First Entry, Instruction expected_instr));
+  check
+    X86.Target.(testable (RegMap.pp pp_reg pp_reg) (RegMap.equal equal_reg))
+    "Check expected substitution" subst expected_subst
 
 let _ =
   let _ = Random.set_state (Random.get_state ()) in
