@@ -239,8 +239,8 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         && CCBV.get constrained_def_regs r
       then
         Logs.debug (fun m ->
-            m "No edge from %a to %a" X86.Target.pp_reg state.regs.(r)
-              X86.Target.pp_reg state.regs.(l))
+            m "No edge from %a to %a because it clobbers live through"
+              X86.Target.pp_reg state.regs.(r) X86.Target.pp_reg state.regs.(l))
       else if
         (* Don't move a live through value that currently occupies a
              constrained def register into another constrained def register
@@ -250,8 +250,8 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         && CCBV.get constrained_def_regs r
       then
         Logs.debug (fun m ->
-            m "No edge from %a to %a" X86.Target.pp_reg state.regs.(r)
-              X86.Target.pp_reg state.regs.(l))
+            m "No edge from %a to %a because it will be clobbered"
+              X86.Target.pp_reg state.regs.(r) X86.Target.pp_reg state.regs.(l))
       else cost.((l * num_regs) + r) <- (if l = r then 8 else 7)
     done
   done;

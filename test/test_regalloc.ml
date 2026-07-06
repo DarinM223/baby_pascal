@@ -207,77 +207,91 @@ let fresh_vreg ~id ~phys =
       reg = regs.(idx phys);
     }
 
-let pick =
+let pick ?(regs = regs) =
   let regs = Array.copy regs in
   fun num ->
     CCArray.shuffle regs;
     Array.to_list regs |> CCList.take num
 
-(* max # of live through = # of registers - # of constrained def registers
-   max # of live + use registers <= # of registers
-   # of def registers = # of use registers
-   1. Pick a number of constrained def registers (can be up to the # of registers)
-   2. Pick a number of live through registers (up to max # of live through)
-   3. Pick a number of live registers + use registers (up to # of of registers)
-   4. Split the live and use registers and mark them randomly as live through or not
-   5. Pick a bunch of def registers = to # of use registers
-   6. Check if the register shuffle is correct *)
-let randomized_register_shuffle_test () =
-  let get_physical = function
-    | X86.Target.Physical p -> p
-    | _ -> failwith "Not a physical register"
+(* Invariants:
+
+   length(defs) = length(uses)
+   intersect(uses, extra_curr_live) = {}
+   total_live_through = length(regs) - length(union(defs, extra_clobbered_regs))
+   length(extra_curr_live) <= total_live_through
+   length(extra_curr_live) + count(is_live_through, uses) = total_live_through
+*)
+let rec randomized_register_shuffle_test () =
+  let get_random () = CCRandom.(run (int_range 1 (Array.length regs))) in
+  let extra_curr_live = pick (get_random ()) in
+  let extra_clobbered_regs = pick (get_random ()) in
+  let uses =
+    pick
+      ~regs:
+        (Array.of_list
+           X86.Target.RegSet.(
+             to_list
+               (diff (of_list (Array.to_list regs)) (of_list extra_curr_live))))
+      (get_random ())
   in
-  let num_constrained_def = CCRandom.(run (int_range 1 (Array.length regs))) in
-  let extra_clobbered_regs =
-    List.map (fun r -> (get_physical r, true)) (pick num_constrained_def)
-  in
+  let defs = pick (List.length uses) in
   let num_live_through =
-    try CCRandom.(run (int_range 1 (Array.length regs - num_constrained_def)))
-    with Invalid_argument _ -> 0
+    Array.length regs
+    - X86.Target.RegSet.(
+        cardinal (union (of_list defs) (of_list extra_clobbered_regs)))
   in
-  let num_init_live = CCRandom.(run (int_range 1 (Array.length regs))) in
-  let init_live = pick num_init_live in
-  let live_through, non_live_through =
-    ( CCList.take num_live_through init_live,
-      CCList.drop num_live_through init_live )
-  in
-  let init_live =
-    Array.of_list
-    @@ List.map (fun l -> (get_physical l, true)) live_through
-    @ List.map (fun l -> (get_physical l, false)) non_live_through
-  in
-  CCArray.shuffle init_live;
-  let split_live_index = Random.int (Array.length init_live) in
-  let uses, extra_curr_live =
-    Utils.split_list split_live_index (Array.to_list init_live)
-  in
-  let defs =
-    List.map (fun r -> (get_physical r, true)) @@ pick @@ List.length uses
-  in
-  let pp_phys fmt (phys, live_through) =
-    if live_through then
-      Format.fprintf fmt "!%a" X86.Target.pp_reg (Physical phys)
-    else Format.fprintf fmt "%a" X86.Target.pp_reg (Physical phys)
-  in
-  (* todo: remove this once tested *)
-  let uses = List.map (fun (r, _) -> (r, false)) uses in
-  let test_name =
-    let pp_sep fmt () = Format.fprintf fmt "," in
-    let pp_phys_list = Format.pp_print_list ~pp_sep pp_phys in
-    Format.asprintf "live %a uses %a defs %a clob %a" pp_phys_list
-      extra_curr_live pp_phys_list uses pp_phys_list defs pp_phys_list
-      extra_clobbered_regs
-  in
-  test_case test_name `Quick @@ fun () ->
-  Format.printf "Test: %s\n" test_name;
-  let vregs, (head, subst) =
-    setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
-      ~extra_clobbered_regs
-  in
-  Format.printf "Head: %a\n" X86.Cfg.pp_head head;
-  let init_state, result_state = test_pcopy_instr ~regs head in
-  check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
-    ~subst ~init_state ~result_state
+  if
+    List.length uses = List.length defs
+    && List.length extra_curr_live <= num_live_through
+  then begin
+    let get_physical = function
+      | X86.Target.Physical p -> p
+      | _ -> failwith "Not a physical register"
+    in
+    let num_live_uses = num_live_through - List.length extra_curr_live in
+    let uses =
+      let live, non_live = CCList.take_drop num_live_uses uses in
+      let arr =
+        Array.of_list
+        @@ List.map (fun l -> (get_physical l, true)) live
+        @ List.map (fun l -> (get_physical l, false)) non_live
+      in
+      CCArray.shuffle arr;
+      Array.to_list arr
+    in
+    let extra_curr_live =
+      List.map (fun l -> (get_physical l, true)) extra_curr_live
+    in
+    let extra_clobbered_regs =
+      List.map (fun l -> (get_physical l, true)) extra_clobbered_regs
+    in
+    let defs = List.map (fun l -> (get_physical l, true)) defs in
+    let pp_phys fmt (phys, live_through) =
+      if live_through then
+        Format.fprintf fmt "!%a" X86.Target.pp_reg (Physical phys)
+      else Format.fprintf fmt "%a" X86.Target.pp_reg (Physical phys)
+    in
+    (* todo: remove this once tested *)
+    let uses = List.map (fun (r, _) -> (r, false)) uses in
+    let test_name =
+      let pp_sep fmt () = Format.fprintf fmt "," in
+      let pp_phys_list = Format.pp_print_list ~pp_sep pp_phys in
+      Format.asprintf "live %a uses %a defs %a clob %a" pp_phys_list
+        extra_curr_live pp_phys_list uses pp_phys_list defs pp_phys_list
+        extra_clobbered_regs
+    in
+    test_case test_name `Quick @@ fun () ->
+    Format.printf "Test: %s\n" test_name;
+    let vregs, (head, subst) =
+      setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
+        ~extra_clobbered_regs
+    in
+    Format.printf "Head: %a\n" X86.Cfg.pp_head head;
+    let init_state, result_state = test_pcopy_instr ~regs head in
+    check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
+      ~subst ~init_state ~result_state
+  end
+  else randomized_register_shuffle_test ()
 
 let test_register_shuffle1 () =
   (* vregs 0, 1, 2 are live through but not in the uses or defs of the instruction *)

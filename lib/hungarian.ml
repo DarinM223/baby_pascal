@@ -1,15 +1,17 @@
-let pad regs reg =
+let pad text =
+  if String.length text < 3 then String.make (3 - String.length text) ' ' ^ text
+  else text
+
+let pad_reg regs reg =
   match regs.(reg) with
-  | X86.Target.Physical (_, _, reg) ->
-    if String.length reg < 3 then String.make (3 - String.length reg) ' ' ^ reg
-    else reg
+  | X86.Target.Physical (_, _, reg) -> pad reg
   | _ -> failwith "Not a physical register"
 
 let pp_regs fmt regs =
   let open Format in
   pp_print_string fmt "[";
   for r = 0 to Array.length regs - 1 do
-    pp_print_string fmt (pad regs r);
+    pp_print_string fmt (pad_reg regs r);
     if r <> Array.length regs - 1 then pp_print_string fmt ", "
   done;
   pp_print_string fmt "]"
@@ -27,12 +29,11 @@ let pp_cost ~assignment ~regs ~num_rows ~num_cols fmt cost =
   pp_regs fmt regs;
   pp_print_string fmt "\n";
   for r = 0 to num_rows - 1 do
-    pp_print_string fmt (pad regs r);
+    pp_print_string fmt (pad_reg regs r);
     pp_print_string fmt " [";
     for c = 0 to num_cols - 1 do
       let e = cost.((r * num_cols) + c) in
-      pp_print_string fmt "  ";
-      pp_print_string fmt (color_assignment r c (string_of_int e));
+      pp_print_string fmt (color_assignment r c (pad (string_of_int e)));
       if c <> num_cols - 1 then pp_print_string fmt ", "
     done;
     pp_print_string fmt "]";
