@@ -83,10 +83,10 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
     X86.Target.pcopy ~dests:(CCVector.to_list dests)
       ~srcs:(CCVector.to_list srcs)
   in
-  let head =
+  let head, instr =
     enforce_constraints state uid instr_num instr (X86.Cfg.First Entry)
   in
-  (vregs, (head, state.subst))
+  (vregs, (X86.Cfg.Head (head, Instruction instr), state.subst))
 
 let test_pcopy_instr ~regs head =
   let dummy_reg = (-100, X86.Target.Int, "dummy") in
@@ -100,10 +100,19 @@ let test_pcopy_instr ~regs head =
   let rec expand_pcopies tail = function
     | X86.Cfg.First _ -> tail
     | X86.Cfg.Head (head, Instruction instr) ->
-      let tail = X86.Sequentialize.parallel_copy_instr instr tail in
+      let instr =
+        instr
+        |> X86.Target.map_uses X86.Target.to_colored
+        |> X86.Target.map_defs (function
+          | X86.Target.Reg (Virtual { reg_constr = UsePhysical phys; _ }) ->
+            Reg regs.(Regalloc.find_reg_index regs (Physical phys))
+          | op -> op)
+      in
+      let tail = Sequentialize.parallel_copy_instr instr tail in
       expand_pcopies tail head
   in
   let tail = expand_pcopies (Last Exit) head in
+  Format.printf "Expanded pcopies: %a\n" X86.Cfg.pp_tail tail;
   let init_state = ref X86.Target.RegMap.empty in
   Array.iteri
     (fun v reg -> init_state := X86.Target.RegMap.add reg v !init_state)
@@ -114,8 +123,11 @@ let test_pcopy_instr ~regs head =
   let update_state state instr =
     let go state = function
       | X86.Target.Reg src, X86.Target.Reg dest ->
+        Format.printf "Setting: %a to %d at %a\n" X86.Target.pp_reg dest
+          (X86.Target.RegMap.find src state)
+          X86.Target.pp_reg src;
         X86.Target.RegMap.(add dest (find src state) state)
-      | _ -> state
+      | _ -> failwith "Invalid srcs and dests"
     in
     List.(fold_left go state (combine instr.X86.Target.uses instr.defs))
   in
@@ -247,6 +259,8 @@ let randomized_register_shuffle_test () =
       Format.fprintf fmt "!%a" X86.Target.pp_reg (Physical phys)
     else Format.fprintf fmt "%a" X86.Target.pp_reg (Physical phys)
   in
+  (* todo: remove this once tested *)
+  let uses = List.map (fun (r, _) -> (r, false)) uses in
   let test_name =
     let pp_sep fmt () = Format.fprintf fmt "," in
     let pp_phys_list = Format.pp_print_list ~pp_sep pp_phys in
@@ -260,6 +274,7 @@ let randomized_register_shuffle_test () =
     setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
       ~extra_clobbered_regs
   in
+  Format.printf "Head: %a\n" X86.Cfg.pp_head head;
   let init_state, result_state = test_pcopy_instr ~regs head in
   check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
     ~subst ~init_state ~result_state

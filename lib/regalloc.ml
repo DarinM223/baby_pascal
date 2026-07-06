@@ -196,7 +196,8 @@ let enforce_constraints_state state uid instr_num instr =
     | X86.Target.Reg use :: uses, X86.Target.Reg def :: defs ->
       (* todo: swap if use is in a live through register and the def is in a constrained def register *)
       if use <> Tombstone && def <> Tombstone then begin
-        remove_constrained_use_live_throughs (use, def)
+        remove_constrained_use_live_throughs (use, def);
+        mark_constrained_def_regs def
       end;
       go_uses_defs (uses, defs)
     | _ :: uses, _ :: defs -> go_uses_defs (uses, defs)
@@ -357,11 +358,11 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
 let enforce_constraints state uid instr_num instr head =
   let s = enforce_constraints_state state uid instr_num instr in
   let module State = (val s) in
-  if not State.need_reassignment then head
+  if not State.need_reassignment then (head, instr)
   else
     let pcopy, subst = enforce_constraints_pcopy s state uid instr_num instr in
     state.subst <- RegMap.union (fun _ v _ -> Some v) subst state.subst;
-    X86.Cfg.Head (head, Instruction pcopy)
+    (head, pcopy)
 
 (* Insert parallel copy instruction in src block to move arguments
    to assigned registers in dest block. *)
@@ -459,10 +460,10 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
   let handle_instruction instr_num head instr =
     let subst_reg reg = RegMap.get_or ~default:reg reg state.subst in
     let instr = X86.Target.(map_uses (subst_reg_operand subst_reg)) instr in
-    let head =
+    let head, instr =
       if instr.X86.Target.instr = "pcopy" then
         enforce_constraints state uid instr_num instr head
-      else head
+      else (head, instr)
     in
     X86.Target.RegSet.iter
       (function
@@ -473,33 +474,41 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
           CCBV.reset state.occupied reg
         | _ -> ())
       (X86.Target.uses instr);
-    X86.Target.RegSet.fold
-      (function
-        | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
-          fun head ->
-            let reg, pref, head = get_register state uid r head in
-            r'.reg <- state.regs.(reg);
-            state.reg_current_var.(reg) <- Some r';
-            state.reg_current_pref.(reg) <- pref;
-            if not (dies state uid r instr_num) then CCBV.set state.occupied reg;
-            head
-        | _ -> fun head -> head)
-      (X86.Target.defs instr) head
+    let head =
+      X86.Target.RegSet.fold
+        (function
+          | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
+            fun head ->
+              let reg, pref, head = get_register state uid r head in
+              r'.reg <- state.regs.(reg);
+              state.reg_current_var.(reg) <- Some r';
+              state.reg_current_pref.(reg) <- pref;
+              if not (dies state uid r instr_num) then
+                CCBV.set state.occupied reg;
+              head
+          | _ -> fun head -> head)
+        (X86.Target.defs instr) head
+    in
+    (head, instr)
   in
   let rec go instr_num head = function
     | X86.Cfg.Tail (Instruction instr, tail) ->
-      let head = handle_instruction instr_num head instr in
+      let head, instr = handle_instruction instr_num head instr in
       go (instr_num + 1) (X86.Cfg.Head (head, Instruction instr)) tail
     | X86.Cfg.Last l ->
       (* todo: propagate branch args to the affinity chunk *)
-      let head =
-        match l with
-        | X86.Printer.Exit -> head
-        | X86.Printer.Branch (i, _) -> handle_instruction instr_num head i
-        | X86.Printer.CBranch (i, _, _) -> handle_instruction instr_num head i
-        | X86.Printer.Return i -> handle_instruction instr_num head i
-      in
-      (head, X86.Cfg.Last l)
+      begin match l with
+      | X86.Printer.Exit -> (head, X86.Cfg.Last l)
+      | X86.Printer.Branch (i, lab) ->
+        let head, i = handle_instruction instr_num head i in
+        (head, X86.Cfg.Last (Branch (i, lab)))
+      | X86.Printer.CBranch (i, lab1, lab2) ->
+        let head, i = handle_instruction instr_num head i in
+        (head, X86.Cfg.Last (CBranch (i, lab1, lab2)))
+      | X86.Printer.Return i ->
+        let head, i = handle_instruction instr_num head i in
+        (head, X86.Cfg.Last (Return i))
+      end
   in
   let block = X86.Cfg.zip (go 0 head tail) in
   let module Dom = (val state.dom) in
