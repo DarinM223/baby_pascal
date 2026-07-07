@@ -93,6 +93,18 @@ module Target = struct
   let destruct_label = function
     | Label (l, args) -> Some (l, args)
     | _ -> None
+  let rec fold_reg_operand (f : 'a -> reg -> 'a * reg) (acc : 'a) = function
+    | Reg r ->
+      let acc, r = f acc r in
+      (acc, Reg r)
+    | MemAddr ({ base : reg; index : reg; _ } as addr) ->
+      let acc, base = f acc base in
+      let acc, index = f acc index in
+      (acc, MemAddr { addr with base; index })
+    | Label (l, ops) ->
+      let acc, ops = List.fold_left_map (fold_reg_operand f) acc ops in
+      (acc, Label (l, ops))
+    | (Imm _ | StackSlot _) as op -> (acc, op)
   let rec subst_reg_operand subst_reg = function
     | Reg r -> Reg (subst_reg r)
     | MemAddr ({ base : reg; index : reg; _ } as addr) ->
@@ -159,6 +171,7 @@ module Target = struct
       i with
       uses = List.map (fun op -> if is_tombstone op then op else f op) i.uses;
     }
+  let map_reg_uses f = map_uses (subst_reg_operand f)
   let map_defs f i =
     {
       i with
@@ -171,6 +184,7 @@ module Target = struct
         init i.uses
     in
     (res, { i with uses })
+  let fold_reg_uses f = fold_uses (fold_reg_operand f)
   let fold_defs f init i =
     let res, defs =
       List.fold_left_map
@@ -178,6 +192,8 @@ module Target = struct
         init i.defs
     in
     (res, { i with defs })
+  let fold_reg_defs f = fold_defs (fold_reg_operand f)
+
   let rec regset_of_operand = function
     | Label (_, args) ->
       args

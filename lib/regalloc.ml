@@ -80,16 +80,12 @@ let get_register state uid var head : int * float * X86.Cfg.head =
       m "Preferences for %a are: %a\n" X86.Target.pp_reg var
         (pp_preferences state.regs)
         (CCVector.of_array [| Array.map snd preferences |]));
-  Format.(fprintf err_formatter)
-    "Preferences for %a are: %a\n" X86.Target.pp_reg var
-    (pp_preferences state.regs)
-    (CCVector.of_array [| Array.map snd preferences |]);
-  Format.(fprintf err_formatter)
-    "Occupied: %a\n"
-    (Format.pp_print_list
-       ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
-       X86.Target.pp_reg)
-    (List.map (fun r -> state.regs.(r)) (CCBV.to_list state.occupied));
+  Logs.debug (fun m ->
+      m "Occupied: %a\n"
+        (Format.pp_print_list
+           ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
+           X86.Target.pp_reg)
+        (List.map (fun r -> state.regs.(r)) (CCBV.to_list state.occupied)));
   Array.sort
     (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
     preferences;
@@ -353,9 +349,9 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
   for dest = 0 to num_regs - 1 do
     match dest_mapping.(dest) with
     | Virtual vreg when X86.Target.equal_reg vreg.reg (Virtual vreg) ->
-      Format.(fprintf err_formatter)
-        "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual vreg)
-        X86.Target.pp_reg state.regs.(dest);
+      Logs.debug (fun m ->
+          m "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual vreg)
+            X86.Target.pp_reg state.regs.(dest));
       vreg.reg <- state.regs.(dest);
       state.reg_current_var.(dest) <- Some vreg;
       (* Preferences array doesn't this virtual register's id because it is newly created *)
@@ -469,16 +465,21 @@ let implement_phi_copies state cfg ~src ~dest =
     List.fold_right
       (fun (arg, phi) (srcs, dests, args) ->
         match (arg, phi) with
-        | ( Reg (Virtual { reg = arg_reg; _ }),
+        | ( Reg (Virtual { reg = arg_reg; _ } | (Physical _ as arg_reg)),
             (Virtual { reg = phi_reg; _ } | (Physical _ as phi_reg)) )
           when X86.Target.equal_reg arg_reg phi_reg ->
           (srcs, dests, arg :: args)
-        | ( Reg (Virtual varg),
-            (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ) ->
+        | Reg r, (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ->
           let copy =
             Reg (constrained phi_reg (state.select_state.fresh_vreg Int))
           in
-          CCVector.push state.preferences state.preferences.%(varg.id);
+          begin match r with
+          | X86.Target.Virtual varg ->
+            CCVector.push state.preferences state.preferences.%(varg.id)
+          | _ ->
+            CCVector.push state.preferences
+              (Array.make (Array.length state.regs) 0.)
+          end;
           (arg :: srcs, copy :: dests, copy :: args)
         | _ -> failwith "Phi not a virtual register")
       (List.combine args phis) ([], [], [])
@@ -512,9 +513,9 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
             | X86.Target.Virtual phi' as phi
               when X86.Target.equal_reg phi'.reg phi ->
               let reg, pref, head = get_register state uid phi head in
-              Format.(fprintf err_formatter)
-                "Setting register for %a to %a\n" X86.Target.pp_reg
-                (Virtual phi') X86.Target.pp_reg state.regs.(reg);
+              Logs.debug (fun m ->
+                  m "Setting register for %a to %a\n" X86.Target.pp_reg
+                    (Virtual phi') X86.Target.pp_reg state.regs.(reg));
               phi'.reg <- state.regs.(reg);
               state.reg_current_var.(reg) <- Some phi';
               state.reg_current_pref.(reg) <- pref;
@@ -538,39 +539,32 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       else (head, instr)
     in
     let instr =
-      X86.Target.map_uses
+      X86.Target.map_reg_uses
         (function
-          | Reg (X86.Target.Virtual a' as a) when dies state uid a instr_num ->
+          | X86.Target.Virtual a' as a when dies state uid a instr_num ->
             let reg = find_reg_index state.regs a'.reg in
             state.reg_current_var.(reg) <- None;
             state.reg_current_pref.(reg) <- 0.;
             CCBV.reset state.occupied reg;
-            Reg a'.reg
-          | Reg (X86.Target.Virtual _ as a) ->
-            Format.printf
-              "Operand %a doesn't die at instruction %d, dies at %a\n"
-              X86.Target.pp_operand (Reg a) instr_num
-              Format.(pp_print_option pp_print_int)
-              (state.liveness.dies uid a);
-            Reg a
-          | op -> op)
+            a'.reg
+          | X86.Target.Virtual a' -> a'.reg
+          | r -> r)
         instr
     in
     let head, instr =
-      X86.Target.fold_defs
+      X86.Target.fold_reg_defs
         (fun head -> function
-          | X86.Target.(Reg (Virtual r' as r))
-            when X86.Target.equal_reg r'.reg r ->
+          | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
             let reg, pref, head = get_register state uid r head in
-            Format.(fprintf err_formatter)
-              "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual r')
-              X86.Target.pp_reg state.regs.(reg);
+            Logs.debug (fun m ->
+                m "Setting register for %a to %a\n" X86.Target.pp_reg
+                  (Virtual r') X86.Target.pp_reg state.regs.(reg));
             r'.reg <- state.regs.(reg);
             state.reg_current_var.(reg) <- Some r';
             state.reg_current_pref.(reg) <- pref;
             if not (dies state uid r instr_num) then CCBV.set state.occupied reg;
-            (head, Reg r'.reg)
-          | op -> (head, op))
+            (head, r'.reg)
+          | r -> (head, r))
         head instr
     in
     (head, instr)
@@ -960,9 +954,6 @@ let regalloc_helper ?(args = RegSet.empty)
                   let reg, pref, head =
                     get_register alloc_state X86.Cfg.entry_uid r head
                   in
-                  Format.(fprintf err_formatter)
-                    "Setting register for %a to %a\n" X86.Target.pp_reg
-                    (Virtual r') X86.Target.pp_reg alloc_state.regs.(reg);
                   r'.reg <- alloc_state.regs.(reg);
                   alloc_state.reg_current_var.(reg) <- Some r';
                   alloc_state.reg_current_pref.(reg) <- pref;
@@ -1009,27 +1000,27 @@ let%expect_test "Nested loops register allocation" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      movq %rax(0), $0
+      movq %rax, $0
       jmp label6
     label1(local=false)():
       exit
-    label2(local=false)(rax(1)):
-      jl label3, label1, %rax(1), $100
+    label2(local=false)(rax):
+      jl label3, label1, %rax, $100
     label3(local=false)():
-      movq %rbx(2), %rax(1)
-      jmp label4(%rax(1), %rbx(2))
-    label4(local=false)(rax(3), rbx(4)):
-      jl label5, label2(%rax(3)), %rbx(4), $100
+      movq %rbx, %rax
+      jmp label4(%rax, %rbx)
+    label4(local=false)(rax, rbx):
+      jl label5, label2(%rax), %rbx, $100
     label5(local=false)():
-      movq %rax(7), %rax(3)
-      addq %rax(6), %rax(7), $1
-      movq %rax(5), %rax(6)
-      movq %rbx(10), %rbx(4)
-      addq %rbx(9), %rbx(10), $1
-      movq %rbx(8), %rbx(9)
-      jmp label4(%rax(5), %rbx(8))
+      movq %rax, %rax
+      addq %rax, %rax, $1
+      movq %rax, %rax
+      movq %rbx, %rbx
+      addq %rbx, %rbx, $1
+      movq %rbx, %rbx
+      jmp label4(%rax, %rbx)
     label6(local=false)():
-      jmp label2(%rax(0))
+      jmp label2(%rax)
     |}]
 
 let%expect_test "Fibonacci register allocation" =
@@ -1133,31 +1124,29 @@ let%expect_test "Fibonacci register allocation" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      pcopy [(%rbx(1), %rdi(0))]
-      jle label2, label3, %rbx(1), $1
-    label1(local=false)(rax(32)):
-      movq %rax(33), %rax(32)
-      ret %rax(33)
+      pcopy [(%rbx, %rdi)]
+      jle label2, label3, %rbx, $1
+    label1(local=false)(rax):
+      movq %rax, %rax
+      ret %rax
     label2(local=false)():
-      movq %rax(2), %rbx(1)
-      jmp label1(%rax(2))
+      movq %rax, %rbx
+      jmp label1(%rax)
     label3(local=false)():
-      movq %rax(5), %rbx(1)
-      subq %rax(4), %rax(5), $1
-      pcopy [(%rdi(6), %rax(4)); (%rax(7), %); (%rcx(8), %); (%rdx(9), %);
-              (%rsi(10), %); (%rdi(11), %); (%r8(12), %); (%r9(13), %);
-              (%r10(14), %); (%r11(15), %)]
+      movq %rax, %rbx
+      subq %rax, %rax, $1
+      pcopy [(%rdi, %rax); (%rax, %); (%rcx, %); (%rdx, %); (%rsi, %); (%rdi, %);
+              (%r8, %); (%r9, %); (%r10, %); (%r11, %)]
       call fibonacci
-      movq %r13(3), %rax(7)
-      movq %rax(18), %rbx(1)
-      subq %rax(17), %rax(18), $2
-      pcopy [(%rdi(19), %rax(17)); (%rax(20), %); (%rcx(21), %); (%rdx(22), %);
-              (%rsi(23), %); (%rdi(24), %); (%r8(25), %); (%r9(26), %);
-              (%r10(27), %); (%r11(28), %)]
+      movq %r13, %rax
+      movq %rax, %rbx
+      subq %rax, %rax, $2
+      pcopy [(%rdi, %rax); (%rax, %); (%rcx, %); (%rdx, %); (%rsi, %); (%rdi, %);
+              (%r8, %); (%r9, %); (%r10, %); (%r11, %)]
       call fibonacci
-      movq %rax(16), %rax(20)
-      movq %rbx(31), %r13(3)
-      addq %rbx(30), %rbx(31), %rax(16)
-      movq %rax(29), %rbx(30)
-      jmp label1(%rax(29))
+      movq %rax, %rax
+      movq %rbx, %r13
+      addq %rbx, %rbx, %rax
+      movq %rax, %rbx
+      jmp label1(%rax)
     |}]
