@@ -343,6 +343,8 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
   for dest = 0 to num_regs - 1 do
     match dest_mapping.(dest) with
     | Virtual vreg ->
+      Format.printf "Setting virtual register %a to %a\n" X86.Target.pp_reg
+        (Virtual vreg) X86.Target.pp_reg state.regs.(dest);
       vreg.reg <- state.regs.(dest);
       state.reg_current_var.(dest) <- Some vreg;
       (* Preferences array doesn't this virtual register's id because it is newly created *)
@@ -449,6 +451,8 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
         | X86.Target.Virtual phi' as phi when X86.Target.equal_reg phi'.reg phi
           ->
           let reg, pref, head = get_register state uid phi head in
+          Format.printf "Setting virtual register %a to %a\n" X86.Target.pp_reg
+            (Virtual phi') X86.Target.pp_reg state.regs.(reg);
           phi'.reg <- state.regs.(reg);
           state.reg_current_var.(reg) <- Some phi';
           state.reg_current_pref.(reg) <- pref;
@@ -480,6 +484,9 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
           | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
             fun head ->
               let reg, pref, head = get_register state uid r head in
+              Format.printf "Setting virtual register %a to %a\n"
+                X86.Target.pp_reg (Virtual r') X86.Target.pp_reg
+                state.regs.(reg);
               r'.reg <- state.regs.(reg);
               state.reg_current_var.(reg) <- Some r';
               state.reg_current_pref.(reg) <- pref;
@@ -876,6 +883,9 @@ let regalloc_helper ?(args = RegSet.empty)
                   let reg, pref, head =
                     get_register alloc_state X86.Cfg.entry_uid r head
                   in
+                  Format.printf "Setting virtual register %a to %a\n"
+                    X86.Target.pp_reg (Virtual r') X86.Target.pp_reg
+                    alloc_state.regs.(reg);
                   r'.reg <- alloc_state.regs.(reg);
                   alloc_state.reg_current_var.(reg) <- Some r';
                   alloc_state.reg_current_pref.(reg) <- pref;
