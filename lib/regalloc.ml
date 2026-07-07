@@ -43,7 +43,7 @@ let pp_preferences regs fmt preferences =
     for j = 0 to Array.length preferences.%(i) - 1 do
       let reg = regs.(j) in
       let pref = preferences.%(i).(j) in
-      printf "%a: %f" X86.Target.pp_reg reg pref;
+      fprintf fmt "%a: %f" X86.Target.pp_reg reg pref;
       if j <> Array.length preferences.%(i) - 1 then pp_print_string fmt ", "
     done;
     pp_print_string fmt "]";
@@ -80,6 +80,16 @@ let get_register state uid var head : int * float * X86.Cfg.head =
       m "Preferences for %a are: %a\n" X86.Target.pp_reg var
         (pp_preferences state.regs)
         (CCVector.of_array [| Array.map snd preferences |]));
+  Format.(fprintf err_formatter)
+    "Preferences for %a are: %a\n" X86.Target.pp_reg var
+    (pp_preferences state.regs)
+    (CCVector.of_array [| Array.map snd preferences |]);
+  Format.(fprintf err_formatter)
+    "Occupied: %a\n"
+    (Format.pp_print_list
+       ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
+       X86.Target.pp_reg)
+    (List.map (fun r -> state.regs.(r)) (CCBV.to_list state.occupied));
   Array.sort
     (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
     preferences;
@@ -503,8 +513,8 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
               when X86.Target.equal_reg phi'.reg phi ->
               let reg, pref, head = get_register state uid phi head in
               Format.(fprintf err_formatter)
-                "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual phi')
-                X86.Target.pp_reg state.regs.(reg);
+                "Setting register for %a to %a\n" X86.Target.pp_reg
+                (Virtual phi') X86.Target.pp_reg state.regs.(reg);
               phi'.reg <- state.regs.(reg);
               state.reg_current_var.(reg) <- Some phi';
               state.reg_current_pref.(reg) <- pref;
@@ -536,6 +546,13 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
             state.reg_current_pref.(reg) <- 0.;
             CCBV.reset state.occupied reg;
             Reg a'.reg
+          | Reg (X86.Target.Virtual _ as a) ->
+            Format.printf
+              "Operand %a doesn't die at instruction %d, dies at %a\n"
+              X86.Target.pp_operand (Reg a) instr_num
+              Format.(pp_print_option pp_print_int)
+              (state.liveness.dies uid a);
+            Reg a
           | op -> op)
         instr
     in
