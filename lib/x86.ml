@@ -55,7 +55,11 @@ module Target = struct
     | Physical (id, _, _) -> id
     | Virtual v -> v.id
     | Tombstone -> failwith "index: got tombstone"
-  let equal_reg r1 r2 = Int.equal (index r1) (index r2)
+  let equal_reg r1 r2 =
+    match (r1, r2) with
+    | Physical (id1, _, _), Physical (id2, _, _) -> id1 = id2
+    | Virtual v1, Virtual v2 -> v1.id = v2.id
+    | _ -> false
 
   type regs = reg list [@@deriving show, eq]
   type operand =
@@ -160,6 +164,20 @@ module Target = struct
       i with
       defs = List.map (fun op -> if is_tombstone op then op else f op) i.defs;
     }
+  let fold_uses f init i =
+    let res, uses =
+      List.fold_left_map
+        (fun acc op -> if is_tombstone op then (acc, op) else f acc op)
+        init i.uses
+    in
+    (res, { i with uses })
+  let fold_defs f init i =
+    let res, defs =
+      List.fold_left_map
+        (fun acc op -> if is_tombstone op then (acc, op) else f acc op)
+        init i.defs
+    in
+    (res, { i with defs })
   let rec regset_of_operand = function
     | Label (_, args) ->
       args

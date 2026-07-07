@@ -342,7 +342,10 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
   done;
   for dest = 0 to num_regs - 1 do
     match dest_mapping.(dest) with
-    | Virtual vreg ->
+    | Virtual vreg when X86.Target.equal_reg vreg.reg (Virtual vreg) ->
+      Format.(fprintf err_formatter)
+        "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual vreg)
+        X86.Target.pp_reg state.regs.(dest);
       vreg.reg <- state.regs.(dest);
       state.reg_current_var.(dest) <- Some vreg;
       (* Preferences array doesn't this virtual register's id because it is newly created *)
@@ -355,12 +358,61 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         X86.Target.pp_operands !srcs);
   (X86.Target.pcopy ~dests:!dests ~srcs:!srcs, !subst)
 
-let enforce_constraints state uid instr_num instr head =
-  let s = enforce_constraints_state state uid instr_num instr in
+let enforce_constraints state uid instr_num pcopy head =
+  let s = enforce_constraints_state state uid instr_num pcopy in
   let module State = (val s) in
-  if not State.need_reassignment then (head, instr)
+  if not State.need_reassignment then (head, pcopy)
+  else if not (CCBV.is_empty State.need_swap) then begin
+    Format.printf "Need swap: %a\n"
+      (Format.pp_print_list X86.Target.pp_reg)
+      (List.map (fun r -> state.regs.(r)) (CCBV.to_list State.need_swap));
+    let free_non_constrained =
+      CCBV.(diff (negate State.constrained_def_regs) State.live_through_regs)
+    in
+    let rec go srcs dests = function
+      | src :: need_swap, dest :: free_non_constrained ->
+        let src_op =
+          match state.reg_current_var.(src) with
+          | Some v -> X86.Target.(Reg (Virtual v))
+          | None -> failwith "Swap source register not occupied"
+        in
+        let phys =
+          match state.regs.(dest) with
+          | Physical phys -> phys
+          | _ -> failwith "Not a physical register"
+        in
+        let dest_op =
+          X86.Target.Reg
+            (X86.Target.constrained phys (state.select_state.fresh_vreg Int))
+        in
+        begin match state.reg_current_var.(dest) with
+        | Some v -> CCVector.push state.preferences state.preferences.%(v.id)
+        | None ->
+          CCVector.push state.preferences Array.(make (length state.regs) 0.)
+        end;
+        go (src_op :: srcs) (dest_op :: dests) (need_swap, free_non_constrained)
+      | _ -> (srcs, dests)
+    in
+    let srcs, dests =
+      go [] [] (CCBV.to_list State.need_swap, CCBV.to_list free_non_constrained)
+    in
+    (* todo: swap with not constrained def - live throughs *)
+    let pcopy' = X86.Target.pcopy ~dests ~srcs in
+    let subst_reg reg = RegMap.get_or ~default:reg reg state.subst in
+    let pcopy', subst =
+      enforce_constraints_pcopy s state uid instr_num pcopy'
+    in
+    Format.printf "Emitting swap parallel copy: %a\n" X86.Target.pp_instr pcopy';
+    state.subst <- RegMap.union (fun _ v _ -> Some v) subst state.subst;
+    let pcopy = X86.Target.(map_uses (subst_reg_operand subst_reg)) pcopy in
+    (* todo: do we need to recompute the state? *)
+    let s = enforce_constraints_state state uid instr_num pcopy in
+    let pcopy, subst = enforce_constraints_pcopy s state uid instr_num pcopy in
+    state.subst <- RegMap.union (fun _ v _ -> Some v) subst state.subst;
+    (X86.Cfg.Head (head, Instruction pcopy'), pcopy)
+  end
   else
-    let pcopy, subst = enforce_constraints_pcopy s state uid instr_num instr in
+    let pcopy, subst = enforce_constraints_pcopy s state uid instr_num pcopy in
     state.subst <- RegMap.union (fun _ v _ -> Some v) subst state.subst;
     (head, pcopy)
 
@@ -407,10 +459,12 @@ let implement_phi_copies state cfg ~src ~dest =
     List.fold_right
       (fun (arg, phi) (srcs, dests, args) ->
         match (arg, phi) with
-        | Reg (Virtual { reg = arg_reg; _ }), Virtual { reg = phi_reg; _ }
+        | ( Reg (Virtual { reg = arg_reg; _ }),
+            (Virtual { reg = phi_reg; _ } | (Physical _ as phi_reg)) )
           when X86.Target.equal_reg arg_reg phi_reg ->
           (srcs, dests, arg :: args)
-        | Reg (Virtual varg), Virtual { reg = Physical phi_reg; _ } ->
+        | ( Reg (Virtual varg),
+            (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ) ->
           let copy =
             Reg (constrained phi_reg (state.select_state.fresh_vreg Int))
           in
@@ -438,24 +492,32 @@ let implement_phi_copies state cfg ~src ~dest =
 
 let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
   let uid = X86.Cfg.id block in
-  let phis =
-    match first with
-    | X86.Cfg.Entry -> []
-    | X86.Cfg.Label (_, info) -> info.args
-  in
   let head =
-    List.fold_left
-      (fun head -> function
-        | X86.Target.Virtual phi' as phi when X86.Target.equal_reg phi'.reg phi
-          ->
-          let reg, pref, head = get_register state uid phi head in
-          phi'.reg <- state.regs.(reg);
-          state.reg_current_var.(reg) <- Some phi';
-          state.reg_current_pref.(reg) <- pref;
-          CCBV.set state.occupied reg;
-          head
-        | _ -> head)
-      (X86.Cfg.First first) phis
+    match first with
+    | X86.Cfg.Entry -> X86.Cfg.First first
+    | X86.Cfg.Label (l, info) ->
+      let head, args =
+        List.fold_left_map
+          (fun head -> function
+            | X86.Target.Virtual phi' as phi
+              when X86.Target.equal_reg phi'.reg phi ->
+              let reg, pref, head = get_register state uid phi head in
+              Format.(fprintf err_formatter)
+                "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual phi')
+                X86.Target.pp_reg state.regs.(reg);
+              phi'.reg <- state.regs.(reg);
+              state.reg_current_var.(reg) <- Some phi';
+              state.reg_current_pref.(reg) <- pref;
+              CCBV.set state.occupied reg;
+              (head, phi'.reg)
+            | r -> (head, r))
+          (X86.Cfg.First first) info.args
+      in
+      let rec replace_first first = function
+        | X86.Cfg.First _ -> X86.Cfg.First first
+        | Head (head, mid) -> Head (replace_first first head, mid)
+      in
+      replace_first (X86.Cfg.Label (l, { info with args })) head
   in
   let handle_instruction instr_num head instr =
     let subst_reg reg = RegMap.get_or ~default:reg reg state.subst in
@@ -465,29 +527,34 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
         enforce_constraints state uid instr_num instr head
       else (head, instr)
     in
-    X86.Target.RegSet.iter
-      (function
-        | X86.Target.Virtual a' as a when dies state uid a instr_num ->
-          let reg = find_reg_index state.regs a'.reg in
-          state.reg_current_var.(reg) <- None;
-          state.reg_current_pref.(reg) <- 0.;
-          CCBV.reset state.occupied reg
-        | _ -> ())
-      (X86.Target.uses instr);
-    let head =
-      X86.Target.RegSet.fold
+    let instr =
+      X86.Target.map_uses
         (function
-          | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
-            fun head ->
-              let reg, pref, head = get_register state uid r head in
-              r'.reg <- state.regs.(reg);
-              state.reg_current_var.(reg) <- Some r';
-              state.reg_current_pref.(reg) <- pref;
-              if not (dies state uid r instr_num) then
-                CCBV.set state.occupied reg;
-              head
-          | _ -> fun head -> head)
-        (X86.Target.defs instr) head
+          | Reg (X86.Target.Virtual a' as a) when dies state uid a instr_num ->
+            let reg = find_reg_index state.regs a'.reg in
+            state.reg_current_var.(reg) <- None;
+            state.reg_current_pref.(reg) <- 0.;
+            CCBV.reset state.occupied reg;
+            Reg a'.reg
+          | op -> op)
+        instr
+    in
+    let head, instr =
+      X86.Target.fold_defs
+        (fun head -> function
+          | X86.Target.(Reg (Virtual r' as r))
+            when X86.Target.equal_reg r'.reg r ->
+            let reg, pref, head = get_register state uid r head in
+            Format.(fprintf err_formatter)
+              "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual r')
+              X86.Target.pp_reg state.regs.(reg);
+            r'.reg <- state.regs.(reg);
+            state.reg_current_var.(reg) <- Some r';
+            state.reg_current_pref.(reg) <- pref;
+            if not (dies state uid r instr_num) then CCBV.set state.occupied reg;
+            (head, Reg r'.reg)
+          | op -> (head, op))
+        head instr
     in
     (head, instr)
   in
@@ -876,6 +943,9 @@ let regalloc_helper ?(args = RegSet.empty)
                   let reg, pref, head =
                     get_register alloc_state X86.Cfg.entry_uid r head
                   in
+                  Format.(fprintf err_formatter)
+                    "Setting register for %a to %a\n" X86.Target.pp_reg
+                    (Virtual r') X86.Target.pp_reg alloc_state.regs.(reg);
                   r'.reg <- alloc_state.regs.(reg);
                   alloc_state.reg_current_var.(reg) <- Some r';
                   alloc_state.reg_current_pref.(reg) <- pref;
