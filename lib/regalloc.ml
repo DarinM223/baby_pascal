@@ -15,7 +15,7 @@ type state = {
   num_vars : int;
   processed : bool array;
   block_execution_frequency : X86.Cfg.uid -> float;
-  preferences : float array CCVector.vector;
+  preferences : float array array;
   reg_current_var : X86.Target.virtual_reg option array;
   (* initially 0 *)
   reg_current_pref : float array;
@@ -26,29 +26,26 @@ type state = {
        with type label = X86.Cfg.label
         and type uid = X86.Cfg.uid
         and type position = int);
-  mutable subst : X86.Target.reg RegMap.t;
 }
-
-let ( .%() ) = CCVector.get
 
 let pp_preferences regs fmt preferences =
   let open Format in
   pp_open_box fmt 0;
   pp_print_string fmt "[";
-  for i = 0 to CCVector.length preferences - 1 do
+  for i = 0 to Array.length preferences - 1 do
     pp_print_int fmt i;
     pp_print_string fmt " -> ";
     pp_open_box fmt 0;
     pp_print_string fmt "[";
-    for j = 0 to Array.length preferences.%(i) - 1 do
+    for j = 0 to Array.length preferences.(i) - 1 do
       let reg = regs.(j) in
-      let pref = preferences.%(i).(j) in
+      let pref = preferences.(i).(j) in
       fprintf fmt "%a: %f" X86.Target.pp_reg reg pref;
-      if j <> Array.length preferences.%(i) - 1 then pp_print_string fmt ", "
+      if j <> Array.length preferences.(i) - 1 then pp_print_string fmt ", "
     done;
     pp_print_string fmt "]";
     pp_close_box fmt ();
-    if i <> CCVector.length preferences - 1 then pp_print_string fmt ", "
+    if i <> Array.length preferences - 1 then pp_print_string fmt ", "
   done;
   pp_print_string fmt "]";
   pp_close_box fmt ()
@@ -67,19 +64,19 @@ let get_register state uid var head : int * float * X86.Cfg.head =
   | X86.Target.Virtual { reg_constr = ReuseOperand (Virtual r); _ } ->
     let weight = state.block_execution_frequency uid in
     let reg_index = find_reg_index state.regs r.reg in
-    state.preferences.%(X86.Target.index var).(reg_index) <-
-      state.preferences.%(X86.Target.index var).(reg_index)
+    state.preferences.(X86.Target.index var).(reg_index) <-
+      state.preferences.(X86.Target.index var).(reg_index)
       +. (weight *. Weights.aff_should_be_same)
   | _ -> ()
   end;
   let preferences =
-    state.preferences.%(X86.Target.index var)
+    state.preferences.(X86.Target.index var)
     |> Array.mapi (fun i pref -> (i, pref))
   in
   Logs.debug (fun m ->
       m "Preferences for %a are: %a\n" X86.Target.pp_reg var
         (pp_preferences state.regs)
-        (CCVector.of_array [| Array.map snd preferences |]));
+        [| Array.map snd preferences |]);
   Logs.debug (fun m ->
       m "Occupied: %a\n"
         (Format.pp_print_list
@@ -97,7 +94,7 @@ let get_register state uid var head : int * float * X86.Cfg.head =
       if not (CCBV.get state.occupied reg) then raise (Reg (reg, pref, head));
       let ovar = Option.get state.reg_current_var.(reg) in
       let preferences =
-        Array.mapi (fun i pref -> (i, pref)) state.preferences.%(ovar.id)
+        Array.mapi (fun i pref -> (i, pref)) state.preferences.(ovar.id)
       in
       Array.sort
         (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
@@ -305,50 +302,37 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
        and the value is the source register *)
   let srcs = ref [] in
   let dests = ref [] in
-  let subst = ref RegMap.empty in
   let dest_reg_dies_immediately = Array.make num_regs false in
   for dest = 0 to num_regs - 1 do
     let old_reg = permutation.(dest) in
     match state.reg_current_var.(old_reg) with
     | Some src ->
-      state.reg_current_var.(old_reg) <- None;
-      state.reg_current_pref.(old_reg) <- 0.;
-      CCBV.reset state.occupied old_reg;
-      srcs := X86.Target.(Reg (Virtual src)) :: !srcs;
-      (* If you can't reuse an existing definition virtual register,
-           create a new virtual register constrained to the destination
-           register and substitute it for every following use of the
-           source register. *)
-      dest_mapping.(dest) <-
-        begin match dest_mapping.(dest) with
-        | Tombstone ->
-          let phys =
-            match state.regs.(dest) with
-            | Physical phys -> phys
-            | _ -> failwith "expected physical register in regs"
-          in
-          let vreg =
-            X86.Target.constrained phys (state.select_state.fresh_vreg Int)
-          in
-          CCVector.push state.preferences state.preferences.%(src.id);
-          vreg
-        | r -> r
-        end;
       (* If register is live-through and it isn't a
            constrained definition register, then it will still be accessible
-           after this instruction, so don't add it as a substitution. *)
+           after this instruction, so don't modify the assigned register. *)
       if
         let src_reg = find_reg_index state.regs src.reg in
         CCBV.get constrained_def_regs src_reg
         || not (CCBV.get live_through_regs src_reg)
-      then subst := RegMap.add (Virtual src) dest_mapping.(dest) !subst;
-      dest_reg_dies_immediately.(dest) <- dies state uid (Virtual src) instr_num;
-      dests := X86.Target.Reg dest_mapping.(dest) :: !dests
+      then src.reg <- state.regs.(dest);
+      state.reg_current_var.(old_reg) <- None;
+      state.reg_current_pref.(old_reg) <- 0.;
+      CCBV.reset state.occupied old_reg;
+      if old_reg <> dest then begin
+        srcs := X86.Target.Reg state.regs.(old_reg) :: !srcs;
+        dests := X86.Target.Reg state.regs.(dest) :: !dests
+      end;
+      dest_mapping.(dest) <-
+        begin match dest_mapping.(dest) with
+        | Tombstone -> Virtual src
+        | r -> r
+        end;
+      dest_reg_dies_immediately.(dest) <- dies state uid (Virtual src) instr_num
     | None -> ()
   done;
   for dest = 0 to num_regs - 1 do
     match dest_mapping.(dest) with
-    | Virtual vreg when X86.Target.equal_reg vreg.reg (Virtual vreg) ->
+    | Virtual vreg ->
       Logs.debug (fun m ->
           m "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual vreg)
             X86.Target.pp_reg state.regs.(dest));
@@ -362,13 +346,13 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
   Logs.debug (fun m ->
       m "Shuffling Dests: %a Srcs: %a\n" X86.Target.pp_operands !dests
         X86.Target.pp_operands !srcs);
-  (X86.Target.pcopy ~dests:!dests ~srcs:!srcs, !subst)
+  X86.Target.pcopy ~dests:!dests ~srcs:!srcs
 
 let enforce_constraints state uid instr_num pcopy head =
   let s = enforce_constraints_state state uid instr_num pcopy in
   let module State = (val s) in
   if not State.need_reassignment then (head, pcopy)
-  else if not (CCBV.is_empty State.need_swap) then begin
+  (* else if not (CCBV.is_empty State.need_swap) then begin
     Format.printf "Need swap: %a\n"
       (Format.pp_print_list X86.Target.pp_reg)
       (List.map (fun r -> state.regs.(r)) (CCBV.to_list State.need_swap));
@@ -391,11 +375,11 @@ let enforce_constraints state uid instr_num pcopy head =
           X86.Target.Reg
             (X86.Target.constrained phys (state.select_state.fresh_vreg Int))
         in
-        begin match state.reg_current_var.(dest) with
+        (* begin match state.reg_current_var.(dest) with
         | Some v -> CCVector.push state.preferences state.preferences.%(v.id)
         | None ->
           CCVector.push state.preferences Array.(make (length state.regs) 0.)
-        end;
+        end; *)
         go (src_op :: srcs) (dest_op :: dests) (need_swap, free_non_constrained)
       | _ -> (srcs, dests)
     in
@@ -404,22 +388,15 @@ let enforce_constraints state uid instr_num pcopy head =
     in
     (* todo: swap with not constrained def - live throughs *)
     let pcopy' = X86.Target.pcopy ~dests ~srcs in
-    let subst_reg reg = RegMap.get_or ~default:reg reg state.subst in
-    let pcopy', subst =
-      enforce_constraints_pcopy s state uid instr_num pcopy'
-    in
+    let pcopy' = enforce_constraints_pcopy s state uid instr_num pcopy' in
     Format.printf "Emitting swap parallel copy: %a\n" X86.Target.pp_instr pcopy';
-    state.subst <- RegMap.union (fun _ v _ -> Some v) subst state.subst;
-    let pcopy = X86.Target.(map_uses (subst_reg_operand subst_reg)) pcopy in
     (* todo: do we need to recompute the state? *)
     let s = enforce_constraints_state state uid instr_num pcopy in
-    let pcopy, subst = enforce_constraints_pcopy s state uid instr_num pcopy in
-    state.subst <- RegMap.union (fun _ v _ -> Some v) subst state.subst;
+    let pcopy = enforce_constraints_pcopy s state uid instr_num pcopy in
     (X86.Cfg.Head (head, Instruction pcopy'), pcopy)
-  end
-  else
-    let pcopy, subst = enforce_constraints_pcopy s state uid instr_num pcopy in
-    state.subst <- RegMap.union (fun _ v _ -> Some v) subst state.subst;
+  end *)
+    else
+    let pcopy = enforce_constraints_pcopy s state uid instr_num pcopy in
     (head, pcopy)
 
 (* Insert parallel copy instruction in src block to move arguments
@@ -469,17 +446,8 @@ let implement_phi_copies state cfg ~src ~dest =
             (Virtual { reg = phi_reg; _ } | (Physical _ as phi_reg)) )
           when X86.Target.equal_reg arg_reg phi_reg ->
           (srcs, dests, arg :: args)
-        | Reg r, (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ->
-          let copy =
-            Reg (constrained phi_reg (state.select_state.fresh_vreg Int))
-          in
-          begin match r with
-          | X86.Target.Virtual varg ->
-            CCVector.push state.preferences state.preferences.%(varg.id)
-          | _ ->
-            CCVector.push state.preferences
-              (Array.make (Array.length state.regs) 0.)
-          end;
+        | Reg _, (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ->
+          let copy = Reg (Physical phi_reg) in
           (arg :: srcs, copy :: dests, copy :: args)
         | _ -> failwith "Phi not a virtual register")
       (List.combine args phis) ([], [], [])
@@ -531,8 +499,6 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       replace_first (X86.Cfg.Label (l, { info with args })) head
   in
   let handle_instruction instr_num head instr =
-    let subst_reg reg = RegMap.get_or ~default:reg reg state.subst in
-    let instr = X86.Target.(map_uses (subst_reg_operand subst_reg)) instr in
     let head, instr =
       if instr.X86.Target.instr = "pcopy" then
         enforce_constraints state uid instr_num instr head
@@ -619,8 +585,8 @@ let build_preferences state graph : unit =
       when def ->
       (* add preferences to use variable when there is a reuse operand def *)
       let op = X86.Target.index reg in
-      for i = 0 to Array.length preferences.%(op) - 1 do
-        preferences.%(op).(i) <- preferences.%(op).(i) +. preferences.%(id).(i)
+      for i = 0 to Array.length preferences.(op) - 1 do
+        preferences.(op).(i) <- preferences.(op).(i) +. preferences.(id).(i)
       done
     | X86.Target.(Reg (Virtual { id; reg_constr = UsePhysical phys; _ })) ->
       begin try
@@ -630,15 +596,15 @@ let build_preferences state graph : unit =
           weight *. if def then Weights.def_factor else Weights.use_factor
         in
         (* give penalties to all registers that are not the constrained register. *)
-        for i = 0 to Array.length preferences.%(id) - 1 do
+        for i = 0 to Array.length preferences.(id) - 1 do
           if i <> reg then
-            preferences.%(id).(i) <- preferences.%(id).(i) -. penalty
+            preferences.(id).(i) <- preferences.(id).(i) -. penalty
         done;
         let penalty = penalty *. Weights.neighbor_factor in
         (* give penalties to all other live variables for the constrained register *)
         CCBV.iter_true live (fun live ->
             if live <> id then
-              preferences.%(live).(reg) <- preferences.%(live).(reg) -. penalty)
+              preferences.(live).(reg) <- preferences.(live).(reg) -. penalty)
       with _ -> ()
       end
     | X86.Target.Label (_, ops) -> List.iter (handle_operand uid live) ops
@@ -738,8 +704,8 @@ let create_congruence_class state classes graph block =
       let other_repr =
         if Unionfind.equal_repr merged_repr phi_repr then arg_repr else phi_repr
       in
-      let merged = state.preferences.%(Unionfind.to_int merged_repr) in
-      let other = state.preferences.%(Unionfind.to_int other_repr) in
+      let merged = state.preferences.(Unionfind.to_int merged_repr) in
+      let other = state.preferences.(Unionfind.to_int other_repr) in
       for r = 0 to Array.length state.regs - 1 do
         merged.(r) <- merged.(r) +. other.(r)
       done
@@ -798,16 +764,14 @@ let create_congruence_class state classes graph block =
 let set_congruence_prefs state classes v =
   let v_repr = Unionfind.(to_int (find classes v)) in
   if v <> v_repr then
-    Array.blit
-      state.preferences.%(v_repr)
-      0 state.preferences.%(v) 0
-      (Array.length state.preferences.%(v))
+    Array.blit state.preferences.(v_repr) 0 state.preferences.(v) 0
+      (Array.length state.preferences.(v))
 
 let combine_congruence_classes state graph =
   let classes = Unionfind.create state.num_vars in
   let rpo = X86.Cfg.reverse_postorder_dfs graph in
   List.iter (create_congruence_class state classes graph) rpo;
-  CCVector.iteri
+  Array.iteri
     (fun v _ -> set_congruence_prefs state classes v)
     state.preferences
 
@@ -911,10 +875,8 @@ let init_state ~select_state ~regs ~block_execution_frequency ~liveness
     reg_current_pref = Array.make (Array.length regs) 0.;
     processed = Array.make Dom.size false;
     num_vars;
-    preferences =
-      CCVector.init num_vars (fun _ -> Array.make (Array.length regs) 0.);
+    preferences = Array.make_matrix num_vars (Array.length regs) 0.;
     occupied = CCBV.create ~size:(Array.length regs) false;
-    subst = RegMap.empty;
   }
 
 let regalloc_helper ?(args = RegSet.empty)
