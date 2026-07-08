@@ -21,7 +21,7 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
   in
   let rec record_operand op =
     match X86.Target.to_colored op with
-    | Reg reg -> record_reg reg
+    | Reg reg -> if not (X86.Target.Reg.is_tombstone reg) then record_reg reg
     | MemAddr { base; index; _ } ->
       record_reg base;
       record_reg index
@@ -88,25 +88,7 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
         | _ ->
           List.iter record_operand i.uses;
           List.iter record_operand i.defs;
-          (* eliminate reuse operand uses *)
-          let reused =
-            List.filter_map
-              (function
-                | Target.Reg (Virtual { reg_constr = ReuseOperand reg; _ }) ->
-                  Some reg
-                | _ -> None)
-              i.defs
-          in
-          let uses =
-            List.filter
-              (function
-                | Target.Reg reg when List.exists (Target.equal_reg reg) reused
-                  ->
-                  false
-                | _ -> true)
-              i.uses
-          in
-          { i with uses } @> go_tail tail
+          i @> go_tail tail
         end
       (* lower cmp instructions into cmp + j* *)
       | Cfg.Last

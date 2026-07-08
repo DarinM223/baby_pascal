@@ -359,7 +359,8 @@ module Writer = struct
     | op -> Target.pp_operand' pp_reg fmt op
   let pp_instr fmt i =
     let pp_operands = Format.pp_print_list ~pp_sep:Target.pp_sep pp_operand in
-    Format.fprintf fmt "%s %a" i.Target.instr pp_operands (i.uses @ i.defs)
+    Format.fprintf fmt "%s %a" i.Target.instr pp_operands
+      (List.filter (fun op -> not (Target.is_tombstone op)) (i.uses @ i.defs))
   let pp_label fmt (_, l) = Format.fprintf fmt "%s" l
   type first = Cfg.first =
     | Entry

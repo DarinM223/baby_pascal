@@ -199,16 +199,6 @@ let regs =
   |> List.map (fun phys -> X86.Target.Physical phys)
   |> Array.of_list
 
-(* let idx phys = Regalloc.find_reg_index regs (X86.Target.Physical phys)
-let fresh_vreg ~id ~phys =
-  X86.Target.Virtual
-    {
-      id;
-      reg_class = Int;
-      reg_constr = UsePhysical phys;
-      reg = regs.(idx phys);
-    } *)
-
 let pick ?(regs = regs) =
   let regs = Array.copy regs in
   fun num ->

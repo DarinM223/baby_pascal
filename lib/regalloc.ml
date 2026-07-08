@@ -504,19 +504,42 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
         enforce_constraints state uid instr_num instr head
       else (head, instr)
     in
+    (* Gather reuse operands *)
+    let reuse_operands, _ =
+      X86.Target.fold_reg_defs
+        (fun acc -> function
+          | X86.Target.Virtual { reg_constr = ReuseOperand reg; _ } as r ->
+            (RegMap.add reg r acc, r)
+          | r -> (acc, r))
+        RegMap.empty instr
+    in
+    let remove_reuse_reg reg reg' =
+      if RegMap.mem reg reuse_operands then begin
+        Logs.debug (fun m ->
+            m "Reused virtual register %a with physical register %a"
+              X86.Target.pp_reg reg X86.Target.pp_reg reg');
+        X86.Target.Tombstone
+      end
+      else reg'
+    in
+    (* Update instruction uses, replacing virtual registers with physical registers,
+       removing dead uses from the currently occupied registers,
+       and removing reuse operand uses *)
     let instr =
       X86.Target.map_reg_uses
-        (function
+        (fun reg ->
+          match reg with
           | X86.Target.Virtual a' as a when dies state uid a instr_num ->
             let reg = find_reg_index state.regs a'.reg in
             state.reg_current_var.(reg) <- None;
             state.reg_current_pref.(reg) <- 0.;
             CCBV.reset state.occupied reg;
-            a'.reg
-          | X86.Target.Virtual a' -> a'.reg
-          | r -> r)
+            remove_reuse_reg a a'.reg
+          | X86.Target.Virtual a' -> remove_reuse_reg reg a'.reg
+          | r -> remove_reuse_reg r r)
         instr
     in
+    (* Assign registers for definitions *)
     let head, instr =
       X86.Target.fold_reg_defs
         (fun head -> function
@@ -533,6 +556,18 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
           | r -> (head, r))
         head instr
     in
+    (* Check reuse operands assigned registers match *)
+    RegMap.iter
+      (fun use def ->
+        match (use, def) with
+        | X86.Target.Virtual use, X86.Target.Virtual def
+          when X86.Target.equal_reg use.reg def.reg ->
+          ()
+        | _ ->
+          failwith
+          @@ Format.asprintf "Invalid matching: %a with %a" X86.Target.pp_reg
+               use X86.Target.pp_reg def)
+      reuse_operands;
     (head, instr)
   in
   let rec go instr_num head = function
@@ -975,10 +1010,10 @@ let%expect_test "Nested loops register allocation" =
       jl label5, label2(%rax), %rbx, $100
     label5(local=false)():
       movq %rax, %rax
-      addq %rax, %rax, $1
+      addq %rax, %, $1
       movq %rax, %rax
       movq %rbx, %rbx
-      addq %rbx, %rbx, $1
+      addq %rbx, %, $1
       movq %rbx, %rbx
       jmp label4(%rax, %rbx)
     label6(local=false)():
@@ -1096,19 +1131,19 @@ let%expect_test "Fibonacci register allocation" =
       jmp label1(%rax)
     label3(local=false)():
       movq %rax, %rbx
-      subq %rax, %rax, $1
+      subq %rax, %, $1
       pcopy [(%rdi, %rax); (%rax, %); (%rcx, %); (%rdx, %); (%rsi, %); (%rdi, %);
               (%r8, %); (%r9, %); (%r10, %); (%r11, %)]
       call fibonacci
       movq %r13, %rax
       movq %rax, %rbx
-      subq %rax, %rax, $2
+      subq %rax, %, $2
       pcopy [(%rdi, %rax); (%rax, %); (%rcx, %); (%rdx, %); (%rsi, %); (%rdi, %);
               (%r8, %); (%r9, %); (%r10, %); (%r11, %)]
       call fibonacci
       movq %rax, %rax
       movq %rbx, %r13
-      addq %rbx, %rbx, %rax
+      addq %rbx, %, %rax
       movq %rax, %rbx
       jmp label1(%rax)
     |}]
