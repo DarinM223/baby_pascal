@@ -3,6 +3,11 @@ open Baby_pascal
 
 type reg_mapping = (X86.Target.physical_reg * bool) list
 
+let get_vreg vreg =
+  match vreg with
+  | X86.Target.Virtual vreg -> vreg
+  | _ -> failwith "Not a virtual register"
+
 let setup_register_shuffle ~(regs : X86.Target.reg array)
     ~(extra_curr_live : reg_mapping) ~(uses : reg_mapping) ~(defs : reg_mapping)
     ~(extra_clobbered_regs : reg_mapping) =
@@ -47,7 +52,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
     | X86.Target.Virtual vreg ->
       vreg.reg <- regs.(idx);
       state.reg_current_var.(idx) <- Some vreg;
-      state.reg_current_pref.(idx) <- state.preferences.%(vreg.id).(idx)
+      state.reg_current_pref.(idx) <- state.preferences.(vreg.id).(idx)
     | _ -> failwith "Register not virtual"
   in
   let next_vreg =
@@ -79,6 +84,9 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   List.iter
     (fun t -> CCVector.push dests (setup_constrained t))
     extra_clobbered_regs;
+  let old_vregs =
+    Array.init (Array.length vregs) (fun i -> (get_vreg vregs.(i)).reg)
+  in
   let instr =
     X86.Target.pcopy ~dests:(CCVector.to_list dests)
       ~srcs:(CCVector.to_list srcs)
@@ -86,7 +94,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   let head, instr =
     enforce_constraints state uid instr_num instr (X86.Cfg.First Entry)
   in
-  (vregs, (X86.Cfg.Head (head, Instruction instr), state.subst))
+  (old_vregs, vregs, X86.Cfg.Head (head, Instruction instr))
 
 let test_pcopy_instr ~regs head =
   let dummy_reg = (-100, X86.Target.Int, "dummy") in
@@ -145,14 +153,8 @@ let clobber_constrained constrained state =
        (fun (state, v) reg -> (X86.Target.RegMap.add reg v state, v - 1))
        (state, -1) constrained
 
-let subst_reg reg subst = X86.Target.RegMap.get_or ~default:reg reg subst
-let get_vreg vreg =
-  match vreg with
-  | X86.Target.Virtual vreg -> vreg
-  | _ -> failwith "Not a virtual register"
-
-let check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
-    ~subst ~init_state ~result_state =
+let check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs
+    ~old_vregs ~vregs ~init_state ~result_state =
   (* Check that values of the uses original registers are in the constrained registers *)
   let check_use (use, _) (def, _) =
     check int
@@ -180,14 +182,14 @@ let check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
   in
   let check_live_through vreg =
     let vreg' = get_vreg vreg in
-    let subst_vreg = subst_reg vreg subst in
-    let subst_vreg' = get_vreg subst_vreg in
     check int
       (Format.asprintf
-         "Checking that %a was moved to %a and is still live through"
-         X86.Target.pp_reg vreg X86.Target.pp_reg subst_vreg)
-      (X86.Target.RegMap.find vreg'.reg init_state)
-      (X86.Target.RegMap.find subst_vreg'.reg result_state)
+         "Checking that vreg %d was moved from %a to %a and is still live \
+          through"
+         vreg'.id X86.Target.pp_reg old_vregs.(vreg'.id) X86.Target.pp_reg
+         vreg'.reg)
+      (X86.Target.RegMap.find old_vregs.(vreg'.id) init_state)
+      (X86.Target.RegMap.find vreg'.reg result_state)
   in
   List.iter check_live_through (List.map (fun i -> vregs.(i)) live_throughs)
 
@@ -196,16 +198,6 @@ let regs =
   X86.Regs.int_regs
   |> List.map (fun phys -> X86.Target.Physical phys)
   |> Array.of_list
-
-let idx phys = Regalloc.find_reg_index regs (X86.Target.Physical phys)
-let fresh_vreg ~id ~phys =
-  X86.Target.Virtual
-    {
-      id;
-      reg_class = Int;
-      reg_constr = UsePhysical phys;
-      reg = regs.(idx phys);
-    }
 
 let pick ?(regs = regs) =
   let regs = Array.copy regs in
@@ -271,8 +263,6 @@ let rec randomized_register_shuffle_test () =
         Format.fprintf fmt "!%a" X86.Target.pp_reg (Physical phys)
       else Format.fprintf fmt "%a" X86.Target.pp_reg (Physical phys)
     in
-    (* todo: remove this once tested *)
-    let uses = List.map (fun (r, _) -> (r, false)) uses in
     let test_name =
       let pp_sep fmt () = Format.fprintf fmt "," in
       let pp_phys_list = Format.pp_print_list ~pp_sep pp_phys in
@@ -282,14 +272,14 @@ let rec randomized_register_shuffle_test () =
     in
     test_case test_name `Quick @@ fun () ->
     Format.printf "Test: %s\n" test_name;
-    let vregs, (head, subst) =
+    let old_vregs, vregs, head =
       setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
         ~extra_clobbered_regs
     in
     Format.printf "Head: %a\n" X86.Cfg.pp_head head;
     let init_state, result_state = test_pcopy_instr ~regs head in
-    check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
-      ~subst ~init_state ~result_state
+    check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs
+      ~old_vregs ~vregs ~init_state ~result_state
   end
   else randomized_register_shuffle_test ()
 
@@ -319,52 +309,28 @@ let test_register_shuffle1 () =
         (rdi, false);
       ]
   in
-  let vregs, (head, subst) =
+  let old_vregs, vregs, head =
     setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
       ~extra_clobbered_regs
   in
-  let num_vregs = Array.length vregs in
-  let new_rsp = fresh_vreg ~id:num_vregs ~phys:X86.Regs.rsp in
-  let new_r12 = fresh_vreg ~id:(num_vregs + 1) ~phys:X86.Regs.r12 in
-  let new_r13 = fresh_vreg ~id:(num_vregs + 2) ~phys:X86.Regs.r13 in
   let expected_instr =
     X86.Target.pcopy
       ~dests:
         (List.map
-           (fun r -> X86.Target.Reg r)
-           [
-             new_r13;
-             new_r12;
-             new_rsp;
-             vregs.(7);
-             vregs.(8);
-             vregs.(9);
-             vregs.(10);
-           ])
+           (fun r -> X86.Target.Reg (Physical r))
+           X86.Regs.[ r13; r12; rsp; rdi; rsi; rdx; rcx ])
       ~srcs:
-        (List.map (fun i -> X86.Target.Reg vregs.(i)) [ 1; 0; 2; 3; 4; 5; 6 ])
-  in
-  let expected_subst =
-    X86.Target.RegMap.of_list
-      [
-        (vregs.(0), new_r12);
-        (vregs.(1), new_r13);
-        (vregs.(2), new_rsp);
-        (vregs.(3), vregs.(7));
-        (vregs.(4), vregs.(8));
-        (vregs.(6), vregs.(10));
-      ]
+        (List.map
+           (fun r -> X86.Target.Reg (Physical r))
+           X86.Regs.[ rsi; rdi; rdx; r12; r13; rbx; r9 ])
   in
   let init_state, result_state = test_pcopy_instr ~regs head in
-  check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs ~vregs
-    ~subst ~init_state ~result_state;
+  check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs
+    ~old_vregs ~vregs ~init_state ~result_state;
   check
     X86.Cfg.(testable pp_head equal_head)
     "Check result instruction" head
-    (X86.Cfg.Head (First Entry, Instruction expected_instr));
-  check
-    X86.Target.(testable (RegMap.pp pp_reg pp_reg) (RegMap.equal equal_reg))
-    "Check expected substitution" subst expected_subst
+    (X86.Cfg.Head (First Entry, Instruction expected_instr))
 
 let _ =
   let _ = Random.set_state (Random.get_state ()) in

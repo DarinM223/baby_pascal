@@ -15,7 +15,7 @@ type state = {
   num_vars : int;
   processed : bool array;
   block_execution_frequency : X86.Cfg.uid -> float;
-  preferences : float array CCVector.vector;
+  preferences : float array array;
   reg_current_var : X86.Target.virtual_reg option array;
   (* initially 0 *)
   reg_current_pref : float array;
@@ -26,29 +26,26 @@ type state = {
        with type label = X86.Cfg.label
         and type uid = X86.Cfg.uid
         and type position = int);
-  mutable subst : X86.Target.reg RegMap.t;
 }
-
-let ( .%() ) = CCVector.get
 
 let pp_preferences regs fmt preferences =
   let open Format in
   pp_open_box fmt 0;
   pp_print_string fmt "[";
-  for i = 0 to CCVector.length preferences - 1 do
+  for i = 0 to Array.length preferences - 1 do
     pp_print_int fmt i;
     pp_print_string fmt " -> ";
     pp_open_box fmt 0;
     pp_print_string fmt "[";
-    for j = 0 to Array.length preferences.%(i) - 1 do
+    for j = 0 to Array.length preferences.(i) - 1 do
       let reg = regs.(j) in
-      let pref = preferences.%(i).(j) in
-      printf "%a: %f" X86.Target.pp_reg reg pref;
-      if j <> Array.length preferences.%(i) - 1 then pp_print_string fmt ", "
+      let pref = preferences.(i).(j) in
+      fprintf fmt "%a: %f" X86.Target.pp_reg reg pref;
+      if j <> Array.length preferences.(i) - 1 then pp_print_string fmt ", "
     done;
     pp_print_string fmt "]";
     pp_close_box fmt ();
-    if i <> CCVector.length preferences - 1 then pp_print_string fmt ", "
+    if i <> Array.length preferences - 1 then pp_print_string fmt ", "
   done;
   pp_print_string fmt "]";
   pp_close_box fmt ()
@@ -67,19 +64,25 @@ let get_register state uid var head : int * float * X86.Cfg.head =
   | X86.Target.Virtual { reg_constr = ReuseOperand (Virtual r); _ } ->
     let weight = state.block_execution_frequency uid in
     let reg_index = find_reg_index state.regs r.reg in
-    state.preferences.%(X86.Target.index var).(reg_index) <-
-      state.preferences.%(X86.Target.index var).(reg_index)
+    state.preferences.(X86.Target.index var).(reg_index) <-
+      state.preferences.(X86.Target.index var).(reg_index)
       +. (weight *. Weights.aff_should_be_same)
   | _ -> ()
   end;
   let preferences =
-    state.preferences.%(X86.Target.index var)
+    state.preferences.(X86.Target.index var)
     |> Array.mapi (fun i pref -> (i, pref))
   in
   Logs.debug (fun m ->
       m "Preferences for %a are: %a\n" X86.Target.pp_reg var
         (pp_preferences state.regs)
-        (CCVector.of_array [| Array.map snd preferences |]));
+        [| Array.map snd preferences |]);
+  Logs.debug (fun m ->
+      m "Occupied: %a\n"
+        (Format.pp_print_list
+           ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
+           X86.Target.pp_reg)
+        (List.map (fun r -> state.regs.(r)) (CCBV.to_list state.occupied)));
   Array.sort
     (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
     preferences;
@@ -91,7 +94,7 @@ let get_register state uid var head : int * float * X86.Cfg.head =
       if not (CCBV.get state.occupied reg) then raise (Reg (reg, pref, head));
       let ovar = Option.get state.reg_current_var.(reg) in
       let preferences =
-        Array.mapi (fun i pref -> (i, pref)) state.preferences.%(ovar.id)
+        Array.mapi (fun i pref -> (i, pref)) state.preferences.(ovar.id)
       in
       Array.sort
         (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
@@ -299,50 +302,40 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
        and the value is the source register *)
   let srcs = ref [] in
   let dests = ref [] in
-  let subst = ref RegMap.empty in
   let dest_reg_dies_immediately = Array.make num_regs false in
   for dest = 0 to num_regs - 1 do
     let old_reg = permutation.(dest) in
     match state.reg_current_var.(old_reg) with
     | Some src ->
-      state.reg_current_var.(old_reg) <- None;
-      state.reg_current_pref.(old_reg) <- 0.;
-      CCBV.reset state.occupied old_reg;
-      srcs := X86.Target.(Reg (Virtual src)) :: !srcs;
-      (* If you can't reuse an existing definition virtual register,
-           create a new virtual register constrained to the destination
-           register and substitute it for every following use of the
-           source register. *)
-      dest_mapping.(dest) <-
-        begin match dest_mapping.(dest) with
-        | Tombstone ->
-          let phys =
-            match state.regs.(dest) with
-            | Physical phys -> phys
-            | _ -> failwith "expected physical register in regs"
-          in
-          let vreg =
-            X86.Target.constrained phys (state.select_state.fresh_vreg Int)
-          in
-          CCVector.push state.preferences state.preferences.%(src.id);
-          vreg
-        | r -> r
-        end;
       (* If register is live-through and it isn't a
            constrained definition register, then it will still be accessible
-           after this instruction, so don't add it as a substitution. *)
+           after this instruction, so don't modify the assigned register. *)
       if
         let src_reg = find_reg_index state.regs src.reg in
         CCBV.get constrained_def_regs src_reg
         || not (CCBV.get live_through_regs src_reg)
-      then subst := RegMap.add (Virtual src) dest_mapping.(dest) !subst;
-      dest_reg_dies_immediately.(dest) <- dies state uid (Virtual src) instr_num;
-      dests := X86.Target.Reg dest_mapping.(dest) :: !dests
+      then src.reg <- state.regs.(dest);
+      state.reg_current_var.(old_reg) <- None;
+      state.reg_current_pref.(old_reg) <- 0.;
+      CCBV.reset state.occupied old_reg;
+      if old_reg <> dest then begin
+        srcs := X86.Target.Reg state.regs.(old_reg) :: !srcs;
+        dests := X86.Target.Reg state.regs.(dest) :: !dests
+      end;
+      dest_mapping.(dest) <-
+        begin match dest_mapping.(dest) with
+        | Tombstone -> Virtual src
+        | r -> r
+        end;
+      dest_reg_dies_immediately.(dest) <- dies state uid (Virtual src) instr_num
     | None -> ()
   done;
   for dest = 0 to num_regs - 1 do
     match dest_mapping.(dest) with
     | Virtual vreg ->
+      Logs.debug (fun m ->
+          m "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual vreg)
+            X86.Target.pp_reg state.regs.(dest));
       vreg.reg <- state.regs.(dest);
       state.reg_current_var.(dest) <- Some vreg;
       (* Preferences array doesn't this virtual register's id because it is newly created *)
@@ -353,15 +346,57 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
   Logs.debug (fun m ->
       m "Shuffling Dests: %a Srcs: %a\n" X86.Target.pp_operands !dests
         X86.Target.pp_operands !srcs);
-  (X86.Target.pcopy ~dests:!dests ~srcs:!srcs, !subst)
+  X86.Target.pcopy ~dests:!dests ~srcs:!srcs
 
-let enforce_constraints state uid instr_num instr head =
-  let s = enforce_constraints_state state uid instr_num instr in
+let enforce_constraints state uid instr_num pcopy head =
+  let s = enforce_constraints_state state uid instr_num pcopy in
   let module State = (val s) in
-  if not State.need_reassignment then (head, instr)
-  else
-    let pcopy, subst = enforce_constraints_pcopy s state uid instr_num instr in
-    state.subst <- RegMap.union (fun _ v _ -> Some v) subst state.subst;
+  if not State.need_reassignment then (head, pcopy)
+  (* else if not (CCBV.is_empty State.need_swap) then begin
+    Format.printf "Need swap: %a\n"
+      (Format.pp_print_list X86.Target.pp_reg)
+      (List.map (fun r -> state.regs.(r)) (CCBV.to_list State.need_swap));
+    let free_non_constrained =
+      CCBV.(diff (negate State.constrained_def_regs) State.live_through_regs)
+    in
+    let rec go srcs dests = function
+      | src :: need_swap, dest :: free_non_constrained ->
+        let src_op =
+          match state.reg_current_var.(src) with
+          | Some v -> X86.Target.(Reg (Virtual v))
+          | None -> failwith "Swap source register not occupied"
+        in
+        let phys =
+          match state.regs.(dest) with
+          | Physical phys -> phys
+          | _ -> failwith "Not a physical register"
+        in
+        let dest_op =
+          X86.Target.Reg
+            (X86.Target.constrained phys (state.select_state.fresh_vreg Int))
+        in
+        (* begin match state.reg_current_var.(dest) with
+        | Some v -> CCVector.push state.preferences state.preferences.%(v.id)
+        | None ->
+          CCVector.push state.preferences Array.(make (length state.regs) 0.)
+        end; *)
+        go (src_op :: srcs) (dest_op :: dests) (need_swap, free_non_constrained)
+      | _ -> (srcs, dests)
+    in
+    let srcs, dests =
+      go [] [] (CCBV.to_list State.need_swap, CCBV.to_list free_non_constrained)
+    in
+    (* todo: swap with not constrained def - live throughs *)
+    let pcopy' = X86.Target.pcopy ~dests ~srcs in
+    let pcopy' = enforce_constraints_pcopy s state uid instr_num pcopy' in
+    Format.printf "Emitting swap parallel copy: %a\n" X86.Target.pp_instr pcopy';
+    (* todo: do we need to recompute the state? *)
+    let s = enforce_constraints_state state uid instr_num pcopy in
+    let pcopy = enforce_constraints_pcopy s state uid instr_num pcopy in
+    (X86.Cfg.Head (head, Instruction pcopy'), pcopy)
+  end *)
+    else
+    let pcopy = enforce_constraints_pcopy s state uid instr_num pcopy in
     (head, pcopy)
 
 (* Insert parallel copy instruction in src block to move arguments
@@ -407,14 +442,12 @@ let implement_phi_copies state cfg ~src ~dest =
     List.fold_right
       (fun (arg, phi) (srcs, dests, args) ->
         match (arg, phi) with
-        | Reg (Virtual { reg = arg_reg; _ }), Virtual { reg = phi_reg; _ }
+        | ( Reg (Virtual { reg = arg_reg; _ } | (Physical _ as arg_reg)),
+            (Virtual { reg = phi_reg; _ } | (Physical _ as phi_reg)) )
           when X86.Target.equal_reg arg_reg phi_reg ->
           (srcs, dests, arg :: args)
-        | Reg (Virtual varg), Virtual { reg = Physical phi_reg; _ } ->
-          let copy =
-            Reg (constrained phi_reg (state.select_state.fresh_vreg Int))
-          in
-          CCVector.push state.preferences state.preferences.%(varg.id);
+        | Reg _, (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ->
+          let copy = Reg (Physical phi_reg) in
           (arg :: srcs, copy :: dests, copy :: args)
         | _ -> failwith "Phi not a virtual register")
       (List.combine args phis) ([], [], [])
@@ -438,57 +471,103 @@ let implement_phi_copies state cfg ~src ~dest =
 
 let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
   let uid = X86.Cfg.id block in
-  let phis =
-    match first with
-    | X86.Cfg.Entry -> []
-    | X86.Cfg.Label (_, info) -> info.args
-  in
   let head =
-    List.fold_left
-      (fun head -> function
-        | X86.Target.Virtual phi' as phi when X86.Target.equal_reg phi'.reg phi
-          ->
-          let reg, pref, head = get_register state uid phi head in
-          phi'.reg <- state.regs.(reg);
-          state.reg_current_var.(reg) <- Some phi';
-          state.reg_current_pref.(reg) <- pref;
-          CCBV.set state.occupied reg;
-          head
-        | _ -> head)
-      (X86.Cfg.First first) phis
+    match first with
+    | X86.Cfg.Entry -> X86.Cfg.First first
+    | X86.Cfg.Label (l, info) ->
+      let head, args =
+        List.fold_left_map
+          (fun head -> function
+            | X86.Target.Virtual phi' as phi
+              when X86.Target.equal_reg phi'.reg phi ->
+              let reg, pref, head = get_register state uid phi head in
+              Logs.debug (fun m ->
+                  m "Setting register for %a to %a\n" X86.Target.pp_reg
+                    (Virtual phi') X86.Target.pp_reg state.regs.(reg));
+              phi'.reg <- state.regs.(reg);
+              state.reg_current_var.(reg) <- Some phi';
+              state.reg_current_pref.(reg) <- pref;
+              CCBV.set state.occupied reg;
+              (head, phi'.reg)
+            | r -> (head, r))
+          (X86.Cfg.First first) info.args
+      in
+      let rec replace_first first = function
+        | X86.Cfg.First _ -> X86.Cfg.First first
+        | Head (head, mid) -> Head (replace_first first head, mid)
+      in
+      replace_first (X86.Cfg.Label (l, { info with args })) head
   in
   let handle_instruction instr_num head instr =
-    let subst_reg reg = RegMap.get_or ~default:reg reg state.subst in
-    let instr = X86.Target.(map_uses (subst_reg_operand subst_reg)) instr in
     let head, instr =
       if instr.X86.Target.instr = "pcopy" then
         enforce_constraints state uid instr_num instr head
       else (head, instr)
     in
-    X86.Target.RegSet.iter
-      (function
-        | X86.Target.Virtual a' as a when dies state uid a instr_num ->
-          let reg = find_reg_index state.regs a'.reg in
-          state.reg_current_var.(reg) <- None;
-          state.reg_current_pref.(reg) <- 0.;
-          CCBV.reset state.occupied reg
-        | _ -> ())
-      (X86.Target.uses instr);
-    let head =
-      X86.Target.RegSet.fold
-        (function
-          | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
-            fun head ->
-              let reg, pref, head = get_register state uid r head in
-              r'.reg <- state.regs.(reg);
-              state.reg_current_var.(reg) <- Some r';
-              state.reg_current_pref.(reg) <- pref;
-              if not (dies state uid r instr_num) then
-                CCBV.set state.occupied reg;
-              head
-          | _ -> fun head -> head)
-        (X86.Target.defs instr) head
+    (* Gather reuse operands *)
+    let reuse_operands, _ =
+      X86.Target.fold_reg_defs
+        (fun acc -> function
+          | X86.Target.Virtual { reg_constr = ReuseOperand reg; _ } as r ->
+            (RegMap.add reg r acc, r)
+          | r -> (acc, r))
+        RegMap.empty instr
     in
+    let remove_reuse_reg reg reg' =
+      if RegMap.mem reg reuse_operands then begin
+        Logs.debug (fun m ->
+            m "Reused virtual register %a with physical register %a"
+              X86.Target.pp_reg reg X86.Target.pp_reg reg');
+        X86.Target.Tombstone
+      end
+      else reg'
+    in
+    (* Update instruction uses, replacing virtual registers with physical registers,
+       removing dead uses from the currently occupied registers,
+       and removing reuse operand uses *)
+    let instr =
+      X86.Target.map_reg_uses
+        (fun reg ->
+          match reg with
+          | X86.Target.Virtual a' as a when dies state uid a instr_num ->
+            let reg = find_reg_index state.regs a'.reg in
+            state.reg_current_var.(reg) <- None;
+            state.reg_current_pref.(reg) <- 0.;
+            CCBV.reset state.occupied reg;
+            remove_reuse_reg a a'.reg
+          | X86.Target.Virtual a' -> remove_reuse_reg reg a'.reg
+          | r -> remove_reuse_reg r r)
+        instr
+    in
+    (* Assign registers for definitions *)
+    let head, instr =
+      X86.Target.fold_reg_defs
+        (fun head -> function
+          | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
+            let reg, pref, head = get_register state uid r head in
+            Logs.debug (fun m ->
+                m "Setting register for %a to %a\n" X86.Target.pp_reg
+                  (Virtual r') X86.Target.pp_reg state.regs.(reg));
+            r'.reg <- state.regs.(reg);
+            state.reg_current_var.(reg) <- Some r';
+            state.reg_current_pref.(reg) <- pref;
+            if not (dies state uid r instr_num) then CCBV.set state.occupied reg;
+            (head, r'.reg)
+          | r -> (head, r))
+        head instr
+    in
+    (* Check reuse operands assigned registers match *)
+    RegMap.iter
+      (fun use def ->
+        match (use, def) with
+        | X86.Target.Virtual use, X86.Target.Virtual def
+          when X86.Target.equal_reg use.reg def.reg ->
+          ()
+        | _ ->
+          failwith
+          @@ Format.asprintf "Invalid matching: %a with %a" X86.Target.pp_reg
+               use X86.Target.pp_reg def)
+      reuse_operands;
     (head, instr)
   in
   let rec go instr_num head = function
@@ -541,8 +620,8 @@ let build_preferences state graph : unit =
       when def ->
       (* add preferences to use variable when there is a reuse operand def *)
       let op = X86.Target.index reg in
-      for i = 0 to Array.length preferences.%(op) - 1 do
-        preferences.%(op).(i) <- preferences.%(op).(i) +. preferences.%(id).(i)
+      for i = 0 to Array.length preferences.(op) - 1 do
+        preferences.(op).(i) <- preferences.(op).(i) +. preferences.(id).(i)
       done
     | X86.Target.(Reg (Virtual { id; reg_constr = UsePhysical phys; _ })) ->
       begin try
@@ -552,15 +631,15 @@ let build_preferences state graph : unit =
           weight *. if def then Weights.def_factor else Weights.use_factor
         in
         (* give penalties to all registers that are not the constrained register. *)
-        for i = 0 to Array.length preferences.%(id) - 1 do
+        for i = 0 to Array.length preferences.(id) - 1 do
           if i <> reg then
-            preferences.%(id).(i) <- preferences.%(id).(i) -. penalty
+            preferences.(id).(i) <- preferences.(id).(i) -. penalty
         done;
         let penalty = penalty *. Weights.neighbor_factor in
         (* give penalties to all other live variables for the constrained register *)
         CCBV.iter_true live (fun live ->
             if live <> id then
-              preferences.%(live).(reg) <- preferences.%(live).(reg) -. penalty)
+              preferences.(live).(reg) <- preferences.(live).(reg) -. penalty)
       with _ -> ()
       end
     | X86.Target.Label (_, ops) -> List.iter (handle_operand uid live) ops
@@ -660,8 +739,8 @@ let create_congruence_class state classes graph block =
       let other_repr =
         if Unionfind.equal_repr merged_repr phi_repr then arg_repr else phi_repr
       in
-      let merged = state.preferences.%(Unionfind.to_int merged_repr) in
-      let other = state.preferences.%(Unionfind.to_int other_repr) in
+      let merged = state.preferences.(Unionfind.to_int merged_repr) in
+      let other = state.preferences.(Unionfind.to_int other_repr) in
       for r = 0 to Array.length state.regs - 1 do
         merged.(r) <- merged.(r) +. other.(r)
       done
@@ -720,16 +799,14 @@ let create_congruence_class state classes graph block =
 let set_congruence_prefs state classes v =
   let v_repr = Unionfind.(to_int (find classes v)) in
   if v <> v_repr then
-    Array.blit
-      state.preferences.%(v_repr)
-      0 state.preferences.%(v) 0
-      (Array.length state.preferences.%(v))
+    Array.blit state.preferences.(v_repr) 0 state.preferences.(v) 0
+      (Array.length state.preferences.(v))
 
 let combine_congruence_classes state graph =
   let classes = Unionfind.create state.num_vars in
   let rpo = X86.Cfg.reverse_postorder_dfs graph in
   List.iter (create_congruence_class state classes graph) rpo;
-  CCVector.iteri
+  Array.iteri
     (fun v _ -> set_congruence_prefs state classes v)
     state.preferences
 
@@ -833,10 +910,8 @@ let init_state ~select_state ~regs ~block_execution_frequency ~liveness
     reg_current_pref = Array.make (Array.length regs) 0.;
     processed = Array.make Dom.size false;
     num_vars;
-    preferences =
-      CCVector.init num_vars (fun _ -> Array.make (Array.length regs) 0.);
+    preferences = Array.make_matrix num_vars (Array.length regs) 0.;
     occupied = CCBV.create ~size:(Array.length regs) false;
-    subst = RegMap.empty;
   }
 
 let regalloc_helper ?(args = RegSet.empty)
@@ -922,27 +997,27 @@ let%expect_test "Nested loops register allocation" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      movq %rax(0), $0
+      movq %rax, $0
       jmp label6
     label1(local=false)():
       exit
-    label2(local=false)(rax(1)):
-      jl label3, label1, %rax(1), $100
+    label2(local=false)(rax):
+      jl label3, label1, %rax, $100
     label3(local=false)():
-      movq %rbx(2), %rax(1)
-      jmp label4(%rax(1), %rbx(2))
-    label4(local=false)(rax(3), rbx(4)):
-      jl label5, label2(%rax(3)), %rbx(4), $100
+      movq %rbx, %rax
+      jmp label4(%rax, %rbx)
+    label4(local=false)(rax, rbx):
+      jl label5, label2(%rax), %rbx, $100
     label5(local=false)():
-      movq %rax(7), %rax(3)
-      addq %rax(6), %rax(7), $1
-      movq %rax(5), %rax(6)
-      movq %rbx(10), %rbx(4)
-      addq %rbx(9), %rbx(10), $1
-      movq %rbx(8), %rbx(9)
-      jmp label4(%rax(5), %rbx(8))
+      movq %rax, %rax
+      addq %rax, %, $1
+      movq %rax, %rax
+      movq %rbx, %rbx
+      addq %rbx, %, $1
+      movq %rbx, %rbx
+      jmp label4(%rax, %rbx)
     label6(local=false)():
-      jmp label2(%rax(0))
+      jmp label2(%rax)
     |}]
 
 let%expect_test "Fibonacci register allocation" =
@@ -1046,31 +1121,29 @@ let%expect_test "Fibonacci register allocation" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      pcopy [(%rbx(1), %rdi(0))]
-      jle label2, label3, %rbx(1), $1
-    label1(local=false)(rax(32)):
-      movq %rax(33), %rax(32)
-      ret %rax(33)
+      pcopy [(%rbx, %rdi)]
+      jle label2, label3, %rbx, $1
+    label1(local=false)(rax):
+      movq %rax, %rax
+      ret %rax
     label2(local=false)():
-      movq %rax(2), %rbx(1)
-      jmp label1(%rax(2))
+      movq %rax, %rbx
+      jmp label1(%rax)
     label3(local=false)():
-      movq %rax(5), %rbx(1)
-      subq %rax(4), %rax(5), $1
-      pcopy [(%rdi(6), %rax(4)); (%rax(7), %); (%rcx(8), %); (%rdx(9), %);
-              (%rsi(10), %); (%rdi(11), %); (%r8(12), %); (%r9(13), %);
-              (%r10(14), %); (%r11(15), %)]
+      movq %rax, %rbx
+      subq %rax, %, $1
+      pcopy [(%rdi, %rax); (%rax, %); (%rcx, %); (%rdx, %); (%rsi, %); (%rdi, %);
+              (%r8, %); (%r9, %); (%r10, %); (%r11, %)]
       call fibonacci
-      movq %r13(3), %rax(7)
-      movq %rax(18), %rbx(1)
-      subq %rax(17), %rax(18), $2
-      pcopy [(%rdi(19), %rax(17)); (%rax(20), %); (%rcx(21), %); (%rdx(22), %);
-              (%rsi(23), %); (%rdi(24), %); (%r8(25), %); (%r9(26), %);
-              (%r10(27), %); (%r11(28), %)]
+      movq %r13, %rax
+      movq %rax, %rbx
+      subq %rax, %, $2
+      pcopy [(%rdi, %rax); (%rax, %); (%rcx, %); (%rdx, %); (%rsi, %); (%rdi, %);
+              (%r8, %); (%r9, %); (%r10, %); (%r11, %)]
       call fibonacci
-      movq %rax(16), %rax(20)
-      movq %rbx(31), %r13(3)
-      addq %rbx(30), %rbx(31), %rax(16)
-      movq %rax(29), %rbx(30)
-      jmp label1(%rax(29))
+      movq %rax, %rax
+      movq %rbx, %r13
+      addq %rbx, %, %rax
+      movq %rax, %rbx
+      jmp label1(%rax)
     |}]

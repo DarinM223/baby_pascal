@@ -55,7 +55,11 @@ module Target = struct
     | Physical (id, _, _) -> id
     | Virtual v -> v.id
     | Tombstone -> failwith "index: got tombstone"
-  let equal_reg r1 r2 = Int.equal (index r1) (index r2)
+  let equal_reg r1 r2 =
+    match (r1, r2) with
+    | Physical (id1, _, _), Physical (id2, _, _) -> id1 = id2
+    | Virtual v1, Virtual v2 -> v1.id = v2.id
+    | _ -> false
 
   type regs = reg list [@@deriving show, eq]
   type operand =
@@ -89,6 +93,18 @@ module Target = struct
   let destruct_label = function
     | Label (l, args) -> Some (l, args)
     | _ -> None
+  let rec fold_reg_operand (f : 'a -> reg -> 'a * reg) (acc : 'a) = function
+    | Reg r ->
+      let acc, r = f acc r in
+      (acc, Reg r)
+    | MemAddr ({ base : reg; index : reg; _ } as addr) ->
+      let acc, base = f acc base in
+      let acc, index = f acc index in
+      (acc, MemAddr { addr with base; index })
+    | Label (l, ops) ->
+      let acc, ops = List.fold_left_map (fold_reg_operand f) acc ops in
+      (acc, Label (l, ops))
+    | (Imm _ | StackSlot _) as op -> (acc, op)
   let rec subst_reg_operand subst_reg = function
     | Reg r -> Reg (subst_reg r)
     | MemAddr ({ base : reg; index : reg; _ } as addr) ->
@@ -155,11 +171,29 @@ module Target = struct
       i with
       uses = List.map (fun op -> if is_tombstone op then op else f op) i.uses;
     }
+  let map_reg_uses f = map_uses (subst_reg_operand f)
   let map_defs f i =
     {
       i with
       defs = List.map (fun op -> if is_tombstone op then op else f op) i.defs;
     }
+  let fold_uses f init i =
+    let res, uses =
+      List.fold_left_map
+        (fun acc op -> if is_tombstone op then (acc, op) else f acc op)
+        init i.uses
+    in
+    (res, { i with uses })
+  let fold_reg_uses f = fold_uses (fold_reg_operand f)
+  let fold_defs f init i =
+    let res, defs =
+      List.fold_left_map
+        (fun acc op -> if is_tombstone op then (acc, op) else f acc op)
+        init i.defs
+    in
+    (res, { i with defs })
+  let fold_reg_defs f = fold_defs (fold_reg_operand f)
+
   let rec regset_of_operand = function
     | Label (_, args) ->
       args
@@ -325,7 +359,8 @@ module Writer = struct
     | op -> Target.pp_operand' pp_reg fmt op
   let pp_instr fmt i =
     let pp_operands = Format.pp_print_list ~pp_sep:Target.pp_sep pp_operand in
-    Format.fprintf fmt "%s %a" i.Target.instr pp_operands (i.uses @ i.defs)
+    Format.fprintf fmt "%s %a" i.Target.instr pp_operands
+      (List.filter (fun op -> not (Target.is_tombstone op)) (i.uses @ i.defs))
   let pp_label fmt (_, l) = Format.fprintf fmt "%s" l
   type first = Cfg.first =
     | Entry
