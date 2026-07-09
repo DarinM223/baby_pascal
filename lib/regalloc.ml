@@ -146,9 +146,6 @@ module type EnforceConstraints = sig
       corresponding use. These registers will be clobbered after the
       instruction, similarly to caller-save registers after a call. *)
 
-  val need_swap : CCBV.t
-  (** Registers that currently contain a live through value *)
-
   val need_reassignment : bool
   (** True if a parallel copy shuffling the registers to fit the constraints is
       necessary *)
@@ -164,7 +161,6 @@ let enforce_constraints_state state uid instr_num instr =
      occupied regs - regs that die at the instruction *)
   let live_through_regs = CCBV.copy state.occupied in
   let constrained_def_regs = CCBV.create ~size:num_regs false in
-  let need_swap = CCBV.create ~size:num_regs false in
   let need_reassignment = ref false in
   let remove_constrained_use_live_throughs = function
     | (X86.Target.Virtual a' as a), _ when dies state uid a instr_num ->
@@ -173,11 +169,6 @@ let enforce_constraints_state state uid instr_num instr =
           m "Removing %a from live throughs\n" X86.Target.pp_reg
             state.regs.(reg));
       CCBV.reset live_through_regs reg
-    | ( X86.Target.Virtual a',
-        ( X86.Target.Virtual { reg_constr = UsePhysical _; _ }
-        | X86.Target.Physical _ ) ) ->
-      let reg = find_reg_index state.regs a'.reg in
-      CCBV.set need_swap reg
     | _ -> ()
   in
   let mark_constrained_def_regs = function
@@ -217,7 +208,6 @@ let enforce_constraints_state state uid instr_num instr =
     let dest_mapping = dest_mapping
     let live_through_regs = live_through_regs
     let constrained_def_regs = constrained_def_regs
-    let need_swap = need_swap
     let need_reassignment = !need_reassignment
   end in
   (module EnforceConstraints : EnforceConstraints)
@@ -314,10 +304,12 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         let src_reg = find_reg_index state.regs src.reg in
         CCBV.get constrained_def_regs src_reg
         || not (CCBV.get live_through_regs src_reg)
-      then src.reg <- state.regs.(dest);
-      state.reg_current_var.(old_reg) <- None;
-      state.reg_current_pref.(old_reg) <- 0.;
-      CCBV.reset state.occupied old_reg;
+      then begin
+        src.reg <- state.regs.(dest);
+        state.reg_current_var.(old_reg) <- None;
+        state.reg_current_pref.(old_reg) <- 0.;
+        CCBV.reset state.occupied old_reg
+      end;
       if old_reg <> dest then begin
         srcs := X86.Target.Reg state.regs.(old_reg) :: !srcs;
         dests := X86.Target.Reg state.regs.(dest) :: !dests
@@ -338,7 +330,7 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
             X86.Target.pp_reg state.regs.(dest));
       vreg.reg <- state.regs.(dest);
       state.reg_current_var.(dest) <- Some vreg;
-      (* Preferences array doesn't this virtual register's id because it is newly created *)
+      (* Preference is 0 because it was forced *)
       state.reg_current_pref.(dest) <- 0.;
       if not dest_reg_dies_immediately.(dest) then CCBV.set state.occupied dest
     | _ -> ()
@@ -351,51 +343,53 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
 let enforce_constraints state uid instr_num pcopy head =
   let s = enforce_constraints_state state uid instr_num pcopy in
   let module State = (val s) in
+  let need_swap =
+    CCBV.(inter State.live_through_regs State.constrained_def_regs)
+  in
   if not State.need_reassignment then (head, pcopy)
-  (* else if not (CCBV.is_empty State.need_swap) then begin
+  else if not (CCBV.is_empty need_swap) then begin
     Format.printf "Need swap: %a\n"
       (Format.pp_print_list X86.Target.pp_reg)
-      (List.map (fun r -> state.regs.(r)) (CCBV.to_list State.need_swap));
+      (List.map (fun r -> state.regs.(r)) (CCBV.to_list need_swap));
+    (* swap with not constrained def - live throughs *)
     let free_non_constrained =
       CCBV.(diff (negate State.constrained_def_regs) State.live_through_regs)
     in
     let rec go srcs dests = function
       | src :: need_swap, dest :: free_non_constrained ->
-        let src_op =
-          match state.reg_current_var.(src) with
-          | Some v -> X86.Target.(Reg (Virtual v))
-          | None -> failwith "Swap source register not occupied"
-        in
-        let phys =
-          match state.regs.(dest) with
-          | Physical phys -> phys
-          | _ -> failwith "Not a physical register"
-        in
-        let dest_op =
-          X86.Target.Reg
-            (X86.Target.constrained phys (state.select_state.fresh_vreg Int))
-        in
-        (* begin match state.reg_current_var.(dest) with
-        | Some v -> CCVector.push state.preferences state.preferences.%(v.id)
-        | None ->
-          CCVector.push state.preferences Array.(make (length state.regs) 0.)
-        end; *)
-        go (src_op :: srcs) (dest_op :: dests) (need_swap, free_non_constrained)
+        CCBV.reset State.live_through_regs src;
+        CCBV.set State.live_through_regs dest;
+        begin match state.reg_current_var.(src) with
+        | Some src_vreg -> src_vreg.reg <- state.regs.(dest)
+        | _ -> ()
+        end;
+        begin match state.reg_current_var.(dest) with
+        | Some dest_vreg -> dest_vreg.reg <- state.regs.(src)
+        | _ -> ()
+        end;
+        let tmp = state.reg_current_var.(src) in
+        state.reg_current_var.(src) <- state.reg_current_var.(dest);
+        state.reg_current_var.(dest) <- tmp;
+        let tmp = state.reg_current_pref.(src) in
+        state.reg_current_pref.(src) <- state.reg_current_pref.(dest);
+        state.reg_current_pref.(dest) <- tmp;
+        go
+          (X86.Target.Reg state.regs.(src) :: Reg state.regs.(dest) :: srcs)
+          (X86.Target.Reg state.regs.(dest) :: Reg state.regs.(src) :: dests)
+          (need_swap, free_non_constrained)
       | _ -> (srcs, dests)
     in
     let srcs, dests =
-      go [] [] (CCBV.to_list State.need_swap, CCBV.to_list free_non_constrained)
+      go [] [] (CCBV.to_list need_swap, CCBV.to_list free_non_constrained)
     in
-    (* todo: swap with not constrained def - live throughs *)
     let pcopy' = X86.Target.pcopy ~dests ~srcs in
-    let pcopy' = enforce_constraints_pcopy s state uid instr_num pcopy' in
     Format.printf "Emitting swap parallel copy: %a\n" X86.Target.pp_instr pcopy';
-    (* todo: do we need to recompute the state? *)
-    let s = enforce_constraints_state state uid instr_num pcopy in
-    let pcopy = enforce_constraints_pcopy s state uid instr_num pcopy in
+    let pcopy =
+      enforce_constraints_pcopy (module State) state uid instr_num pcopy
+    in
     (X86.Cfg.Head (head, Instruction pcopy'), pcopy)
-  end *)
-    else
+  end
+  else
     let pcopy = enforce_constraints_pcopy s state uid instr_num pcopy in
     (head, pcopy)
 

@@ -313,24 +313,41 @@ let test_register_shuffle1 () =
     setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
       ~extra_clobbered_regs
   in
-  let expected_instr =
-    X86.Target.pcopy
-      ~dests:
-        (List.map
-           (fun r -> X86.Target.Reg (Physical r))
-           X86.Regs.[ r13; r12; rsp; rdi; rsi; rdx; rcx ])
-      ~srcs:
-        (List.map
-           (fun r -> X86.Target.Reg (Physical r))
-           X86.Regs.[ rsi; rdi; rdx; r12; r13; rbx; r9 ])
+  let init_state, result_state = test_pcopy_instr ~regs head in
+  check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs
+    ~old_vregs ~vregs ~init_state ~result_state
+
+(* Test: live !r13,!rdi uses rbp,!r8,r9,rsp,!rcx,r10,r15,rax defs !r12,!r11,!r14,!r13,!r15,!rsi,!rdx,!rsp clob !rax,!rbx,!r8,!r12,!rsp,!rdi *)
+let test_register_shuffle2 () =
+  let extra_curr_live = X86.Regs.[ (r13, true); (rdi, true) ] in
+  let uses =
+    X86.Regs.
+      [
+        (rbp, false);
+        (r8, true);
+        (r9, false);
+        (rsp, false);
+        (rcx, true);
+        (r10, false);
+        (r15, false);
+        (rax, false);
+      ]
+  in
+  let defs =
+    List.map
+      (fun r -> (r, true))
+      X86.Regs.[ r12; r11; r14; r13; r15; rsi; rdx; rsp ]
+  in
+  let extra_clobbered_regs =
+    List.map (fun r -> (r, true)) X86.Regs.[ rax; rbx; r8; r12; rsp; rdi ]
+  in
+  let old_vregs, vregs, head =
+    setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
+      ~extra_clobbered_regs
   in
   let init_state, result_state = test_pcopy_instr ~regs head in
   check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs
-    ~old_vregs ~vregs ~init_state ~result_state;
-  check
-    X86.Cfg.(testable pp_head equal_head)
-    "Check result instruction" head
-    (X86.Cfg.Head (First Entry, Instruction expected_instr))
+    ~old_vregs ~vregs ~init_state ~result_state
 
 let _ =
   let _ = Random.set_state (Random.get_state ()) in
@@ -342,6 +359,7 @@ let _ =
   run "Test_register_allocation"
     [
       ( "Tests_enforce_constraints",
-        test_case "simple example" `Quick test_register_shuffle1 :: randomized
-      );
+        test_case "simple example" `Quick test_register_shuffle1
+        :: test_case "swaps with live through" `Quick test_register_shuffle2
+        :: randomized );
     ]
