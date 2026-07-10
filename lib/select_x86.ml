@@ -152,7 +152,7 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
     | [] -> Cfg.Last (Cfg.Return (Target.return ~uses:[]))
     | [ op ] ->
       let rax = Target.(Reg (constrained Regs.rax (fresh_vreg Int))) in
-      Target.instr "movq" ~defs:[ rax ] ~uses:[ op ]
+      Target.pcopy ~dests:[ rax ] ~srcs:[ op ]
       @> Cfg.Last (Cfg.Return (Target.return ~uses:[ rax ]))
     | _ -> failwith "can only return one thing currently"
     end
@@ -265,7 +265,7 @@ let%expect_test "Fibonacci code generation" =
       pcopy [(%1any, %0(%rdi))]
       jle label2, label3, %1any, $1
     label1(local=false)(32any):
-      movq %33(%rax), %32any
+      pcopy [(%33(%rax), %32any)]
       ret %33(%rax)
     label2(local=false)():
       movq %2any, %1any

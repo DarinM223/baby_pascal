@@ -1,5 +1,5 @@
 (executable
- (public_name baby_pascal)
+ (public_name compile)
  (name main)
  (libraries baby_pascal)
  (modes byte exe)
