@@ -6,4 +6,4 @@ module IntMap = struct
   include CCMap.Make (Int)
   let pp pp_v = pp CCInt.pp pp_v
 end
-module IntHashtbl = Hashtbl.Make (CCInt)
+module IntHashtbl = CCHashtbl.Make (CCInt)

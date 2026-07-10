@@ -292,9 +292,11 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
        and the value is the source register *)
   let srcs = ref [] in
   let dests = ref [] in
-  let dest_reg_dies_immediately = Array.make num_regs false in
+  let saved_pref = Array.make num_regs 0. in
+  let kill_reg = Array.make num_regs false in
   for dest = 0 to num_regs - 1 do
     let old_reg = permutation.(dest) in
+    saved_pref.(dest) <- state.reg_current_pref.(old_reg);
     match state.reg_current_var.(old_reg) with
     | Some src ->
       (* If register is live-through and it isn't a
@@ -302,13 +304,12 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
            after this instruction, so don't modify the assigned register. *)
       if
         let src_reg = find_reg_index state.regs src.reg in
-        CCBV.get constrained_def_regs src_reg
-        || not (CCBV.get live_through_regs src_reg)
-      then begin
+        CCBV.get live_through_regs src_reg
+        && not (CCBV.get constrained_def_regs src_reg)
+      then ()
+      else begin
         src.reg <- state.regs.(dest);
-        state.reg_current_var.(old_reg) <- None;
-        state.reg_current_pref.(old_reg) <- 0.;
-        CCBV.reset state.occupied old_reg
+        kill_reg.(old_reg) <- true
       end;
       if old_reg <> dest then begin
         srcs := X86.Target.Reg state.regs.(old_reg) :: !srcs;
@@ -318,22 +319,39 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         begin match dest_mapping.(dest) with
         | Tombstone -> Virtual src
         | r -> r
-        end;
-      dest_reg_dies_immediately.(dest) <- dies state uid (Virtual src) instr_num
+        end
     | None -> ()
   done;
   for dest = 0 to num_regs - 1 do
-    match dest_mapping.(dest) with
+    if kill_reg.(dest) then begin
+      Logs.debug (fun m ->
+          m "Killing occupied: %a\n" X86.Target.pp_reg state.regs.(dest));
+      state.reg_current_var.(dest) <- None;
+      state.reg_current_pref.(dest) <- 0.;
+      CCBV.reset state.occupied dest
+    end;
+    begin match dest_mapping.(dest) with
     | Virtual vreg ->
       Logs.debug (fun m ->
           m "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual vreg)
             X86.Target.pp_reg state.regs.(dest));
       vreg.reg <- state.regs.(dest);
-      state.reg_current_var.(dest) <- Some vreg;
-      (* Preference is 0 because it was forced *)
-      state.reg_current_pref.(dest) <- 0.;
-      if not dest_reg_dies_immediately.(dest) then CCBV.set state.occupied dest
+      if not (dies state uid (Virtual vreg) instr_num) then begin
+        Logs.debug (fun m ->
+            m "Setting as occupied: %a\n" X86.Target.pp_reg state.regs.(dest));
+        state.reg_current_var.(dest) <- Some vreg;
+        state.reg_current_pref.(dest) <- saved_pref.(dest);
+        CCBV.set state.occupied dest
+      end
+      else begin
+        Logs.debug (fun m ->
+            m "Killing occupied: %a\n" X86.Target.pp_reg state.regs.(dest));
+        state.reg_current_var.(dest) <- None;
+        state.reg_current_pref.(dest) <- 0.;
+        CCBV.reset state.occupied dest
+      end
     | _ -> ()
+    end
   done;
   Logs.debug (fun m ->
       m "Shuffling Dests: %a Srcs: %a\n" X86.Target.pp_operands !dests

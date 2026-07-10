@@ -8,6 +8,10 @@ let get_vreg vreg =
   | X86.Target.Virtual vreg -> vreg
   | _ -> failwith "Not a virtual register"
 
+let get_physical = function
+  | X86.Target.Physical p -> p
+  | _ -> failwith "Not a physical register"
+
 let setup_register_shuffle ~(regs : X86.Target.reg array)
     ~(extra_curr_live : reg_mapping) ~(uses : reg_mapping) ~(defs : reg_mapping)
     ~(extra_clobbered_regs : reg_mapping) =
@@ -64,36 +68,75 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   let setup_occupied (reg, is_live_through) =
     let vreg = vregs.(next_vreg ()) in
     CCBV.set state.occupied (idx reg);
+    state.reg_current_var.(idx reg) <- Some (get_vreg vreg);
+    state.reg_current_pref.(idx reg) <- float_of_int (get_vreg vreg).id;
     set_reg (idx reg) vreg;
     if is_live_through then
       Utils.IntHashtbl.replace live_through (X86.Target.index vreg) true;
-    X86.Target.Reg vreg
+    vreg
   in
   let setup_constrained (reg, is_live_through) =
     let vreg = vregs.(next_vreg ()) in
     ignore @@ X86.Target.constrained reg vreg;
     if is_live_through then
       Utils.IntHashtbl.replace live_through (X86.Target.index vreg) true;
-    X86.Target.Reg vreg
+    vreg
   in
+  let clobbered = Utils.IntHashtbl.create num_vregs in
   let srcs = CCVector.create () in
   let dests = CCVector.create () in
   List.iter (fun t -> ignore (setup_occupied t)) extra_curr_live;
   List.iter (fun t -> CCVector.push srcs (setup_occupied t)) uses;
   List.iter (fun t -> CCVector.push dests (setup_constrained t)) defs;
   List.iter
-    (fun t -> CCVector.push dests (setup_constrained t))
+    (fun t ->
+      let vreg = setup_constrained t in
+      Utils.IntHashtbl.replace clobbered (X86.Target.index vreg) true;
+      CCVector.push dests vreg)
     extra_clobbered_regs;
   let old_vregs =
     Array.init (Array.length vregs) (fun i -> (get_vreg vregs.(i)).reg)
   in
-  let instr =
-    X86.Target.pcopy ~dests:(CCVector.to_list dests)
-      ~srcs:(CCVector.to_list srcs)
+  let to_operands l =
+    List.map (fun r -> X86.Target.Reg r) (CCVector.to_list l)
   in
+  let srcs, dests = (to_operands srcs, to_operands dests) in
+  let instr = X86.Target.pcopy ~dests ~srcs in
   let head, instr =
     enforce_constraints state uid instr_num instr (X86.Cfg.First Entry)
   in
+  Format.printf "Live through: %s\n"
+    ([%show: (int * bool) list] (Utils.IntHashtbl.to_list live_through));
+  (* check that reg_current_var, reg_current_pref, and occupied are set correctly *)
+  let check_vreg vreg =
+    let id = X86.Target.index vreg in
+    let reg = (get_vreg vreg).reg in
+    Format.printf "Virtual register: %a\n" X86.Target.pp_reg vreg;
+    let mk_check s =
+      Format.asprintf "Virtual register %a's value for %s:" X86.Target.pp_reg
+        vreg s
+    in
+    Format.printf "Occupied: %b\n" (Utils.IntHashtbl.mem live_through id);
+    check bool (mk_check "occupied")
+      (Utils.IntHashtbl.mem live_through id)
+      (CCBV.get state.occupied (idx (get_physical reg)));
+    check
+      (option X86.Target.(testable pp_reg equal_reg))
+      (mk_check "current var")
+      (if Utils.IntHashtbl.mem live_through id then Some vreg else None)
+      (Option.map
+         (fun vreg -> X86.Target.Virtual vreg)
+         state.reg_current_var.(idx (get_physical reg)))
+    (* check (float 0.01)
+      (mk_check "current preference")
+      (if Utils.IntHashtbl.mem live_through id then float_of_int id else 0.)
+      state.reg_current_pref.(idx (get_physical reg)) *)
+  in
+  Array.iter
+    (fun vreg ->
+      if not (Utils.IntHashtbl.mem clobbered (X86.Target.index vreg)) then
+        check_vreg vreg)
+    vregs;
   (old_vregs, vregs, X86.Cfg.Head (head, Instruction instr))
 
 let test_pcopy_instr ~regs head =
@@ -236,10 +279,6 @@ let rec randomized_register_shuffle_test () =
     List.length uses = List.length defs
     && List.length extra_curr_live <= num_live_through
   then begin
-    let get_physical = function
-      | X86.Target.Physical p -> p
-      | _ -> failwith "Not a physical register"
-    in
     let num_live_uses = num_live_through - List.length extra_curr_live in
     let uses =
       let live, non_live = CCList.take_drop num_live_uses uses in
@@ -292,7 +331,7 @@ let test_register_shuffle1 () =
     X86.Regs.[ (r12, false); (r13, false); (rbx, true); (r9, false) ]
   in
   (* vregs 7, 8, 9, 10 are constrained to rdi, rsi, rdx, rcx *)
-  let defs = List.map (fun r -> (r, true)) X86.Regs.[ rdi; rsi; rdx; rcx ] in
+  let defs = List.map (fun r -> (r, false)) X86.Regs.[ rdi; rsi; rdx; rcx ] in
   (* vregs 11, 12, 13, 14, 15, 16, 17, 18, 19 are the constrained defs of the instruction
      the def for rax lives through the instruction but the rest die *)
   let extra_clobbered_regs =
