@@ -78,6 +78,11 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   let setup_constrained (reg, is_live_through) =
     let vreg = vregs.(next_vreg ()) in
     ignore @@ X86.Target.constrained reg vreg;
+    (* set preferences so if the normal preference based register allocation
+       fires (in the case when no register swap is needed),
+       then it will select the right register. *)
+    state.preferences.(X86.Target.index vreg).(idx reg) <-
+      state.preferences.(X86.Target.index vreg).(idx reg) +. 100.;
     if is_live_through then
       Utils.IntHashtbl.replace live_through (X86.Target.index vreg) true;
     vreg
@@ -103,40 +108,52 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   let srcs, dests = (to_operands srcs, to_operands dests) in
   let instr = X86.Target.pcopy ~dests ~srcs in
   let head, instr =
-    enforce_constraints state uid instr_num instr (X86.Cfg.First Entry)
+    color_instruction state uid instr_num (X86.Cfg.First Entry) instr
   in
   Format.printf "Live through: %s\n"
     ([%show: (int * bool) list] (Utils.IntHashtbl.to_list live_through));
   (* check that reg_current_var, reg_current_pref, and occupied are set correctly *)
-  let check_vreg vreg =
-    let id = X86.Target.index vreg in
-    let reg = (get_vreg vreg).reg in
-    Format.printf "Virtual register: %a\n" X86.Target.pp_reg vreg;
-    let mk_check s =
-      Format.asprintf "Virtual register %a's value for %s:" X86.Target.pp_reg
-        vreg s
-    in
-    Format.printf "Occupied: %b\n" (Utils.IntHashtbl.mem live_through id);
-    check bool (mk_check "occupied")
-      (Utils.IntHashtbl.mem live_through id)
-      (CCBV.get state.occupied (idx (get_physical reg)));
-    check
-      (option X86.Target.(testable pp_reg equal_reg))
-      (mk_check "current var")
-      (if Utils.IntHashtbl.mem live_through id then Some vreg else None)
-      (Option.map
-         (fun vreg -> X86.Target.Virtual vreg)
-         state.reg_current_var.(idx (get_physical reg)))
-    (* check (float 0.01)
-      (mk_check "current preference")
-      (if Utils.IntHashtbl.mem live_through id then float_of_int id else 0.)
-      state.reg_current_pref.(idx (get_physical reg)) *)
+  let rec check_vregs = function
+    | X86.Target.Reg src :: srcs, X86.Target.Reg dest :: dests ->
+      let id = X86.Target.index in
+      let reg vreg = (get_vreg vreg).reg in
+      Format.printf "Virtual registers: %a -> %a\n" X86.Target.pp_reg src
+        X86.Target.pp_reg dest;
+      let mk_check s vreg =
+        Format.asprintf "Virtual register %a's value for %s:" X86.Target.pp_reg
+          vreg s
+      in
+      check bool (mk_check "occupied" src)
+        (Utils.IntHashtbl.mem live_through (id src)
+        || Utils.IntHashtbl.mem live_through (id dest))
+        (CCBV.get state.occupied (idx (get_physical (reg src))));
+      check bool (mk_check "occupied" dest)
+        (Utils.IntHashtbl.mem live_through (id dest))
+        (CCBV.get state.occupied (idx (get_physical (reg dest))));
+      check
+        (option X86.Target.(testable pp_reg equal_reg))
+        (mk_check "current var" src)
+        (if Utils.IntHashtbl.mem live_through (id src) then Some src
+         else if Utils.IntHashtbl.mem live_through (id dest) then Some dest
+         else None)
+        (Option.map
+           (fun vreg -> X86.Target.Virtual vreg)
+           state.reg_current_var.(idx (get_physical (reg src))));
+      check
+        (option X86.Target.(testable pp_reg equal_reg))
+        (mk_check "current var" dest)
+        (if Utils.IntHashtbl.mem live_through (id dest) then Some dest else None)
+        (Option.map
+           (fun vreg -> X86.Target.Virtual vreg)
+           state.reg_current_var.(idx (get_physical (reg dest))));
+      (* check (float 0.01)
+        (mk_check "current preference")
+        (if Utils.IntHashtbl.mem live_through id then float_of_int id else 0.)
+        state.reg_current_pref.(idx (get_physical reg)) *)
+      check_vregs (srcs, dests)
+    | _ -> ()
   in
-  Array.iter
-    (fun vreg ->
-      if not (Utils.IntHashtbl.mem clobbered (X86.Target.index vreg)) then
-        check_vreg vreg)
-    vregs;
+  check_vregs (srcs, dests);
   (old_vregs, vregs, X86.Cfg.Head (head, Instruction instr))
 
 let test_pcopy_instr ~regs head =

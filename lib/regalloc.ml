@@ -385,6 +385,9 @@ let enforce_constraints state uid instr_num pcopy head =
         | Some dest_vreg -> dest_vreg.reg <- state.regs.(src)
         | _ -> ()
         end;
+        let tmp = CCBV.get state.occupied src in
+        CCBV.set_bool state.occupied src (CCBV.get state.occupied dest);
+        CCBV.set_bool state.occupied dest tmp;
         let tmp = state.reg_current_var.(src) in
         state.reg_current_var.(src) <- state.reg_current_var.(dest);
         state.reg_current_var.(dest) <- tmp;
@@ -481,6 +484,78 @@ let implement_phi_copies state cfg ~src ~dest =
   in
   X86.Cfg.unfocus ((head, tail), cfg)
 
+let color_instruction state uid instr_num head instr =
+  let head, instr =
+    if instr.X86.Target.instr = "pcopy" then
+      enforce_constraints state uid instr_num instr head
+    else (head, instr)
+  in
+  (* Gather reuse operands *)
+  let reuse_operands, _ =
+    X86.Target.fold_reg_defs
+      (fun acc -> function
+        | X86.Target.Virtual { reg_constr = ReuseOperand reg; _ } as r ->
+          (RegMap.add reg r acc, r)
+        | r -> (acc, r))
+      RegMap.empty instr
+  in
+  let remove_reuse_reg reg reg' =
+    if RegMap.mem reg reuse_operands then begin
+      Logs.debug (fun m ->
+          m "Reused virtual register %a with physical register %a"
+            X86.Target.pp_reg reg X86.Target.pp_reg reg');
+      X86.Target.Tombstone
+    end
+    else reg'
+  in
+  (* Update instruction uses, replacing virtual registers with physical registers,
+       removing dead uses from the currently occupied registers,
+       and removing reuse operand uses *)
+  let instr =
+    X86.Target.map_reg_uses
+      (fun reg ->
+        match reg with
+        | X86.Target.Virtual a' as a when dies state uid a instr_num ->
+          let reg = find_reg_index state.regs a'.reg in
+          state.reg_current_var.(reg) <- None;
+          state.reg_current_pref.(reg) <- 0.;
+          CCBV.reset state.occupied reg;
+          remove_reuse_reg a a'.reg
+        | X86.Target.Virtual a' -> remove_reuse_reg reg a'.reg
+        | r -> remove_reuse_reg r r)
+      instr
+  in
+  (* Assign registers for definitions *)
+  let head, instr =
+    X86.Target.fold_reg_defs
+      (fun head -> function
+        | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
+          let reg, pref, head = get_register state uid r head in
+          Logs.debug (fun m ->
+              m "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual r')
+                X86.Target.pp_reg state.regs.(reg));
+          r'.reg <- state.regs.(reg);
+          state.reg_current_var.(reg) <- Some r';
+          state.reg_current_pref.(reg) <- pref;
+          if not (dies state uid r instr_num) then CCBV.set state.occupied reg;
+          (head, r'.reg)
+        | r -> (head, r))
+      head instr
+  in
+  (* Check reuse operands assigned registers match *)
+  RegMap.iter
+    (fun use def ->
+      match (use, def) with
+      | X86.Target.Virtual use, X86.Target.Virtual def
+        when X86.Target.equal_reg use.reg def.reg ->
+        ()
+      | _ ->
+        failwith
+        @@ Format.asprintf "Invalid matching: %a with %a" X86.Target.pp_reg use
+             X86.Target.pp_reg def)
+    reuse_operands;
+  (head, instr)
+
 let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
   let uid = X86.Cfg.id block in
   let head =
@@ -510,94 +585,22 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
       in
       replace_first (X86.Cfg.Label (l, { info with args })) head
   in
-  let handle_instruction instr_num head instr =
-    let head, instr =
-      if instr.X86.Target.instr = "pcopy" then
-        enforce_constraints state uid instr_num instr head
-      else (head, instr)
-    in
-    (* Gather reuse operands *)
-    let reuse_operands, _ =
-      X86.Target.fold_reg_defs
-        (fun acc -> function
-          | X86.Target.Virtual { reg_constr = ReuseOperand reg; _ } as r ->
-            (RegMap.add reg r acc, r)
-          | r -> (acc, r))
-        RegMap.empty instr
-    in
-    let remove_reuse_reg reg reg' =
-      if RegMap.mem reg reuse_operands then begin
-        Logs.debug (fun m ->
-            m "Reused virtual register %a with physical register %a"
-              X86.Target.pp_reg reg X86.Target.pp_reg reg');
-        X86.Target.Tombstone
-      end
-      else reg'
-    in
-    (* Update instruction uses, replacing virtual registers with physical registers,
-       removing dead uses from the currently occupied registers,
-       and removing reuse operand uses *)
-    let instr =
-      X86.Target.map_reg_uses
-        (fun reg ->
-          match reg with
-          | X86.Target.Virtual a' as a when dies state uid a instr_num ->
-            let reg = find_reg_index state.regs a'.reg in
-            state.reg_current_var.(reg) <- None;
-            state.reg_current_pref.(reg) <- 0.;
-            CCBV.reset state.occupied reg;
-            remove_reuse_reg a a'.reg
-          | X86.Target.Virtual a' -> remove_reuse_reg reg a'.reg
-          | r -> remove_reuse_reg r r)
-        instr
-    in
-    (* Assign registers for definitions *)
-    let head, instr =
-      X86.Target.fold_reg_defs
-        (fun head -> function
-          | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
-            let reg, pref, head = get_register state uid r head in
-            Logs.debug (fun m ->
-                m "Setting register for %a to %a\n" X86.Target.pp_reg
-                  (Virtual r') X86.Target.pp_reg state.regs.(reg));
-            r'.reg <- state.regs.(reg);
-            state.reg_current_var.(reg) <- Some r';
-            state.reg_current_pref.(reg) <- pref;
-            if not (dies state uid r instr_num) then CCBV.set state.occupied reg;
-            (head, r'.reg)
-          | r -> (head, r))
-        head instr
-    in
-    (* Check reuse operands assigned registers match *)
-    RegMap.iter
-      (fun use def ->
-        match (use, def) with
-        | X86.Target.Virtual use, X86.Target.Virtual def
-          when X86.Target.equal_reg use.reg def.reg ->
-          ()
-        | _ ->
-          failwith
-          @@ Format.asprintf "Invalid matching: %a with %a" X86.Target.pp_reg
-               use X86.Target.pp_reg def)
-      reuse_operands;
-    (head, instr)
-  in
   let rec go instr_num head = function
     | X86.Cfg.Tail (Instruction instr, tail) ->
-      let head, instr = handle_instruction instr_num head instr in
+      let head, instr = color_instruction state uid instr_num head instr in
       go (instr_num + 1) (X86.Cfg.Head (head, Instruction instr)) tail
     | X86.Cfg.Last l ->
       (* todo: propagate branch args to the affinity chunk *)
       begin match l with
       | X86.Printer.Exit -> (head, X86.Cfg.Last l)
       | X86.Printer.Branch (i, lab) ->
-        let head, i = handle_instruction instr_num head i in
+        let head, i = color_instruction state uid instr_num head i in
         (head, X86.Cfg.Last (Branch (i, lab)))
       | X86.Printer.CBranch (i, lab1, lab2) ->
-        let head, i = handle_instruction instr_num head i in
+        let head, i = color_instruction state uid instr_num head i in
         (head, X86.Cfg.Last (CBranch (i, lab1, lab2)))
       | X86.Printer.Return i ->
-        let head, i = handle_instruction instr_num head i in
+        let head, i = color_instruction state uid instr_num head i in
         (head, X86.Cfg.Last (Return i))
       end
   in
