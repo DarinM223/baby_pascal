@@ -138,6 +138,10 @@ module type EnforceConstraints = sig
   (** Mapping from register to destination register in original instruction.
       Used for reusing existing virtual registers in the original pcopy. *)
 
+  val clobber_mapping : X86.Target.reg array
+  (** Mapping from register to constrained virtual register that clobbers the
+      register. *)
+
   val live_through_regs : CCBV.t
   (** Registers that are currently being occupied by values that live through
       the instruction occupied regs - regs that die at the instruction *)
@@ -157,6 +161,7 @@ let enforce_constraints_state state uid instr_num instr =
   (* Mapping from register to destination register in original instruction.
      Used for reusing existing virtual registers in the original pcopy. *)
   let dest_mapping = Array.make num_regs X86.Target.Tombstone in
+  let clobber_mapping = Array.make num_regs X86.Target.Tombstone in
   (* Registers that are currently being occupied by values
      that live through the instruction
      occupied regs - regs that die at the instruction *)
@@ -172,7 +177,7 @@ let enforce_constraints_state state uid instr_num instr =
       CCBV.reset live_through_regs reg
     | _ -> ()
   in
-  let mark_constrained_def_regs = function
+  let mark_constrained_def_regs f = function
     | ( X86.Target.Virtual { reg_constr = UsePhysical phys; _ }
       | X86.Target.Physical phys ) as r ->
       begin try
@@ -181,7 +186,7 @@ let enforce_constraints_state state uid instr_num instr =
             m "Setting %a as constrained def\n" X86.Target.pp_reg
               state.regs.(reg_index));
         CCBV.set constrained_def_regs reg_index;
-        dest_mapping.(reg_index) <- r;
+        f reg_index r;
         if CCBV.get live_through_regs reg_index then need_reassignment := true
       with _ -> ()
       end
@@ -191,12 +196,14 @@ let enforce_constraints_state state uid instr_num instr =
     | X86.Target.Reg use :: uses, X86.Target.Reg def :: defs ->
       if use <> Tombstone && def <> Tombstone then begin
         remove_constrained_use_live_throughs (use, def);
-        mark_constrained_def_regs def
+        mark_constrained_def_regs (fun idx r -> dest_mapping.(idx) <- r) def
       end;
       go_uses_defs (uses, defs)
     | _ :: uses, _ :: defs -> go_uses_defs (uses, defs)
     | [], X86.Target.Reg def :: defs ->
-      if def <> Tombstone then mark_constrained_def_regs def;
+      if def <> Tombstone then begin
+        mark_constrained_def_regs (fun idx r -> clobber_mapping.(idx) <- r) def
+      end;
       go_uses_defs ([], defs)
     | _ -> ()
   in
@@ -206,6 +213,7 @@ let enforce_constraints_state state uid instr_num instr =
           m "Live through: %a\n" X86.Target.pp_reg state.regs.(reg)));
   let module EnforceConstraints = struct
     let dest_mapping = dest_mapping
+    let clobber_mapping = clobber_mapping
     let live_through_regs = live_through_regs
     let constrained_def_regs = constrained_def_regs
     let need_reassignment = !need_reassignment
@@ -216,8 +224,8 @@ let enforce_constraints_state state uid instr_num instr =
     constraints are only enforced on parallel copies. Constrained uses are uses
     in the pcopy that have a corresponding def, constrained defs are definitions
     at the end which don't have a corresponding use. *)
-let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
-    instr_num instr =
+let enforce_constraints_assignment (module State : EnforceConstraints) state
+    instr =
   let num_regs = Array.length state.regs in
   let open State in
   let cost = Array.make (num_regs * num_regs) 0 in
@@ -288,8 +296,14 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         (Hungarian.pp_cost ~assignment:(Some permutation) ~regs:state.regs
            ~num_rows:num_regs ~num_cols:num_regs)
         cost);
+  permutation
+
+let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
+    instr_num permutation =
+  let num_regs = Array.length state.regs in
+  let open State in
   (* After, the index of permutation is the destination register
-       and the value is the source register *)
+     and the value is the source register *)
   let srcs = ref [] in
   let dests = ref [] in
   let saved_pref = Array.make num_regs 0. in
@@ -311,7 +325,7 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         src.reg <- state.regs.(dest);
         kill_reg.(old_reg) <- true
       end;
-      if old_reg <> dest then begin
+      if old_reg <> dest || dest_mapping.(dest) <> Tombstone then begin
         srcs := X86.Target.Reg state.regs.(old_reg) :: !srcs;
         dests := X86.Target.Reg state.regs.(dest) :: !dests
       end;
@@ -354,6 +368,18 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
     | _ -> ()
     end
   done;
+  for dest = 0 to num_regs - 1 do
+    match clobber_mapping.(dest) with
+    | Virtual vreg when not (dies state uid (Virtual vreg) instr_num) ->
+      vreg.reg <- state.regs.(dest);
+      Logs.debug (fun m ->
+          m "Live through clobbering register: %a\n" X86.Target.pp_reg
+            state.regs.(dest));
+      state.reg_current_var.(dest) <- Some vreg;
+      state.reg_current_pref.(dest) <- saved_pref.(dest);
+      CCBV.set state.occupied dest
+    | _ -> ()
+  done;
   Logs.debug (fun m ->
       m "Shuffling Dests: %a Srcs: %a\n" X86.Target.pp_operands !dests
         X86.Target.pp_operands !srcs);
@@ -365,20 +391,40 @@ let enforce_constraints state uid instr_num pcopy head =
   let need_swap =
     CCBV.(inter State.live_through_regs State.constrained_def_regs)
   in
-  if not State.need_reassignment then
-    (* Remove duplicate constrained def registers since they confuse the register allocation
-       todo: can it be possible for the instruction selection to not generate pcopies with repeat
-       constrained defs with constrained use defs instead? *)
-    let _, pcopy =
-      X86.Target.fold_reg_defs
-        (fun seen -> function
-          | X86.Target.Virtual { reg_constr = UsePhysical phys; _ } as reg ->
-            if RegSet.mem (Physical phys) seen then (seen, X86.Target.Tombstone)
-            else (RegSet.add (Physical phys) seen, reg)
-          | reg -> (seen, reg))
-        RegSet.empty pcopy
+  if not State.need_reassignment then (
+    let assignment = Array.init (Array.length state.regs) (fun r -> r) in
+    let extra_srcs = ref [] in
+    let extra_dests = ref [] in
+    let rec set_use_def = function
+      | ( X86.Target.Reg (Virtual use) :: uses,
+          X86.Target.Reg (Virtual { reg_constr = UsePhysical phys; _ }) :: defs
+        ) ->
+        let def = find_reg_index state.regs (Physical phys) in
+        let use = find_reg_index state.regs use.reg in
+        assignment.(def) <- use;
+        set_use_def (uses, defs)
+      | use :: uses, def :: defs ->
+        (* Some pcopies don't have register constrained definitions, add those directly *)
+        extra_srcs := use :: !extra_srcs;
+        extra_dests := def :: !extra_dests;
+        set_use_def (uses, defs)
+      | _ -> ()
     in
-    (head, pcopy)
+    set_use_def (pcopy.uses, pcopy.defs);
+    Logs.debug (fun m ->
+        m "Dest Mapping %s\n" ([%show: X86.Target.reg array] State.dest_mapping));
+    let pcopy =
+      enforce_constraints_pcopy (module State) state uid instr_num assignment
+    in
+    let pcopy =
+      {
+        pcopy with
+        uses = !extra_srcs @ pcopy.uses;
+        defs = !extra_dests @ pcopy.defs;
+      }
+    in
+    Logs.debug (fun m -> m "Regular PCopy %a\n" X86.Target.pp_instr pcopy);
+    (head, pcopy))
   else if not (CCBV.is_empty need_swap) then begin
     Format.printf "Need swap: %s\n"
       ([%show: X86.Target.reg list]
@@ -419,13 +465,17 @@ let enforce_constraints state uid instr_num pcopy head =
     in
     let pcopy' = X86.Target.pcopy ~dests ~srcs in
     Format.printf "Emitting swap parallel copy: %a\n" X86.Target.pp_instr pcopy';
+    let assignment =
+      enforce_constraints_assignment (module State) state pcopy
+    in
     let pcopy =
-      enforce_constraints_pcopy (module State) state uid instr_num pcopy
+      enforce_constraints_pcopy (module State) state uid instr_num assignment
     in
     (X86.Cfg.Head (head, Instruction pcopy'), pcopy)
   end
   else
-    let pcopy = enforce_constraints_pcopy s state uid instr_num pcopy in
+    let assignment = enforce_constraints_assignment s state pcopy in
+    let pcopy = enforce_constraints_pcopy s state uid instr_num assignment in
     (head, pcopy)
 
 (* Insert parallel copy instruction in src block to move arguments
@@ -1175,14 +1225,12 @@ let%expect_test "Fibonacci register allocation" =
     label3(local=false)():
       movq %rdi, %rbx
       subq %rdi, %, $1
-      pcopy [(%rdi, %rdi); (%rax, %); (%rcx, %); (%rdx, %); (%rsi, %); (%, %);
-              (%r8, %); (%r9, %); (%r10, %); (%r11, %)]
+      pcopy [(%rdi, %rdi)]
       call fibonacci
       movq %r13, %rax
       movq %rdi, %rbx
       subq %rdi, %, $2
-      pcopy [(%rdi, %rdi); (%rax, %); (%rcx, %); (%rdx, %); (%rsi, %); (%, %);
-              (%r8, %); (%r9, %); (%r10, %); (%r11, %)]
+      pcopy [(%rdi, %rdi)]
       call fibonacci
       movq %rax, %rax
       movq %rbx, %r13

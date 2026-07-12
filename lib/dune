@@ -5,7 +5,7 @@
   (pps ppx_deriving.std ppx_expect))
  (flags
   (:standard -w +A-4-41-39-40-42-70 -warn-error -A))
- (libraries containers containers-data logs))
+ (libraries containers containers-data logs logs.fmt))
 
 (ocamllex
  (modules lexer))

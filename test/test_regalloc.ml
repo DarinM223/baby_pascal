@@ -6,11 +6,14 @@ type reg_mapping = (X86.Target.physical_reg * bool) list
 let get_vreg vreg =
   match vreg with
   | X86.Target.Virtual vreg -> vreg
-  | _ -> failwith "Not a virtual register"
+  | r ->
+    failwith @@ Format.asprintf "Not a virtual register, %a" X86.Target.pp_reg r
 
 let get_physical = function
   | X86.Target.Physical p -> p
-  | _ -> failwith "Not a physical register"
+  | r ->
+    failwith
+    @@ Format.asprintf "Not a physical register, %a" X86.Target.pp_reg r
 
 let setup_register_shuffle ~(regs : X86.Target.reg array)
     ~(extra_curr_live : reg_mapping) ~(uses : reg_mapping) ~(defs : reg_mapping)
@@ -75,11 +78,6 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   let setup_constrained (reg, is_live_through) =
     let vreg = vregs.(next_vreg ()) in
     ignore @@ X86.Target.constrained reg vreg;
-    (* set preferences so if the normal preference based register allocation
-       fires (in the case when no register swap is needed),
-       then it will select the right register. *)
-    state.preferences.(X86.Target.index vreg).(idx reg) <-
-      state.preferences.(X86.Target.index vreg).(idx reg) +. 100.;
     if is_live_through then
       Utils.IntHashtbl.replace live_through (X86.Target.index vreg) true;
     vreg
@@ -114,11 +112,27 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   in
   Format.printf "Live through: %s\n"
     ([%show: (int * bool) list] (Utils.IntHashtbl.to_list live_through));
+  let clobbered =
+    List.fold_left
+      (fun acc -> function
+        | X86.Target.Reg (Virtual { reg_constr = UsePhysical phys; _ } as reg)
+          ->
+          RegMap.add (Physical phys) reg acc
+        | _ -> acc)
+      RegMap.empty
+      (CCList.drop (List.length srcs) dests)
+  in
+  let id = X86.Target.index in
+  let reg vreg = (get_vreg vreg).reg in
+  let live_through_clobbered vreg =
+    try
+      let clobbered = RegMap.find (reg vreg) clobbered in
+      Utils.IntHashtbl.mem live_through (id clobbered)
+    with Not_found -> false
+  in
   (* check that reg_current_var, reg_current_pref, and occupied are set correctly *)
   let rec check_vregs = function
     | X86.Target.Reg src :: srcs, X86.Target.Reg dest :: dests ->
-      let id = X86.Target.index in
-      let reg vreg = (get_vreg vreg).reg in
       Format.printf "Virtual registers: %a -> %a\n" X86.Target.pp_reg src
         X86.Target.pp_reg dest;
       let mk_check s vreg =
@@ -127,15 +141,19 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
       in
       check bool (mk_check "occupied" src)
         (Utils.IntHashtbl.mem live_through (id src)
-        || (need_reassignment && Utils.IntHashtbl.mem live_through (id dest)))
+        || (need_reassignment && Utils.IntHashtbl.mem live_through (id dest))
+        || live_through_clobbered src)
         (CCBV.get state.occupied (idx (get_physical (reg src))));
       check bool (mk_check "occupied" dest)
-        (Utils.IntHashtbl.mem live_through (id dest))
+        (Utils.IntHashtbl.mem live_through (id dest)
+        || live_through_clobbered dest)
         (CCBV.get state.occupied (idx (get_physical (reg dest))));
       check
         (option X86.Target.(testable pp_reg equal_reg))
         (mk_check "current var" src)
-        (if Utils.IntHashtbl.mem live_through (id src) then Some src
+        (if live_through_clobbered src then
+           Some (RegMap.find (reg src) clobbered)
+         else if Utils.IntHashtbl.mem live_through (id src) then Some src
          else if
            need_reassignment && Utils.IntHashtbl.mem live_through (id dest)
          then Some dest
@@ -146,7 +164,10 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
       check
         (option X86.Target.(testable pp_reg equal_reg))
         (mk_check "current var" dest)
-        (if Utils.IntHashtbl.mem live_through (id dest) then Some dest else None)
+        (if live_through_clobbered dest then
+           Some (RegMap.find (reg dest) clobbered)
+         else if Utils.IntHashtbl.mem live_through (id dest) then Some dest
+         else None)
         (Option.map
            (fun vreg -> X86.Target.Virtual vreg)
            state.reg_current_var.(idx (get_physical (reg dest))));
@@ -156,6 +177,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
            Utils.IntHashtbl.mem live_through (id src)
            || (need_reassignment && Utils.IntHashtbl.mem live_through (id dest))
          then float_of_int (get_vreg src).id
+         else if live_through_clobbered src then float_of_int (get_vreg src).id
          else 0.)
         state.reg_current_pref.(idx (get_physical (reg src)));
       check_vregs (srcs, dests)
@@ -319,9 +341,11 @@ let rec randomized_register_shuffle_test () =
       List.map (fun l -> (get_physical l, true)) extra_curr_live
     in
     let extra_clobbered_regs =
-      List.map (fun l -> (get_physical l, true)) extra_clobbered_regs
+      List.map
+        (fun l -> (get_physical l, CCRandom.bool ()))
+        extra_clobbered_regs
     in
-    let defs = List.map (fun l -> (get_physical l, true)) defs in
+    let defs = List.map (fun l -> (get_physical l, CCRandom.bool ())) defs in
     let pp_phys fmt (phys, live_through) =
       if live_through then
         Format.fprintf fmt "!%a" X86.Target.pp_reg (Physical phys)

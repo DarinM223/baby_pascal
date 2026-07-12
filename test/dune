@@ -16,7 +16,8 @@
   test_seqpcopy)
  (modes
   (byte exe))
- (flags (:standard))
+ (flags
+  (:standard -warn-error -A))
  (preprocess
   (pps ppx_deriving.std))
  (libraries alcotest baby_pascal logs.fmt))
