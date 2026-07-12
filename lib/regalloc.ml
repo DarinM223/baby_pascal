@@ -113,6 +113,7 @@ let get_register state uid var head : int * float * X86.Cfg.head =
             Logs.debug (fun m ->
                 m "Adding move from %a to %a" X86.Target.pp_reg state.regs.(reg)
                   X86.Target.pp_reg state.regs.(oreg));
+            (* todo: modify occupied, reg_current_var and reg_current_pref *)
             let mov =
               X86.Target.mov
                 ~dest:(Reg state.regs.(oreg))
@@ -188,7 +189,6 @@ let enforce_constraints_state state uid instr_num instr =
   in
   let rec go_uses_defs = function
     | X86.Target.Reg use :: uses, X86.Target.Reg def :: defs ->
-      (* todo: swap if use is in a live through register and the def is in a constrained def register *)
       if use <> Tombstone && def <> Tombstone then begin
         remove_constrained_use_live_throughs (use, def);
         mark_constrained_def_regs def
@@ -325,7 +325,8 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
   for dest = 0 to num_regs - 1 do
     if kill_reg.(dest) then begin
       Logs.debug (fun m ->
-          m "Killing occupied: %a\n" X86.Target.pp_reg state.regs.(dest));
+          m "Killing register %a for %a\n" X86.Target.pp_reg state.regs.(dest)
+            X86.Target.pp_reg dest_mapping.(dest));
       state.reg_current_var.(dest) <- None;
       state.reg_current_pref.(dest) <- 0.;
       CCBV.reset state.occupied dest
@@ -364,7 +365,20 @@ let enforce_constraints state uid instr_num pcopy head =
   let need_swap =
     CCBV.(inter State.live_through_regs State.constrained_def_regs)
   in
-  if not State.need_reassignment then (head, pcopy)
+  if not State.need_reassignment then
+    (* Remove duplicate constrained def registers since they confuse the register allocation
+       todo: can it be possible for the instruction selection to not generate pcopies with repeat
+       constrained defs with constrained use defs instead? *)
+    let _, pcopy =
+      X86.Target.fold_reg_defs
+        (fun seen -> function
+          | X86.Target.Virtual { reg_constr = UsePhysical phys; _ } as reg ->
+            if RegSet.mem (Physical phys) seen then (seen, X86.Target.Tombstone)
+            else (RegSet.add (Physical phys) seen, reg)
+          | reg -> (seen, reg))
+        RegSet.empty pcopy
+    in
+    (head, pcopy)
   else if not (CCBV.is_empty need_swap) then begin
     Format.printf "Need swap: %s\n"
       ([%show: X86.Target.reg list]
@@ -535,9 +549,11 @@ let color_instruction state uid instr_num head instr =
               m "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual r')
                 X86.Target.pp_reg state.regs.(reg));
           r'.reg <- state.regs.(reg);
-          state.reg_current_var.(reg) <- Some r';
-          state.reg_current_pref.(reg) <- pref;
-          if not (dies state uid r instr_num) then CCBV.set state.occupied reg;
+          if not (dies state uid r instr_num) then begin
+            CCBV.set state.occupied reg;
+            state.reg_current_var.(reg) <- Some r';
+            state.reg_current_pref.(reg) <- pref
+          end;
           (head, r'.reg)
         | r -> (head, r))
       head instr
@@ -1159,13 +1175,13 @@ let%expect_test "Fibonacci register allocation" =
     label3(local=false)():
       movq %rdi, %rbx
       subq %rdi, %, $1
-      pcopy [(%rdi, %rdi); (%rax, %); (%rcx, %); (%rdx, %); (%rsi, %); (%rdi, %);
+      pcopy [(%rdi, %rdi); (%rax, %); (%rcx, %); (%rdx, %); (%rsi, %); (%, %);
               (%r8, %); (%r9, %); (%r10, %); (%r11, %)]
       call fibonacci
       movq %r13, %rax
       movq %rdi, %rbx
       subq %rdi, %, $2
-      pcopy [(%rdi, %rdi); (%rax, %); (%rcx, %); (%rdx, %); (%rsi, %); (%rdi, %);
+      pcopy [(%rdi, %rdi); (%rax, %); (%rcx, %); (%rdx, %); (%rsi, %); (%, %);
               (%r8, %); (%r9, %); (%r10, %); (%r11, %)]
       call fibonacci
       movq %rax, %rax
