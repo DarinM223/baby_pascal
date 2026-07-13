@@ -392,6 +392,7 @@ let enforce_constraints state uid instr_num pcopy head =
     CCBV.(inter State.live_through_regs State.constrained_def_regs)
   in
   if not State.need_reassignment then (
+    let orig_pcopy = pcopy in
     let assignment = Array.init (Array.length state.regs) (fun r -> r) in
     let extra_srcs = ref [] in
     let extra_dests = ref [] in
@@ -419,11 +420,13 @@ let enforce_constraints state uid instr_num pcopy head =
     let pcopy =
       {
         pcopy with
-        uses = !extra_srcs @ pcopy.uses;
-        defs = !extra_dests @ pcopy.defs;
+        uses = List.rev !extra_srcs @ pcopy.uses;
+        defs = List.rev !extra_dests @ pcopy.defs;
       }
     in
-    Logs.debug (fun m -> m "Regular PCopy %a\n" X86.Target.pp_instr pcopy);
+    Logs.debug (fun m ->
+        m "Regular PCopy %a created from %a\n" X86.Target.pp_instr pcopy
+          X86.Target.pp_instr orig_pcopy);
     (head, pcopy))
   else if not (CCBV.is_empty need_swap) then begin
     Format.printf "Need swap: %s\n"

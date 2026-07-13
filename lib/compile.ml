@@ -59,6 +59,7 @@ let compile program =
         state cfg
         (fun _ -> ())
     in
+    Format.printf "After register allocation %a\n" X86.Printer.pp_graph cfg;
     let cfg = X86.Sequentialize.sequentialize cfg in
     Cleanup_x86.cleanup state X86.Regs.r8 cfg
   in
