@@ -4,3 +4,4 @@ _build/
 *.o
 fibonacci.pas
 funswap.pas
+gcd.pas

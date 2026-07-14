@@ -524,6 +524,10 @@ let implement_phi_copies state cfg ~src ~dest =
     List.fold_right
       (fun (arg, phi) (srcs, dests, args) ->
         match (arg, phi) with
+        | ( Reg (Virtual { reg = arg_reg; _ } | (Physical _ as arg_reg)),
+            (Virtual { reg = phi_reg; _ } | (Physical _ as phi_reg)) )
+          when X86.Target.equal_reg arg_reg phi_reg ->
+          (srcs, dests, arg :: args)
         | Reg _, (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ->
           let copy = Reg (Physical phi_reg) in
           (arg :: srcs, copy :: dests, copy :: args)
@@ -539,6 +543,8 @@ let implement_phi_copies state cfg ~src ~dest =
       X86.Printer.CBranch (replace_args instr args, l1, l2)
     | X86.Printer.Return _ -> last
   in
+  (* todo: this overwrites existing registers, maybe should swap instead
+     while modifying the virtual register's assigned registers? *)
   let tail =
     let open X86 in
     if List.length dests > 0 then

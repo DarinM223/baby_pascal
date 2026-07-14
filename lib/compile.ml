@@ -31,6 +31,8 @@ let compile program =
     let cfg = Construct.rename_variables (module Dom) cfg in
     let args = List.map (fun arg -> (arg, 0)) args in
     let cfg = round args cfg in
+    Format.printf "Cfg after optimization passes: %a\n" Normalize.Cfg.pp_graph
+      cfg;
     let cfg =
       Normalize.Cfg.Blocks.fold
         (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
@@ -38,6 +40,7 @@ let compile program =
     in
     let state = Select_x86.State.init () in
     let srcs, cfg = Select_x86.codegen_function ~args state cfg in
+    Format.printf "Cfg after codegen: %a\n" X86.Cfg.pp_graph cfg;
     let extra = X86.Cfg.precalculate_edges cfg in
     let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
     let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
