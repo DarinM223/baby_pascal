@@ -1,7 +1,7 @@
 (executable
  (public_name compile)
  (name main)
- (libraries baby_pascal)
+ (libraries baby_pascal logs logs.fmt)
  (modes byte exe)
  (flags
   (:standard -w -33)))

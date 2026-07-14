@@ -18,7 +18,8 @@ struct
   (** Sequentializes a pcopy instruction and prepends a bunch of moves to the
       tail. `srcs` and `dests` are expected to be arrays of physical register
       operands, virtual registers should have already been colored at this
-      point. *)
+      point. There should be no duplicate (src,dest) move pairs in the pcopy or
+      else the sequentialization will emit an invalid set of moves. *)
   let parallel_copy ~srcs ~dests temp tail =
     let n = Array.length srcs in
     let status = Array.make n To_move in

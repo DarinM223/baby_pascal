@@ -30,7 +30,7 @@ let compile program =
     let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
     let cfg = Construct.rename_variables (module Dom) cfg in
     let args = List.map (fun arg -> (arg, 0)) args in
-    let cfg = round args cfg in
+    (* let cfg = round args cfg in *)
     Format.printf "Cfg after optimization passes: %a\n" Normalize.Cfg.pp_graph
       cfg;
     let cfg =

@@ -16,11 +16,14 @@ type state = {
   processed : bool array;
   block_execution_frequency : X86.Cfg.uid -> float;
   preferences : float array array;
-  reg_current_var : X86.Target.virtual_reg option array;
+  mutable reg_current_var : X86.Target.virtual_reg option array;
   (* initially 0 *)
-  reg_current_pref : float array;
+  mutable reg_current_pref : float array;
+  mutable occupied : CCBV.t;
+  saved_reg_current_var : X86.Target.virtual_reg option array array;
+  saved_reg_current_pref : float array array;
+  saved_occupied : CCBV.t array;
   liveness : Spill.Liveness.t;
-  occupied : CCBV.t;
   dom :
     (module Dominator.S
        with type label = X86.Cfg.label
@@ -57,6 +60,24 @@ let find_reg_index regs reg : int =
     failwith
       (Format.asprintf "find_reg: couldn't find index for register %a"
          X86.Target.pp_reg reg)
+
+let load_block_state ?(copy = false) state pos =
+  let copy_array = if copy then Array.copy else fun a -> a in
+  let copy_bits = if copy then CCBV.copy else fun a -> a in
+  state.reg_current_var <- copy_array state.saved_reg_current_var.(pos);
+  state.reg_current_pref <- copy_array state.saved_reg_current_pref.(pos);
+  state.occupied <- copy_bits state.saved_occupied.(pos);
+  for reg = 0 to Array.length state.reg_current_var - 1 do
+    match state.reg_current_var.(reg) with
+    | Some vreg when not (X86.Target.equal_reg vreg.reg state.regs.(reg)) ->
+      vreg.reg <- state.regs.(reg)
+    | _ -> ()
+  done
+
+let store_block_state state pos =
+  state.saved_reg_current_var.(pos) <- state.reg_current_var;
+  state.saved_reg_current_pref.(pos) <- state.reg_current_pref;
+  state.saved_occupied.(pos) <- state.occupied
 
 let get_register state uid var head : int * float * X86.Cfg.head =
   (* give preference bonus to ReuseOperand contraints *)
@@ -385,6 +406,25 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         X86.Target.pp_operands !srcs);
   X86.Target.pcopy ~dests:!dests ~srcs:!srcs
 
+let swap_regs state src dest =
+  begin match state.reg_current_var.(src) with
+  | Some src_vreg -> src_vreg.reg <- state.regs.(dest)
+  | _ -> ()
+  end;
+  begin match state.reg_current_var.(dest) with
+  | Some dest_vreg -> dest_vreg.reg <- state.regs.(src)
+  | _ -> ()
+  end;
+  let tmp = CCBV.get state.occupied src in
+  CCBV.set_bool state.occupied src (CCBV.get state.occupied dest);
+  CCBV.set_bool state.occupied dest tmp;
+  let tmp = state.reg_current_var.(src) in
+  state.reg_current_var.(src) <- state.reg_current_var.(dest);
+  state.reg_current_var.(dest) <- tmp;
+  let tmp = state.reg_current_pref.(src) in
+  state.reg_current_pref.(src) <- state.reg_current_pref.(dest);
+  state.reg_current_pref.(dest) <- tmp
+
 let enforce_constraints state uid instr_num pcopy head =
   let s = enforce_constraints_state state uid instr_num pcopy in
   let module State = (val s) in
@@ -440,23 +480,7 @@ let enforce_constraints state uid instr_num pcopy head =
       | src :: need_swap, dest :: free_non_constrained ->
         CCBV.reset State.live_through_regs src;
         CCBV.set State.live_through_regs dest;
-        begin match state.reg_current_var.(src) with
-        | Some src_vreg -> src_vreg.reg <- state.regs.(dest)
-        | _ -> ()
-        end;
-        begin match state.reg_current_var.(dest) with
-        | Some dest_vreg -> dest_vreg.reg <- state.regs.(src)
-        | _ -> ()
-        end;
-        let tmp = CCBV.get state.occupied src in
-        CCBV.set_bool state.occupied src (CCBV.get state.occupied dest);
-        CCBV.set_bool state.occupied dest tmp;
-        let tmp = state.reg_current_var.(src) in
-        state.reg_current_var.(src) <- state.reg_current_var.(dest);
-        state.reg_current_var.(dest) <- tmp;
-        let tmp = state.reg_current_pref.(src) in
-        state.reg_current_pref.(src) <- state.reg_current_pref.(dest);
-        state.reg_current_pref.(dest) <- tmp;
+        swap_regs state src dest;
         go
           (X86.Target.Reg state.regs.(src) :: Reg state.regs.(dest) :: srcs)
           (X86.Target.Reg state.regs.(dest) :: Reg state.regs.(src) :: dests)
@@ -519,20 +543,40 @@ let implement_phi_copies state cfg ~src ~dest =
     | X86.Cfg.Label (_, info) -> info.args
     | X86.Cfg.Entry -> []
   in
-  let srcs, dests, args =
+  let module SeenSet = Set.Make (struct
+    type t = int * int
+    let compare = compare
+  end) in
+  let srcs, dests, args, _ =
     let open X86.Target in
     List.fold_right
-      (fun (arg, phi) (srcs, dests, args) ->
+      (fun (arg, phi) (srcs, dests, args, seen) ->
         match (arg, phi) with
         | ( Reg (Virtual { reg = arg_reg; _ } | (Physical _ as arg_reg)),
             (Virtual { reg = phi_reg; _ } | (Physical _ as phi_reg)) )
           when X86.Target.equal_reg arg_reg phi_reg ->
-          (srcs, dests, arg :: args)
-        | Reg _, (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ->
+          (srcs, dests, arg :: args, seen)
+        | ( Reg (Virtual { reg = arg_reg; _ } | (Physical _ as arg_reg)),
+            (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ) ->
+          let arg_reg_idx = find_reg_index state.regs arg_reg in
+          let phi_reg_idx = find_reg_index state.regs (Physical phi_reg) in
           let copy = Reg (Physical phi_reg) in
-          (arg :: srcs, copy :: dests, copy :: args)
-        | _ -> (srcs, dests, arg :: args))
-      (List.combine args phis) ([], [], [])
+          (* Don't add duplicate swaps, that messes up the parallel move sequentialization *)
+          if
+            SeenSet.(
+              mem (arg_reg_idx, phi_reg_idx) seen
+              || mem (phi_reg_idx, arg_reg_idx) seen)
+          then (srcs, dests, copy :: args, seen)
+          else begin
+            swap_regs state arg_reg_idx phi_reg_idx;
+            ( arg :: copy :: srcs,
+              copy :: arg :: dests,
+              copy :: args,
+              SeenSet.add (arg_reg_idx, phi_reg_idx) seen )
+          end
+        | _ -> (srcs, dests, arg :: args, seen))
+      (List.combine args phis)
+      ([], [], [], SeenSet.empty)
   in
   let last =
     match last with
@@ -585,6 +629,9 @@ let color_instruction state uid instr_num head instr =
       (fun reg ->
         match reg with
         | X86.Target.Virtual a' as a when dies state uid a instr_num ->
+          Logs.debug (fun m ->
+              m "Killing dead register %a for %a\n" X86.Target.pp_reg a'.reg
+                X86.Target.pp_reg a);
           let reg = find_reg_index state.regs a'.reg in
           state.reg_current_var.(reg) <- None;
           state.reg_current_pref.(reg) <- 0.;
@@ -683,20 +730,28 @@ let color_block state ((first, tail) as block : X86.Cfg.block) : X86.Cfg.block =
 
 let after_color_block state (cfg : X86.Cfg.graph) pos : X86.Cfg.graph =
   let module Dom = (val state.dom) in
+  store_block_state state pos;
   let cfg =
     List.fold_left
       (fun cfg pred ->
-        if state.processed.(pred) then
+        if state.processed.(pred) then begin
+          load_block_state ~copy:false state pred;
           implement_phi_copies state cfg ~src:pred ~dest:pos
+        end
         else cfg)
       cfg (Dom.predecessors pos)
   in
+  load_block_state ~copy:false state pos;
   List.fold_left
     (fun cfg succ ->
       (* todo: use block.succs[0] instead *)
-      if state.processed.(succ) then
-        implement_phi_copies state cfg ~src:pos ~dest:succ
-      else cfg)
+      let cfg =
+        if state.processed.(succ) then
+          implement_phi_copies state cfg ~src:pos ~dest:succ
+        else cfg
+      in
+      store_block_state state succ;
+      cfg)
     cfg (Dom.successors pos)
 
 let build_preferences state graph : unit =
@@ -998,6 +1053,8 @@ let init_state ~select_state ~regs ~block_execution_frequency ~liveness
        and type uid = int
        and type graph = X86.Cfg.graph) =
   let num_vars = IntHashtbl.length select_state.Select_x86.State.vreg_block in
+  let empty_reg_current_var = Array.make (Array.length regs) None in
+  let empty_reg_current_pref = Array.make (Array.length regs) 0. in
   {
     select_state;
     regs;
@@ -1006,10 +1063,14 @@ let init_state ~select_state ~regs ~block_execution_frequency ~liveness
     dom = (module Dom);
     reg_current_var = Array.make (Array.length regs) None;
     reg_current_pref = Array.make (Array.length regs) 0.;
+    occupied = CCBV.create ~size:(Array.length regs) false;
+    saved_reg_current_var = Array.make Dom.size empty_reg_current_var;
+    saved_reg_current_pref = Array.make Dom.size empty_reg_current_pref;
+    saved_occupied =
+      Array.make Dom.size (CCBV.create ~size:(Array.length regs) false);
     processed = Array.make Dom.size false;
     num_vars;
     preferences = Array.make_matrix num_vars (Array.length regs) 0.;
-    occupied = CCBV.create ~size:(Array.length regs) false;
   }
 
 let regalloc_helper ?(args = RegSet.empty)
@@ -1035,6 +1096,19 @@ let regalloc_helper ?(args = RegSet.empty)
   combine_congruence_classes alloc_state cfg;
   k_prefs alloc_state;
   let go_block cfg pos =
+    load_block_state ~copy:true alloc_state pos;
+    Logs.debug (fun m ->
+        m "Coloring block %a:\n"
+          (Format.pp_print_option X86.Target.pp_label)
+          (Loop.Dom.label_of_position pos));
+    Logs.debug (fun m ->
+        m "Occupied: %a\n"
+          (Format.pp_print_list
+             ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
+             X86.Target.pp_reg)
+          (List.map
+             (fun r -> alloc_state.regs.(r))
+             (CCBV.to_list alloc_state.occupied)));
     let uid = X86.Cfg.idd (Loop.Dom.label_of_position pos) in
     alloc_state.select_state.curr_block := uid;
     let zblock, cfg = X86.Cfg.focus uid cfg in
@@ -1064,7 +1138,12 @@ let regalloc_helper ?(args = RegSet.empty)
     let cfg = X86.Cfg.(unfocus (unzip block, cfg)) in
     after_color_block alloc_state cfg pos
   in
-  List.fold_left go_block cfg (blockorder alloc_state)
+  let blockorder = blockorder alloc_state in
+  Logs.debug (fun m ->
+      m "Block order: %s\n"
+        ([%show: X86.Cfg.label option list]
+           (List.map Loop.Dom.label_of_position blockorder)));
+  List.fold_left go_block cfg blockorder
 
 let%expect_test "Nested loops register allocation" =
   let cfg = Examples.nested_loops in

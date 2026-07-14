@@ -14,4 +14,14 @@ let process_file filename =
     flush out;
     close_out out
   | None -> Format.printf "Error parsing file\n"
-let () = List.iter process_file !input_files
+let () =
+  let debug =
+    match Sys.getenv_opt "DEBUG" with
+    | Some s when String.trim s = "1" -> true
+    | _ -> false
+  in
+  if debug then begin
+    Logs.set_reporter (Logs_fmt.reporter ());
+    Logs.set_level (Some Logs.Debug)
+  end;
+  List.iter process_file !input_files

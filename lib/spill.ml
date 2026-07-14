@@ -169,10 +169,17 @@ module Liveness = struct
         };
       add_info =
         (fun a b ->
+          let mapping = RegSet.union a.mapping b.mapping in
           {
             a with
-            mapping = RegSet.union a.mapping b.mapping;
+            mapping;
             used = RegSet.union a.used b.used;
+            (* Updated mapping could set more variables as live out so remove those from dies *)
+            dies =
+              RegSet.fold
+                (fun reg acc -> RegMap.remove reg acc)
+                mapping
+                RegMap.(union (fun _ _ b -> Some b) a.dies b.dies);
           });
       changed =
         (fun ~before ~after ->
