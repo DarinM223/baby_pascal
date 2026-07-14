@@ -1,5 +1,5 @@
 %token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN COMMA
-%token PLUS MINUS TIMES NOT AND OR LT LE GT GE
+%token PLUS MINUS TIMES DIV NOT AND OR LT LE GT GE
 %token VAR
 %token TRUE FALSE
 %token FUNCTION PROCEDURE BEGIN END IF THEN ELSE WHILE DO
@@ -12,7 +12,7 @@
 %left EQUALS NEQUALS
 %left LT LE GT GE
 %left PLUS MINUS
-%left TIMES
+%left TIMES DIV
 %nonassoc NOT
 
 %start <Ast.stmt Ast.program> program
@@ -64,6 +64,7 @@ expr:
 | lhs = expr LT rhs = expr {Ast.Bop (Lt, lhs, rhs)}
 | lhs = expr LE rhs = expr {Ast.Bop (Le, lhs, rhs)}
 | lhs = expr TIMES rhs = expr {Ast.Bop (Mul, lhs, rhs)}
+| lhs = expr DIV rhs = expr {Ast.Bop (Div, lhs, rhs)}
 | lhs = expr PLUS rhs = expr {Ast.Bop (Add, lhs, rhs)}
 | lhs = expr MINUS rhs = expr {Ast.Bop (Sub, lhs, rhs)}
 | lhs = expr AND rhs = expr {Ast.Bop (And, lhs, rhs)}

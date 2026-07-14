@@ -126,7 +126,22 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
     begin match bop with
     | Ast.Add -> reuse_bop "addq"
     | Ast.Sub -> reuse_bop "subq"
-    | Ast.Mul -> reuse_bop "mulq"
+    | Ast.Mul ->
+      let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int)) in
+      let tmp2 = Reg (constrained Regs.rdx (fresh_vreg Int)) in
+      let tmp3 = Reg (constrained Regs.rax (fresh_vreg Int)) in
+      pcopy ~dests:[ tmp1; tmp3; tmp2 ] ~srcs:[ src1 ]
+      @> instr "imulq" ~defs:[] ~uses:[ src2 ]
+      @> mov ~dest ~src:tmp3 @> k dest
+    | Ast.Div ->
+      let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int)) in
+      let tmp2 = Reg (constrained Regs.rdx (fresh_vreg Int)) in
+      let tmp3 = Reg (constrained Regs.rax (fresh_vreg Int)) in
+      (* Clobbers rax and rdx because of the cqto instruction *)
+      pcopy ~dests:[ tmp1; tmp3; tmp2 ] ~srcs:[ src1 ]
+      @> instr "cqto" ~defs:[] ~uses:[]
+      @> instr "idivq" ~defs:[] ~uses:[ src2 ]
+      @> mov ~dest ~src:tmp3 @> k dest
     | Ast.And ->
       let tmp = Reg (fresh_vreg Int) in
       mov ~dest:tmp ~src:src1

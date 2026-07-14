@@ -138,6 +138,7 @@ let apply_bop l r = function
   | Ast.Add -> l + r
   | Ast.Sub -> l - r
   | Ast.Mul -> l * r
+  | Ast.Div -> l / r
   | Ast.And -> Int.logand l r
   | Ast.Or -> Int.logor l r
   | Ast.Eq -> if l = r then 1 else 0

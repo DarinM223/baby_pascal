@@ -524,14 +524,10 @@ let implement_phi_copies state cfg ~src ~dest =
     List.fold_right
       (fun (arg, phi) (srcs, dests, args) ->
         match (arg, phi) with
-        | ( Reg (Virtual { reg = arg_reg; _ } | (Physical _ as arg_reg)),
-            (Virtual { reg = phi_reg; _ } | (Physical _ as phi_reg)) )
-          when X86.Target.equal_reg arg_reg phi_reg ->
-          (srcs, dests, arg :: args)
         | Reg _, (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ->
           let copy = Reg (Physical phi_reg) in
           (arg :: srcs, copy :: dests, copy :: args)
-        | _ -> failwith "Phi not a virtual register")
+        | _ -> (srcs, dests, arg :: args))
       (List.combine args phis) ([], [], [])
   in
   let last =

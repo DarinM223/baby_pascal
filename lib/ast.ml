@@ -9,6 +9,7 @@ type bop =
   | Add
   | Sub
   | Mul
+  | Div
   | And
   | Or
   | Eq

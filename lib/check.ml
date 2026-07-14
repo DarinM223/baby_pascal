@@ -13,7 +13,7 @@ let rec check_expr venv fenv = function
   | Bop (bop, l, r) ->
     let l_expected, r_expected, ret_expected =
       match bop with
-      | Add | Sub | Mul -> (TInteger, TInteger, TInteger)
+      | Add | Sub | Mul | Div -> (TInteger, TInteger, TInteger)
       | And | Or -> (TBoolean, TBoolean, TBoolean)
       | Eq | Neq | Lt | Le | Gt | Ge -> (TInteger, TInteger, TBoolean)
     in

@@ -25,6 +25,7 @@ rule token = parse
 | '+' {PLUS}
 | '-' {MINUS}
 | '*' {TIMES}
+| '/' {DIV}
 | "var" {VAR}
 | "integer" {INTEGER}
 | "boolean" {BOOLEAN}
