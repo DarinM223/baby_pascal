@@ -1178,23 +1178,26 @@ let%expect_test "Nested loops register allocation" =
       jmp label6
     label1(local=false)():
       exit
-    label2(local=false)(rax):
-      jl label3, label1, %rax, $100
+    label2(local=false)(rbx):
+      jl label3, label1, %rbx, $100
     label3(local=false)():
-      movq %rbx, %rax
-      jmp label4(%rax, %rbx)
-    label4(local=false)(rax, rbx):
-      jl label5, label2(%rax), %rbx, $100
+      movq %rsi, %rbx
+      pcopy [(%rsi, %rbx); (%rbx, %rsi); (%r13, %rsi); (%rsi, %r13)]
+      jmp label4(%rsi, %r13)
+    label4(local=false)(rsi, r13):
+      jl label5, label2(%rsi), %r13, $100
     label5(local=false)():
-      movq %rax, %rax
-      addq %rax, %, $1
-      movq %rax, %rax
-      movq %rbx, %rbx
-      addq %rbx, %, $1
-      movq %rbx, %rbx
-      jmp label4(%rax, %rbx)
+      movq %r15, %rsi
+      addq %r15, %, $1
+      movq %r15, %r15
+      movq %r14, %r13
+      addq %r14, %, $1
+      movq %r14, %r14
+      pcopy [(%rsi, %r15); (%r15, %rsi); (%r13, %r14); (%r14, %r13)]
+      jmp label4(%rsi, %r13)
     label6(local=false)():
-      jmp label2(%rax)
+      pcopy [(%rbx, %rax); (%rax, %rbx)]
+      jmp label2(%rbx)
     |}]
 
 let%expect_test "Fibonacci register allocation" =
@@ -1307,9 +1310,10 @@ let%expect_test "Fibonacci register allocation" =
       movq %rax, %rbx
       jmp label1(%rax)
     label3(local=false)():
-      movq %rdi, %rbx
-      subq %rdi, %, $1
-      pcopy [(%rdi, %rdi)]
+      movq %rax, %rbx
+      subq %rax, %, $1
+      pcopy [(%r15, %rdi); (%rdi, %r15)]
+      pcopy [(%rdi, %rax)]
       call fibonacci
       movq %r13, %rax
       movq %rdi, %rbx
@@ -1317,8 +1321,8 @@ let%expect_test "Fibonacci register allocation" =
       pcopy [(%rdi, %rdi)]
       call fibonacci
       movq %rax, %rax
-      movq %rbx, %r13
-      addq %rbx, %, %rax
-      movq %rax, %rbx
+      movq %rsi, %r13
+      addq %rsi, %, %rax
+      movq %rax, %rsi
       jmp label1(%rax)
     |}]

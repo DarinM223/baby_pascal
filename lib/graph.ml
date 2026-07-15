@@ -53,6 +53,9 @@ functor
 
     type nodes = zgraph -> zgraph
 
+    let compare_label (uid1, _) (uid2, _) = Int.compare uid1 uid2
+    let hash_label (uid, _) = CCInt.hash uid
+
     let idd = function
       | None -> entry_uid
       | Some (uid, _) -> uid

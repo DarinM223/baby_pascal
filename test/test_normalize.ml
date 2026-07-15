@@ -15,7 +15,7 @@ let test_example_1 () =
       ]
   in
   let module Fresh = Normalize.Fresh () in
-  let result = Normalize.normalize Fresh.fresh expr in
+  let result = Normalize.normalize (module Fresh) expr in
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in

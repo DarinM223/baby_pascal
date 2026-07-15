@@ -60,6 +60,8 @@ module type S = sig
   val pp_label : Format.formatter -> label -> unit
   val show_label : label -> string
   val equal_label : label -> label -> bool
+  val compare_label : label -> label -> int
+  val hash_label : label -> int
 
   type regs = Target.reg list
   val pp_regs : Format.formatter -> regs -> unit

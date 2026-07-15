@@ -96,23 +96,31 @@ end
 
 module Cfg = Graph.Make (Target)
 module Flow = Dataflow.Make (Cfg)
-module Fresh () = struct
+module type Fresh = sig
+  val fresh : unit -> Target.reg
+  val new_label : unit -> Cfg.label
+  val reset_names : unit -> unit
+  val reset_labels : unit -> unit
+end
+module Fresh () : Fresh = struct
   let c = ref (-1)
   let fresh () =
     incr c;
     Target.name ("tmp" ^ string_of_int !c)
-  let reset () = c := -1
+
+  let l = ref 0
+  let new_label () =
+    incr l;
+    let i = !l in
+    (i, "label" ^ string_of_int i)
+
+  let reset_names () = c := -1
+  let reset_labels () = l := 0
 end
 
-let normalize (fresh : unit -> Target.reg) (stmt : Ast.stmt) : Cfg.graph =
+let normalize (module Fresh : Fresh) (stmt : Ast.stmt) : Cfg.graph =
+  let open Fresh in
   let ( let* ) = ( @@ ) in
-  let new_label : unit -> Cfg.label =
-    let c = ref 0 in
-    fun () ->
-      incr c;
-      let i = !c in
-      (i, "label" ^ string_of_int i)
-  in
   let label l =
     if Lazy.is_val l then Cfg.label (Lazy.force l) else fun a -> a
   in

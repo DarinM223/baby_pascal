@@ -5,13 +5,13 @@ let compile program =
     let open Ast in
     let normalize_decl = function
       | Function (f, ps, t, body) ->
-        Function (f, ps, t, Normalize.(set_return f (normalize F.fresh body)))
+        Function (f, ps, t, Normalize.(set_return f (normalize (module F) body)))
       | Procedure (f, ps, body) ->
-        Procedure (f, ps, Normalize.normalize F.fresh body)
+        Procedure (f, ps, Normalize.normalize (module F) body)
     in
     {
       program with
-      main = Normalize.normalize F.fresh program.main;
+      main = Normalize.normalize (module F) program.main;
       decls = List.map normalize_decl program.decls;
     }
   in
