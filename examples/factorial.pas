@@ -3,8 +3,7 @@ var printInteger : (integer): void;
 function factorial(n : integer) : integer;
 begin
   // Edge cases
-  if n < 0 then
-    factorial := 0;
+  factorial := 0;
   if n = 0 then
     factorial := 1;
 

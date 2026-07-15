@@ -469,9 +469,10 @@ let enforce_constraints state uid instr_num pcopy head =
           X86.Target.pp_instr orig_pcopy);
     (head, pcopy))
   else if not (CCBV.is_empty need_swap) then begin
-    Format.printf "Need swap: %s\n"
-      ([%show: X86.Target.reg list]
-         (List.map (fun r -> state.regs.(r)) (CCBV.to_list need_swap)));
+    Logs.debug (fun m ->
+        m "Need swap: %s\n"
+          ([%show: X86.Target.reg list]
+             (List.map (fun r -> state.regs.(r)) (CCBV.to_list need_swap))));
     (* swap with not constrained def - live throughs *)
     let free_non_constrained =
       CCBV.(diff (negate State.constrained_def_regs) State.live_through_regs)
@@ -491,7 +492,8 @@ let enforce_constraints state uid instr_num pcopy head =
       go [] [] (CCBV.to_list need_swap, CCBV.to_list free_non_constrained)
     in
     let pcopy' = X86.Target.pcopy ~dests ~srcs in
-    Format.printf "Emitting swap parallel copy: %a\n" X86.Target.pp_instr pcopy';
+    Logs.debug (fun m ->
+        m "Emitting swap parallel copy: %a\n" X86.Target.pp_instr pcopy');
     let assignment =
       enforce_constraints_assignment (module State) state pcopy
     in
@@ -742,17 +744,15 @@ let after_color_block state (cfg : X86.Cfg.graph) pos : X86.Cfg.graph =
       cfg (Dom.predecessors pos)
   in
   load_block_state ~copy:false state pos;
-  List.fold_left
-    (fun cfg succ ->
-      (* todo: use block.succs[0] instead *)
-      let cfg =
-        if state.processed.(succ) then
-          implement_phi_copies state cfg ~src:pos ~dest:succ
-        else cfg
-      in
-      store_block_state state succ;
-      cfg)
-    cfg (Dom.successors pos)
+  let succs = Dom.successors pos in
+  List.iter (fun succ -> store_block_state state succ) succs;
+  (* if block only has one successor we can add phi copies for current block *)
+  match succs with
+  | [ succ ] ->
+    if state.processed.(succ) then
+      implement_phi_copies state cfg ~src:pos ~dest:succ
+    else cfg
+  | _ -> cfg
 
 let build_preferences state graph : unit =
   let preferences = state.preferences in

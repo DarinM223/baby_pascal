@@ -1,5 +1,5 @@
 open X86
-module NameHashtbl = Hashtbl.Make (struct
+module NameHashtbl = CCHashtbl.Make (struct
   include Normalize.Name
   let equal = equal
   let hash = Hashtbl.hash
@@ -73,7 +73,17 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
       Undag.Target.operand -> (Target.operand -> 'a) -> 'a = function
     | Undag.Target.Instr src -> select state src
     | Undag.Target.Const i -> fun k -> k (Target.Imm i)
-    | Undag.Target.Reg r -> fun k -> k (NameHashtbl.find mapping r)
+    | Undag.Target.Reg r ->
+      fun k ->
+        begin try k (NameHashtbl.find mapping r)
+        with Not_found ->
+          let pp_sep fmt () = Format.pp_print_string fmt "," in
+          failwith
+          @@ Format.asprintf "Select_X86: Register %a not found in mapping %a\n"
+               Normalize.Name.pp r
+               (NameHashtbl.pp ~pp_sep Normalize.Name.pp Target.pp_operand)
+               mapping
+        end
     | Undag.Target.Label (l, args) ->
       fun k -> translate_operands args (fun args -> k (Target.Label (l, args)))
   and translate_operands l k =
@@ -242,13 +252,13 @@ let codegen_function ?(args = []) (state : State.t) (graph : Undag.Cfg.graph) :
       args
   in
   let pcopy = X86.Cfg.Instruction (Target.pcopy ~dests ~srcs) in
+  let blocks = Undag.Cfg.reverse_postorder_dfs graph in
   let graph =
     List.fold_left
       (fun acc block ->
         state.curr_block := Undag.Cfg.id block;
         X86.Cfg.Blocks.insert (codegen_block state block) acc)
-      X86.Cfg.empty
-      (Undag.Cfg.reverse_postorder_dfs graph)
+      X86.Cfg.empty blocks
   in
   let zblock, graph = X86.Cfg.focus_entry graph in
   match zblock with
