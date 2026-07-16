@@ -1,6 +1,12 @@
 module RegSet = Spill.Liveness.RegSet
 module RegMap = Spill.Liveness.RegMap
 
+let get_vreg vreg =
+  match vreg with
+  | X86.Target.Virtual vreg -> vreg
+  | r ->
+    failwith @@ Format.asprintf "Not a virtual register, %a" X86.Target.pp_reg r
+
 module Weights = struct
   let use_factor = 1.
   let def_factor = 1.
@@ -61,12 +67,10 @@ let find_reg_index regs reg : int =
       (Format.asprintf "find_reg: couldn't find index for register %a"
          X86.Target.pp_reg reg)
 
-let load_block_state ?(copy = false) state pos =
-  let copy_array = if copy then Array.copy else fun a -> a in
-  let copy_bits = if copy then CCBV.copy else fun a -> a in
-  state.reg_current_var <- copy_array state.saved_reg_current_var.(pos);
-  state.reg_current_pref <- copy_array state.saved_reg_current_pref.(pos);
-  state.occupied <- copy_bits state.saved_occupied.(pos);
+let load_block_state state pos =
+  state.reg_current_var <- state.saved_reg_current_var.(pos);
+  state.reg_current_pref <- state.saved_reg_current_pref.(pos);
+  state.occupied <- state.saved_occupied.(pos);
   for reg = 0 to Array.length state.reg_current_var - 1 do
     match state.reg_current_var.(reg) with
     | Some vreg when not (X86.Target.equal_reg vreg.reg state.regs.(reg)) ->
@@ -78,6 +82,20 @@ let store_block_state state pos =
   state.saved_reg_current_var.(pos) <- state.reg_current_var;
   state.saved_reg_current_pref.(pos) <- state.reg_current_pref;
   state.saved_occupied.(pos) <- state.occupied
+
+exception NotColoredYet
+
+let get_block_reg state pos vreg =
+  let exception Return of int in
+  try
+    for reg = 0 to Array.length state.saved_reg_current_var.(pos) - 1 do
+      match state.saved_reg_current_var.(pos).(reg) with
+      | Some vreg' when X86.Target.equal_reg vreg (Virtual vreg') ->
+        raise (Return reg)
+      | _ -> ()
+    done;
+    raise NotColoredYet
+  with Return reg -> reg
 
 let get_register state uid var head : int * float * X86.Cfg.head =
   (* give preference bonus to ReuseOperand contraints *)
@@ -737,15 +755,14 @@ let after_color_block state (cfg : X86.Cfg.graph) pos : X86.Cfg.graph =
     List.fold_left
       (fun cfg pred ->
         if state.processed.(pred) then begin
-          load_block_state ~copy:false state pred;
+          load_block_state state pred;
           implement_phi_copies state cfg ~src:pred ~dest:pos
         end
         else cfg)
       cfg (Dom.predecessors pos)
   in
-  load_block_state ~copy:false state pos;
+  load_block_state state pos;
   let succs = Dom.successors pos in
-  List.iter (fun succ -> store_block_state state succ) succs;
   (* if block only has one successor we can add phi copies for current block *)
   match succs with
   | [ succ ] ->
@@ -1053,8 +1070,6 @@ let init_state ~select_state ~regs ~block_execution_frequency ~liveness
        and type uid = int
        and type graph = X86.Cfg.graph) =
   let num_vars = IntHashtbl.length select_state.Select_x86.State.vreg_block in
-  let empty_reg_current_var = Array.make (Array.length regs) None in
-  let empty_reg_current_pref = Array.make (Array.length regs) 0. in
   {
     select_state;
     regs;
@@ -1064,10 +1079,12 @@ let init_state ~select_state ~regs ~block_execution_frequency ~liveness
     reg_current_var = Array.make (Array.length regs) None;
     reg_current_pref = Array.make (Array.length regs) 0.;
     occupied = CCBV.create ~size:(Array.length regs) false;
-    saved_reg_current_var = Array.make Dom.size empty_reg_current_var;
-    saved_reg_current_pref = Array.make Dom.size empty_reg_current_pref;
+    saved_reg_current_var =
+      Array.init Dom.size (fun _ -> Array.make (Array.length regs) None);
+    saved_reg_current_pref =
+      Array.init Dom.size (fun _ -> Array.make (Array.length regs) 0.);
     saved_occupied =
-      Array.make Dom.size (CCBV.create ~size:(Array.length regs) false);
+      Array.init Dom.size (fun _ -> CCBV.create ~size:(Array.length regs) false);
     processed = Array.make Dom.size false;
     num_vars;
     preferences = Array.make_matrix num_vars (Array.length regs) 0.;
@@ -1096,21 +1113,18 @@ let regalloc_helper ?(args = RegSet.empty)
   combine_congruence_classes alloc_state cfg;
   k_prefs alloc_state;
   let go_block cfg pos =
-    load_block_state ~copy:true alloc_state pos;
     Logs.debug (fun m ->
         m "Coloring block %a:\n"
           (Format.pp_print_option X86.Target.pp_label)
           (Loop.Dom.label_of_position pos));
-    Logs.debug (fun m ->
-        m "Occupied: %a\n"
-          (Format.pp_print_list
-             ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
-             X86.Target.pp_reg)
-          (List.map
-             (fun r -> alloc_state.regs.(r))
-             (CCBV.to_list alloc_state.occupied)));
+    Format.printf "Coloring block %a:\n"
+      (Format.pp_print_option X86.Target.pp_label)
+      (Loop.Dom.label_of_position pos);
+    load_block_state alloc_state pos;
     let uid = X86.Cfg.idd (Loop.Dom.label_of_position pos) in
     alloc_state.select_state.curr_block := uid;
+
+    (* color initial arguments for entry block *)
     let zblock, cfg = X86.Cfg.focus uid cfg in
     let zblock =
       if uid = X86.Cfg.entry_uid then
@@ -1134,6 +1148,79 @@ let regalloc_helper ?(args = RegSet.empty)
         (head, tail)
       else zblock
     in
+    let cfg = X86.Cfg.(unfocus (zblock, cfg)) in
+
+    (* for each live in, check if it is the same across predecessors
+       if not, create a phi node *)
+    let live_in = liveness.live_in pos in
+    let preds = Loop.Dom.predecessors pos in
+    let set_live_in v cfg =
+      try
+        Format.printf "Live in: %a\n" X86.Target.pp_reg v;
+        let assigned =
+          if CCList.is_empty preds then
+            find_reg_index alloc_state.regs (get_vreg v).reg
+          else get_block_reg alloc_state (List.hd preds) v
+        in
+        Format.printf "Setting %a to %a:\n" X86.Target.pp_reg v
+          X86.Target.pp_reg
+          alloc_state.regs.(assigned);
+        let get arr i def =
+          match preds with
+          | pred :: _ -> arr.(pred).(i)
+          | _ -> def ()
+        in
+        begin match
+          get alloc_state.saved_reg_current_var assigned (fun () ->
+              Some (get_vreg v))
+        with
+        | Some vreg -> vreg.reg <- alloc_state.regs.(assigned)
+        | _ -> ()
+        end;
+        CCBV.set alloc_state.occupied assigned;
+        alloc_state.reg_current_var.(assigned) <-
+          get alloc_state.saved_reg_current_var assigned (fun () ->
+              Some (get_vreg v));
+        alloc_state.reg_current_pref.(assigned) <-
+          get alloc_state.saved_reg_current_pref assigned (fun () -> 0.);
+        let need_to_create_phi = ref false in
+        let check_pred pred =
+          if alloc_state.processed.(pred) then begin
+            Format.printf "Checking pred %d for block %d\n"
+              (X86.Cfg.idd (Loop.Dom.label_of_position pred))
+              uid;
+            if
+              (not (CCBV.get alloc_state.saved_occupied.(pred) assigned))
+              || Option.map
+                   (fun v -> v.X86.Target.id)
+                   alloc_state.saved_reg_current_var.(pred).(assigned)
+                 <> Some (X86.Target.index v)
+            then need_to_create_phi := true
+          end
+        in
+        List.iter check_pred preds;
+        if !need_to_create_phi then begin
+          (* todo: create phi here *)
+          failwith
+          @@ Format.asprintf "Block %d needs to create phi for %a" uid
+               X86.Target.pp_reg v
+        end
+        else cfg
+      with NotColoredYet -> cfg
+    in
+    let cfg = X86.Target.RegSet.fold set_live_in live_in cfg in
+
+    Logs.debug (fun m ->
+        m "Block %d Occupied: %a\n" uid
+          (Format.pp_print_list
+             ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
+             X86.Target.pp_reg)
+          (List.map
+             (fun r -> alloc_state.regs.(r))
+             (CCBV.to_list alloc_state.occupied)));
+
+    (* now color registers for all the instructions in block *)
+    let zblock, cfg = X86.Cfg.focus uid cfg in
     let block = color_block alloc_state (X86.Cfg.zip zblock) in
     let cfg = X86.Cfg.(unfocus (unzip block, cfg)) in
     after_color_block alloc_state cfg pos

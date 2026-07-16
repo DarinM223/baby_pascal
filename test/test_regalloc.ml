@@ -488,6 +488,8 @@ let test_register_shuffle4 () =
   check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs
     ~old_vregs ~vregs ~init_state ~result_state
 
+(* Test: live !rsp,!r9 uses r14,rsi,r11,rdx defs r14,!rdi,!r11,!rsi clob !r13,!rbx,!rax,rdx,!r10,rsi,rcx,rdi,!r14,rbp,!r15,!r8,!r12 *)
+
 let _ =
   let _ = Random.set_state (Random.get_state ()) in
   Logs.set_reporter (Logs_fmt.reporter ());
