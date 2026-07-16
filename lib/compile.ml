@@ -21,7 +21,7 @@ let compile program =
     let cfg, changed' = Constprop.constprop block_args args cfg in
     if changed || changed' then round args cfg else cfg
   in
-  let lower_cfg args cfg =
+  let lower_cfg f args cfg =
     let extra = Normalize.Cfg.precalculate_edges cfg in
     let module Extra = (val extra) in
     let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
@@ -31,8 +31,21 @@ let compile program =
     let cfg = Construct.rename_variables (module Dom) cfg in
     let args = List.map (fun arg -> (arg, 0)) args in
     (* let cfg = round args cfg in *)
-    Format.printf "Cfg after optimization passes: %a\n" Normalize.Cfg.pp_graph
-      cfg;
+    Format.printf "===================================\n";
+    Format.printf "%s's cfg after optimization passes:\n" f;
+    Format.printf "===================================\n";
+    Format.printf "%a\n" Normalize.Cfg.pp_graph cfg;
+    let module Critedgesplit =
+      Critedgesplit.Make (F) (Normalize.Cfg) (Extra)
+        (struct
+          module Target = Normalize.Target
+          include Target
+        end) in
+    let cfg = Critedgesplit.split cfg in
+    Format.printf "===================================\n";
+    Format.printf "%s's cfg after critical edge split:\n" f;
+    Format.printf "===================================\n";
+    Format.printf "%a\n" Normalize.Cfg.pp_graph cfg;
     let cfg =
       Normalize.Cfg.Blocks.fold
         (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
@@ -40,7 +53,10 @@ let compile program =
     in
     let state = Select_x86.State.init () in
     let srcs, cfg = Select_x86.codegen_function ~args state cfg in
-    Format.printf "Cfg after codegen: %a\n" X86.Cfg.pp_graph cfg;
+    Format.printf "===================================\n";
+    Format.printf "%s's cfg after codegen:\n" f;
+    Format.printf "===================================\n";
+    Format.printf "%a\n" X86.Cfg.pp_graph cfg;
     let extra = X86.Cfg.precalculate_edges cfg in
     let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
     let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
@@ -62,18 +78,21 @@ let compile program =
         state cfg
         (fun _ -> ())
     in
-    Format.printf "After register allocation %a\n" X86.Printer.pp_graph cfg;
+    Format.printf "===================================\n";
+    Format.printf "%s after register allocation:\n" f;
+    Format.printf "===================================\n";
+    Format.printf "%a\n" X86.Printer.pp_graph cfg;
     let cfg = X86.Sequentialize.sequentialize cfg in
     Cleanup_x86.cleanup state X86.Regs.r8 cfg
   in
   let lower_decl = function
     | Ast.Function (f, args, ret, body) ->
-      Ast.Function (f, args, ret, lower_cfg (List.map fst args) body)
+      Ast.Function (f, args, ret, lower_cfg f (List.map fst args) body)
     | Ast.Procedure (f, args, body) ->
-      Ast.Procedure (f, args, lower_cfg (List.map fst args) body)
+      Ast.Procedure (f, args, lower_cfg f (List.map fst args) body)
   in
   let decls = List.map lower_decl program.decls in
-  let main = lower_cfg [] program.main in
+  let main = lower_cfg "main" [] program.main in
   { program with decls; main }
 
 let write_file out program =

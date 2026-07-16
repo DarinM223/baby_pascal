@@ -166,17 +166,6 @@ module Target = struct
 
   let srcs i = i.uses
   let dests i = i.defs
-  let map_uses f i =
-    {
-      i with
-      uses = List.map (fun op -> if is_tombstone op then op else f op) i.uses;
-    }
-  let map_reg_uses f = map_uses (subst_reg_operand f)
-  let map_defs f i =
-    {
-      i with
-      defs = List.map (fun op -> if is_tombstone op then op else f op) i.defs;
-    }
   let fold_uses f init i =
     let res, uses =
       List.fold_left_map
@@ -184,6 +173,8 @@ module Target = struct
         init i.uses
     in
     (res, { i with uses })
+  let map_uses f i = snd (fold_uses (fun _ op -> ((), f op)) () i)
+  let map_reg_uses f = map_uses (subst_reg_operand f)
   let fold_reg_uses f = fold_uses (fold_reg_operand f)
   let fold_defs f init i =
     let res, defs =
@@ -192,6 +183,7 @@ module Target = struct
         init i.defs
     in
     (res, { i with defs })
+  let map_defs f i = snd (fold_defs (fun _ op -> ((), f op)) () i)
   let fold_reg_defs f = fold_defs (fold_reg_operand f)
 
   let rec regset_of_operand = function

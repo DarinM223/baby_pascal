@@ -18,8 +18,8 @@ module Make
       Graph.S
         with type label = int * string
          and type Target.label = int * string)
-    (Dom :
-      Dominator.S
+    (Extra :
+      Graph.Extra
         with type label = G.label
          and type graph = G.graph
          and type position = int
@@ -46,7 +46,7 @@ struct
                 | Some (l, ops)
                   when (G.equal_label l l1 || G.equal_label l l2)
                        && List.length
-                            Dom.(predecessors (position_of_label (Some l)))
+                            Extra.(predecessors (position_of_label (Some l)))
                           > 1 ->
                   let l' =
                     try LabelTbl.find subst l

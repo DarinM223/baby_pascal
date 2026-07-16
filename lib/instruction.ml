@@ -38,7 +38,9 @@ module type Target = sig
   val is_tombstone : operand -> bool
   val srcs : instr -> operands
   val dests : instr -> operands
+  val fold_uses : ('a -> operand -> 'a * operand) -> 'a -> instr -> 'a * instr
   val map_uses : (operand -> operand) -> instr -> instr
+  val fold_defs : ('a -> operand -> 'a * operand) -> 'a -> instr -> 'a * instr
   val map_defs : (operand -> operand) -> instr -> instr
 end
 
@@ -82,45 +84,64 @@ module Make (T : Operand) = struct
     | Uop (o, _, _) -> [ o ]
     | Bop (o, _, _, _) -> [ o ]
 
-  let map_uses f =
-    let f op = if T.is_tombstone op then op else f op in
+  let fold_uses f acc =
+    let f acc op = if T.is_tombstone op then (acc, op) else f acc op in
     function
-    | Assign (d, s) -> Assign (d, f s)
+    | Assign (d, s) ->
+      let acc, s = f acc s in
+      (acc, Assign (d, s))
     | Call (d, sf, s) ->
-      let sf = f sf in
-      Call (d, sf, List.map f s)
+      let acc, sf = f acc sf in
+      let acc, s = List.fold_left_map f acc s in
+      (acc, Call (d, sf, s))
     | Goto (l, args) ->
-      begin match T.destruct_label (f (T.label l args)) with
-      | Some (l, args) -> Goto (l, args)
+      let acc, label = f acc (T.label l args) in
+      begin match T.destruct_label label with
+      | Some (l, args) -> (acc, Goto (l, args))
       | _ -> failwith "map_uses: goto label transformed into different operand"
       end
     | Cbranch (o1, o2, c, l1, l1args, l2, l2args) ->
-      let o1 = f o1 in
-      let o2 = f o2 in
-      let ol1 = T.destruct_label (f (T.label l1 l1args)) in
-      let ol2 = T.destruct_label (f (T.label l2 l2args)) in
-      begin match (ol1, ol2) with
+      let acc, o1 = f acc o1 in
+      let acc, o2 = f acc o2 in
+      let acc, ol1 = f acc (T.label l1 l1args) in
+      let acc, ol2 = f acc (T.label l2 l2args) in
+      begin match (T.destruct_label ol1, T.destruct_label ol2) with
       | Some (l1, l1args), Some (l2, l2args) ->
-        Cbranch (o1, o2, c, l1, l1args, l2, l2args)
+        (acc, Cbranch (o1, o2, c, l1, l1args, l2, l2args))
       | _ ->
         failwith "map_uses: cbranch label transformed into different operand"
       end
-    | Return o -> Return (List.map f o)
-    | Uop (d, op, s) -> Uop (d, op, f s)
+    | Return o ->
+      let acc, o = List.fold_left_map f acc o in
+      (acc, Return o)
+    | Uop (d, op, s) ->
+      let acc, s = f acc s in
+      (acc, Uop (d, op, s))
     | Bop (d, op, s1, s2) ->
-      let s1 = f s1 in
-      Bop (d, op, s1, f s2)
-  let map_defs f =
-    let f op = if T.is_tombstone op then op else f op in
+      let acc, s1 = f acc s1 in
+      let acc, s2 = f acc s2 in
+      (acc, Bop (d, op, s1, s2))
+  let map_uses f i = snd (fold_uses (fun _ op -> ((), f op)) () i)
+  let fold_defs f acc =
+    let f acc op = if T.is_tombstone op then (acc, op) else f acc op in
     function
-    | Assign (d, s) -> Assign (f d, s)
-    | Call (d, sf, s) -> Call (f d, sf, s)
-    | Goto (l, args) -> Goto (l, args)
+    | Assign (d, s) ->
+      let acc, d = f acc d in
+      (acc, Assign (d, s))
+    | Call (d, sf, s) ->
+      let acc, d = f acc d in
+      (acc, Call (d, sf, s))
+    | Goto (l, args) -> (acc, Goto (l, args))
     | Cbranch (o1, o2, c, l1, l1args, l2, l2args) ->
-      Cbranch (o1, o2, c, l1, l1args, l2, l2args)
-    | Return o -> Return o
-    | Uop (d, op, s) -> Uop (f d, op, s)
-    | Bop (d, op, s1, s2) -> Bop (f d, op, s1, s2)
+      (acc, Cbranch (o1, o2, c, l1, l1args, l2, l2args))
+    | Return o -> (acc, Return o)
+    | Uop (d, op, s) ->
+      let acc, d = f acc d in
+      (acc, Uop (d, op, s))
+    | Bop (d, op, s1, s2) ->
+      let acc, d = f acc d in
+      (acc, Bop (d, op, s1, s2))
+  let map_defs f i = snd (fold_defs (fun _ op -> ((), f op)) () i)
 
   let assign ~dest ~src = Assign (dest, src)
   let call ~dest f es = Call (dest, f, es)
