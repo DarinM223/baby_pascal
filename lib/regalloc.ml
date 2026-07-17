@@ -1105,6 +1105,52 @@ let init_state ~select_state ~regs ~block_execution_frequency ~liveness
     preferences = Array.make_matrix num_vars (Array.length regs) 0.;
   }
 
+let create_phi state cfg pos v =
+  let get_reg = function
+    | X86.Target.Virtual { reg; _ } when not (X86.Target.equal_reg reg v) -> reg
+    | X86.Target.Physical _ -> v
+    | _ ->
+      failwith
+      @@ Format.asprintf "create_phi: uncolored register %a" X86.Target.pp_reg v
+  in
+  let module Dom = (val state.dom) in
+  let phi_block_label = Dom.label_of_position pos in
+  (* add phi to block label at pos *)
+  let (head, tail), cfg = X86.Cfg.focus (X86.Cfg.idd phi_block_label) cfg in
+  let head =
+    match head with
+    | X86.Cfg.First (Label (l, info)) ->
+      X86.Cfg.First (Label (l, { info with args = get_reg v :: info.args }))
+    | X86.Cfg.First Entry ->
+      failwith "create_phi: cannot create phi for entry block"
+    | X86.Cfg.Head _ -> failwith "create_phi: expected first"
+  in
+  let cfg = X86.Cfg.unfocus ((head, tail), cfg) in
+  (* go into every predecessor of the block and add the phi argument to the end of its jump *)
+  let go_pred cfg pred =
+    load_block_state state pred;
+    let zblock, cfg = X86.Cfg.(focus (idd (Dom.label_of_position pred)) cfg) in
+    let head, last = X86.Cfg.goto_end zblock in
+    let rewrite_edge instr =
+      let add_phi_arg = function
+        | X86.Target.Label (l, ops) when phi_block_label = Some l ->
+          X86.Target.Label (l, Reg (get_reg v) :: ops)
+        | op -> op
+      in
+      X86.Target.map_uses add_phi_arg instr
+    in
+    let last =
+      match last with
+      | Exit | Return _ -> last
+      | Branch (instr, l) -> Branch (rewrite_edge instr, l)
+      | CBranch (instr, l1, l2) -> CBranch (rewrite_edge instr, l1, l2)
+    in
+    X86.Cfg.unfocus ((head, Last last), cfg)
+  in
+  let cfg = List.fold_left go_pred cfg (Dom.predecessors pos) in
+  load_block_state state pos;
+  cfg
+
 let regalloc_helper ?(args = RegSet.empty)
     ?(regs =
       X86.Regs.int_regs |> Array.of_list
@@ -1194,10 +1240,9 @@ let regalloc_helper ?(args = RegSet.empty)
         in
         List.iter check_pred preds;
         if !need_to_create_phi then begin
-          (* todo: create phi here *)
-          failwith
-          @@ Format.asprintf "Block %d needs to create phi for %a" uid
-               X86.Target.pp_reg v
+          Logs.debug (fun m ->
+              m "Block %d needs to create phi for %a" uid X86.Target.pp_reg v);
+          create_phi alloc_state cfg pos v
         end
         else cfg
       with NotColoredYet -> cfg
