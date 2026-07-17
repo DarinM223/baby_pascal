@@ -67,10 +67,12 @@ let find_reg_index regs reg : int =
       (Format.asprintf "find_reg: couldn't find index for register %a"
          X86.Target.pp_reg reg)
 
-let load_block_state state pos =
-  state.reg_current_var <- state.saved_reg_current_var.(pos);
-  state.reg_current_pref <- state.saved_reg_current_pref.(pos);
-  state.occupied <- state.saved_occupied.(pos);
+let load_block_state ?(copy = false) state pos =
+  let copy_arr = if copy then Array.copy else fun a -> a in
+  let copy_bits = if copy then CCBV.copy else fun a -> a in
+  state.reg_current_var <- copy_arr state.saved_reg_current_var.(pos);
+  state.reg_current_pref <- copy_arr state.saved_reg_current_pref.(pos);
+  state.occupied <- copy_bits state.saved_occupied.(pos);
   for reg = 0 to Array.length state.reg_current_var - 1 do
     match state.reg_current_var.(reg) with
     | Some vreg when not (X86.Target.equal_reg vreg.reg state.regs.(reg)) ->
@@ -152,7 +154,13 @@ let get_register state uid var head : int * float * X86.Cfg.head =
             Logs.debug (fun m ->
                 m "Adding move from %a to %a" X86.Target.pp_reg state.regs.(reg)
                   X86.Target.pp_reg state.regs.(oreg));
-            (* todo: modify occupied, reg_current_var and reg_current_pref *)
+            (* modify occupied, reg_current_var and reg_current_pref for optimistic move *)
+            CCBV.set state.occupied oreg;
+            CCBV.reset state.occupied reg;
+            state.reg_current_var.(oreg) <- Some ovar;
+            state.reg_current_var.(reg) <- None;
+            state.reg_current_pref.(oreg) <- next_pref;
+            state.reg_current_pref.(reg) <- 0.;
             let mov =
               X86.Target.mov
                 ~dest:(Reg state.regs.(oreg))
@@ -589,8 +597,8 @@ let implement_phi_copies state cfg ~src ~dest =
           then (srcs, dests, copy :: args, seen)
           else begin
             swap_regs state arg_reg_idx phi_reg_idx;
-            ( arg :: copy :: srcs,
-              copy :: arg :: dests,
+            ( arg :: srcs,
+              copy :: dests,
               copy :: args,
               SeenSet.add (arg_reg_idx, phi_reg_idx) seen )
           end
@@ -607,12 +615,19 @@ let implement_phi_copies state cfg ~src ~dest =
       X86.Printer.CBranch (replace_args instr args, l1, l2)
     | X86.Printer.Return _ -> last
   in
-  (* todo: this overwrites existing registers, maybe should swap instead
-     while modifying the virtual register's assigned registers? *)
   let tail =
     let open X86 in
     if List.length dests > 0 then
-      Cfg.Tail (Cfg.Instruction (Target.pcopy ~dests ~srcs), Cfg.Last last)
+      (* emit each swap as a separate pcopy
+         note: for some reason they need to be added in reverse order for factorial.pas to work
+         todo: figure out why this happens *)
+      List.fold_left2
+        (fun tail src dest ->
+          Cfg.Tail
+            ( Cfg.Instruction
+                (Target.pcopy ~dests:[ dest; src ] ~srcs:[ src; dest ]),
+              tail ))
+        (Cfg.Last last) srcs dests
     else Cfg.Last last
   in
   X86.Cfg.unfocus ((head, tail), cfg)
@@ -1113,15 +1128,15 @@ let regalloc_helper ?(args = RegSet.empty)
   combine_congruence_classes alloc_state cfg;
   k_prefs alloc_state;
   let go_block cfg pos =
-    Logs.debug (fun m ->
-        m "Coloring block %a:\n"
-          (Format.pp_print_option X86.Target.pp_label)
-          (Loop.Dom.label_of_position pos));
-    Format.printf "Coloring block %a:\n"
-      (Format.pp_print_option X86.Target.pp_label)
-      (Loop.Dom.label_of_position pos);
-    load_block_state alloc_state pos;
     let uid = X86.Cfg.idd (Loop.Dom.label_of_position pos) in
+    Logs.debug (fun m -> m "Coloring block %d:\n" uid);
+    Format.printf "Coloring block %d:\n" uid;
+    let preds = Loop.Dom.predecessors pos in
+    if not @@ CCList.is_empty preds then begin
+      load_block_state ~copy:true alloc_state (List.hd preds);
+      store_block_state alloc_state pos
+    end;
+    load_block_state alloc_state pos;
     alloc_state.select_state.curr_block := uid;
 
     (* color initial arguments for entry block *)
@@ -1153,36 +1168,15 @@ let regalloc_helper ?(args = RegSet.empty)
     (* for each live in, check if it is the same across predecessors
        if not, create a phi node *)
     let live_in = liveness.live_in pos in
-    let preds = Loop.Dom.predecessors pos in
     let set_live_in v cfg =
       try
         Format.printf "Live in: %a\n" X86.Target.pp_reg v;
-        let assigned =
-          if CCList.is_empty preds then
-            find_reg_index alloc_state.regs (get_vreg v).reg
-          else get_block_reg alloc_state (List.hd preds) v
-        in
-        Format.printf "Setting %a to %a:\n" X86.Target.pp_reg v
-          X86.Target.pp_reg
-          alloc_state.regs.(assigned);
-        let get arr i def =
-          match preds with
-          | pred :: _ -> arr.(pred).(i)
-          | _ -> def ()
-        in
-        begin match
-          get alloc_state.saved_reg_current_var assigned (fun () ->
-              Some (get_vreg v))
-        with
-        | Some vreg -> vreg.reg <- alloc_state.regs.(assigned)
-        | _ -> ()
-        end;
-        CCBV.set alloc_state.occupied assigned;
-        alloc_state.reg_current_var.(assigned) <-
-          get alloc_state.saved_reg_current_var assigned (fun () ->
-              Some (get_vreg v));
-        alloc_state.reg_current_pref.(assigned) <-
-          get alloc_state.saved_reg_current_pref assigned (fun () -> 0.);
+        Format.printf "Current vars: %s\n"
+          ([%show: X86.Target.reg option list]
+             (List.map
+                (Option.map (fun v -> X86.Target.Virtual v))
+                (Array.to_list alloc_state.reg_current_var)));
+        let assigned = get_block_reg alloc_state pos v in
         let need_to_create_phi = ref false in
         let check_pred pred =
           if alloc_state.processed.(pred) then begin
