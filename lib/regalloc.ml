@@ -155,6 +155,7 @@ let get_register state uid var head : int * float * X86.Cfg.head =
                 m "Adding move from %a to %a" X86.Target.pp_reg state.regs.(reg)
                   X86.Target.pp_reg state.regs.(oreg));
             (* modify occupied, reg_current_var and reg_current_pref for optimistic move *)
+            ovar.reg <- state.regs.(oreg);
             CCBV.set state.occupied oreg;
             CCBV.reset state.occupied reg;
             state.reg_current_var.(oreg) <- Some ovar;
@@ -1266,18 +1267,19 @@ let regalloc_helper ?(args = RegSet.empty)
     in
     let cfg = X86.Cfg.(unfocus (zblock, cfg)) in
 
+    Logs.debug (fun m ->
+        m "Current vars: %s\n"
+          ([%show: X86.Target.reg option list]
+             (List.map
+                (Option.map (fun v -> X86.Target.Virtual v))
+                (Array.to_list alloc_state.reg_current_var))));
+
     (* for each live in, check if it is the same across predecessors
        if not, create a phi node *)
     let live_in = liveness.live_in pos in
     let set_live_in v cfg =
       try
         Logs.debug (fun m -> m "Live in: %a\n" X86.Target.pp_reg v);
-        Logs.debug (fun m ->
-            m "Current vars: %s\n"
-              ([%show: X86.Target.reg option list]
-                 (List.map
-                    (Option.map (fun v -> X86.Target.Virtual v))
-                    (Array.to_list alloc_state.reg_current_var))));
         let assigned = get_block_reg alloc_state pos v in
         let need_to_create_phi = ref false in
         let check_pred pred =
