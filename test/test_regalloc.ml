@@ -102,11 +102,6 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   in
   let srcs, dests = (to_operands srcs, to_operands dests) in
   let instr = X86.Target.pcopy ~dests ~srcs in
-  let need_reassignment =
-    let s = enforce_constraints_state state uid instr_num instr in
-    let module State = (val s) in
-    State.need_reassignment
-  in
   let head, instr =
     color_instruction state uid instr_num (X86.Cfg.First Entry) instr
   in
@@ -141,7 +136,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
       in
       check bool (mk_check "occupied" src)
         (Utils.IntHashtbl.mem live_through (id src)
-        || (need_reassignment && Utils.IntHashtbl.mem live_through (id dest))
+        || Utils.IntHashtbl.mem live_through (id dest)
         || live_through_clobbered src)
         (CCBV.get state.occupied (idx (get_physical (reg src))));
       check bool (mk_check "occupied" dest)
@@ -154,9 +149,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
         (if live_through_clobbered src then
            Some (RegMap.find (reg src) clobbered)
          else if Utils.IntHashtbl.mem live_through (id src) then Some src
-         else if
-           need_reassignment && Utils.IntHashtbl.mem live_through (id dest)
-         then Some dest
+         else if Utils.IntHashtbl.mem live_through (id dest) then Some dest
          else None)
         (Option.map
            (fun vreg -> X86.Target.Virtual vreg)
@@ -175,7 +168,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
         (mk_check "current preference" src)
         (if
            Utils.IntHashtbl.mem live_through (id src)
-           || (need_reassignment && Utils.IntHashtbl.mem live_through (id dest))
+           || Utils.IntHashtbl.mem live_through (id dest)
          then float_of_int (get_vreg src).id
          else if live_through_clobbered src then float_of_int (get_vreg src).id
          else 0.)
@@ -302,6 +295,7 @@ let pick ?(regs = regs) =
    total_live_through = length(regs) - length(union(defs, extra_clobbered_regs))
    length(extra_curr_live) <= total_live_through
    length(extra_curr_live) + count(is_live_through, uses) = total_live_through
+   def can't be live through if it is in extra_clobbered_regs
 *)
 let rec randomized_register_shuffle_test () =
   let get_random () = CCRandom.(run (int_range 1 (Array.length regs))) in
@@ -317,10 +311,13 @@ let rec randomized_register_shuffle_test () =
       (get_random ())
   in
   let defs = pick (List.length uses) in
+  let extra_clobbered_regs_set =
+    X86.Target.RegSet.of_list extra_clobbered_regs
+  in
   let num_live_through =
     Array.length regs
     - X86.Target.RegSet.(
-        cardinal (union (of_list defs) (of_list extra_clobbered_regs)))
+        cardinal (union (of_list defs) extra_clobbered_regs_set))
   in
   if
     List.length uses = List.length defs
@@ -345,7 +342,14 @@ let rec randomized_register_shuffle_test () =
         (fun l -> (get_physical l, CCRandom.bool ()))
         extra_clobbered_regs
     in
-    let defs = List.map (fun l -> (get_physical l, CCRandom.bool ())) defs in
+    let defs =
+      List.map
+        (fun l ->
+          ( get_physical l,
+            if X86.Target.RegSet.mem l extra_clobbered_regs_set then false
+            else CCRandom.bool () ))
+        defs
+    in
     let pp_phys fmt (phys, live_through) =
       if live_through then
         Format.fprintf fmt "!%a" X86.Target.pp_reg (Physical phys)
@@ -488,7 +492,69 @@ let test_register_shuffle4 () =
   check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs
     ~old_vregs ~vregs ~init_state ~result_state
 
-(* Test: live !rsp,!r9 uses r14,rsi,r11,rdx defs r14,!rdi,!r11,!rsi clob !r13,!rbx,!rax,rdx,!r10,rsi,rcx,rdi,!r14,rbp,!r15,!r8,!r12 *)
+(* Test: live !r10,!rdi,!rbx uses r8,rcx,!r11,rdx defs !rbp,rcx,r8,!r15 clob !r8,!r13,!rcx,r14,!rsi,r9,!rax,!rsp,r12,!rdx *)
+let test_register_shuffle5 () =
+  let extra_curr_live = X86.Regs.[ (r10, true); (rdi, true); (rbx, true) ] in
+  let uses =
+    X86.Regs.[ (r8, false); (rcx, false); (r11, true); (rdx, false) ]
+  in
+  let defs = X86.Regs.[ (rbp, true); (rcx, false); (r8, false); (r15, true) ] in
+  let extra_clobbered_regs =
+    X86.Regs.
+      [
+        (r8, true);
+        (r13, true);
+        (rcx, true);
+        (r14, false);
+        (rsi, true);
+        (r9, false);
+        (rax, true);
+        (rsp, true);
+        (r12, false);
+        (rdx, true);
+      ]
+  in
+  let old_vregs, vregs, head =
+    setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
+      ~extra_clobbered_regs
+  in
+  let init_state, result_state = test_pcopy_instr ~regs head in
+  check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs
+    ~old_vregs ~vregs ~init_state ~result_state
+
+(* Test: live !rdx uses r15,rsp,r10,r12 defs !rbp,r9,r11,rsi clob r10,rcx,!r13,!r8,r14,r15,!rdi,!rsp,r9,rax,!r11,!r12,rbx,!rsi *)
+let test_register_shuffle6 () =
+  let extra_curr_live = X86.Regs.[ (rdx, true) ] in
+  let uses = List.map (fun r -> (r, false)) X86.Regs.[ r15; rsp; r10; r12 ] in
+  let defs =
+    X86.Regs.[ (rbp, true); (r9, false); (r11, false); (rsi, false) ]
+  in
+  let extra_clobbered_regs =
+    X86.Regs.
+      [
+        (r10, false);
+        (rcx, false);
+        (r13, true);
+        (r8, true);
+        (r14, false);
+        (r15, false);
+        (rdi, true);
+        (rsp, true);
+        (r9, false);
+        (rax, false);
+        (r11, true);
+        (r12, true);
+        (rbx, false);
+        (rsi, true);
+      ]
+  in
+  let old_vregs, vregs, head =
+    setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
+      ~extra_clobbered_regs
+  in
+  let init_state, result_state = test_pcopy_instr ~regs head in
+  check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs
+    ~old_vregs ~vregs ~init_state ~result_state
 
 let _ =
   let _ = Random.set_state (Random.get_state ()) in
@@ -508,5 +574,9 @@ let _ =
              `Quick test_register_shuffle3
         :: test_case "test live through clobbered reg occupies reg" `Quick
              test_register_shuffle4
+        :: test_case "non-reassignment move to constrained live through" `Quick
+             test_register_shuffle5
+        :: test_case "non-reassignment move to constrained live through 2"
+             `Quick test_register_shuffle6
         :: randomized );
     ]

@@ -460,7 +460,7 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
     let old_reg = permutation.(dest) in
     saved_pref.(dest) <- state.reg_current_pref.(old_reg);
     match state.reg_current_var.(old_reg) with
-    | Some src ->
+    | Some src when old_reg <> dest ->
       (* If register is live-through and it isn't a
            constrained definition register, then it will still be accessible
            after this instruction, so don't modify the assigned register. *)
@@ -468,7 +468,12 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         let src_reg = find_reg_index state.regs src.reg in
         CCBV.get live_through_regs src_reg
         && not (CCBV.get constrained_def_regs src_reg)
-      then ()
+      then
+        Logs.debug (fun m ->
+            m
+              "Not killing register %a because its register is live-through \
+               and not a constrained definition"
+              X86.Target.pp_reg (Virtual src))
       else begin
         src.reg <- state.regs.(dest);
         kill_reg.(old_reg) <- true
@@ -482,7 +487,7 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         | Tombstone -> Virtual src
         | r -> r
         end
-    | None -> ()
+    | _ -> ()
   done;
   for dest = 0 to num_regs - 1 do
     if kill_reg.(dest) then begin
@@ -539,7 +544,7 @@ let enforce_constraints state uid instr_num pcopy head =
   let need_swap =
     CCBV.(inter State.live_through_regs State.constrained_def_regs)
   in
-  if not State.need_reassignment then (
+  if not State.need_reassignment then begin
     let orig_pcopy = pcopy in
     let assignment = Array.init (Array.length state.regs) (fun r -> r) in
     let extra_srcs = ref [] in
@@ -562,6 +567,10 @@ let enforce_constraints state uid instr_num pcopy head =
     set_use_def (pcopy.uses, pcopy.defs);
     Logs.debug (fun m ->
         m "Dest Mapping %s\n" ([%show: X86.Target.reg array] State.dest_mapping));
+    Logs.debug (fun m ->
+        m "Assignments %s\n"
+          ([%show: X86.Target.reg array]
+             (Array.map (fun r -> state.regs.(r)) assignment)));
     let pcopy =
       enforce_constraints_pcopy (module State) state uid instr_num assignment
     in
@@ -575,7 +584,8 @@ let enforce_constraints state uid instr_num pcopy head =
     Logs.debug (fun m ->
         m "Regular PCopy %a created from %a\n" X86.Target.pp_instr pcopy
           X86.Target.pp_instr orig_pcopy);
-    (head, pcopy))
+    (head, pcopy)
+  end
   else if not (CCBV.is_empty need_swap) then begin
     Logs.debug (fun m ->
         m "Need swap: %s\n"
@@ -1518,7 +1528,7 @@ let%expect_test "Fibonacci register allocation" =
       pcopy [(%rbx, %rdi)]
       jle label2, label3, %rbx, $1
     label1(local=false)(rax):
-      pcopy [(%rax, %rax)]
+      pcopy []
       ret %rax
     label2(local=false)():
       movq %rax, %rbx
@@ -1532,7 +1542,7 @@ let%expect_test "Fibonacci register allocation" =
       movq %r13, %rax
       movq %rdi, %rbx
       subq %rdi, %, $2
-      pcopy [(%rdi, %rdi)]
+      pcopy []
       call fibonacci
       movq %rax, %rax
       movq %rsi, %r13
