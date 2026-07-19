@@ -99,7 +99,8 @@ let get_block_reg state pos vreg =
     raise NotColoredYet
   with Return reg -> reg
 
-let get_register state uid var head : int * float * X86.Cfg.head =
+let get_register ?(don't_use_for_optimistic_moves = CCBV.empty ()) state uid var
+    head : int * float * X86.Cfg.head =
   (* give preference bonus to ReuseOperand contraints *)
   begin match var with
   | X86.Target.Virtual { reg_constr = ReuseOperand (Virtual r); _ } ->
@@ -143,8 +144,10 @@ let get_register state uid var head : int * float * X86.Cfg.head =
       try
         for i = Array.length preferences - 1 downto 0 do
           let oreg, opref = preferences.(i) in
-          if not (CCBV.get state.occupied oreg) then
-            raise (Break (oreg, opref -. state.reg_current_pref.(oreg)))
+          if
+            (not (CCBV.get state.occupied oreg))
+            && not (CCBV.get don't_use_for_optimistic_moves oreg)
+          then raise (Break (oreg, opref -. state.reg_current_pref.(oreg)))
         done
       with Break (oreg, other_win) ->
         if i + 1 < Array.length preferences then
@@ -704,6 +707,11 @@ let color_instruction state uid instr_num head instr =
         | r -> (acc, r))
       RegMap.empty instr
   in
+  (* Make sure that killed use registers aren't used for optimistic moves,
+     because the move would be inserted before the register is killed *)
+  let don't_use_for_optimistic_moves =
+    CCBV.create ~size:(Array.length state.regs) false
+  in
   let remove_reuse_reg reg reg' =
     if RegMap.mem reg reuse_operands then begin
       Logs.debug (fun m ->
@@ -725,11 +733,16 @@ let color_instruction state uid instr_num head instr =
               m "Killing dead register %a for %a\n" X86.Target.pp_reg a'.reg
                 X86.Target.pp_reg a);
           let reg = find_reg_index state.regs a'.reg in
+          CCBV.set don't_use_for_optimistic_moves reg;
           state.reg_current_var.(reg) <- None;
           state.reg_current_pref.(reg) <- 0.;
           CCBV.reset state.occupied reg;
           remove_reuse_reg a a'.reg
-        | X86.Target.Virtual a' -> remove_reuse_reg reg a'.reg
+        | X86.Target.Virtual a' ->
+          Logs.debug (fun m ->
+              m "Setting existing colored register %a as %a\n" X86.Target.pp_reg
+                reg X86.Target.pp_reg a'.reg);
+          remove_reuse_reg reg a'.reg
         | r -> remove_reuse_reg r r)
       instr
   in
@@ -738,7 +751,9 @@ let color_instruction state uid instr_num head instr =
     X86.Target.fold_reg_defs
       (fun head -> function
         | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
-          let reg, pref, head = get_register state uid r head in
+          let reg, pref, head =
+            get_register ~don't_use_for_optimistic_moves state uid r head
+          in
           Logs.debug (fun m ->
               m "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual r')
                 X86.Target.pp_reg state.regs.(reg));
@@ -1163,12 +1178,23 @@ let init_state ~select_state ~regs ~block_execution_frequency ~liveness
   }
 
 let create_phi state cfg pos v =
-  let get_reg = function
-    | X86.Target.Virtual { reg; _ } when not (X86.Target.equal_reg reg v) -> reg
-    | X86.Target.Physical _ -> v
+  let rec get_reg v' =
+    match v' with
+    | X86.Target.Virtual { reg; _ } when not (X86.Target.equal_reg reg v') ->
+      reg
+    | X86.Target.Physical _ -> v'
     | _ ->
-      failwith
-      @@ Format.asprintf "create_phi: uncolored register %a" X86.Target.pp_reg v
+      if not (X86.Target.equal_reg v v') then begin
+        let default_reg = get_reg v in
+        Logs.debug (fun m ->
+            m "create_phi: uncolored register %a, using default %a\n"
+              X86.Target.pp_reg v' X86.Target.pp_reg default_reg);
+        default_reg
+      end
+      else
+        failwith
+        @@ Format.asprintf "create_phi: uncolored register %a" X86.Target.pp_reg
+             v
   in
   let module Dom = (val state.dom) in
   let phi_block_label = Dom.label_of_position pos in
@@ -1188,10 +1214,13 @@ let create_phi state cfg pos v =
     load_block_state state pred;
     let zblock, cfg = X86.Cfg.(focus (idd (Dom.label_of_position pred)) cfg) in
     let head, last = X86.Cfg.goto_end zblock in
+    (* if predecessor is unprocessed, insert the uncolored virtual register,
+       it will be colored with the right register later. *)
+    let v = if state.processed.(pred) then get_reg v else v in
     let rewrite_edge instr =
       let add_phi_arg = function
         | X86.Target.Label (l, ops) when phi_block_label = Some l ->
-          X86.Target.Label (l, Reg (get_reg v) :: ops)
+          X86.Target.Label (l, Reg v :: ops)
         | op -> op
       in
       X86.Target.map_uses add_phi_arg instr
@@ -1281,24 +1310,23 @@ let regalloc_helper ?(args = RegSet.empty)
       try
         Logs.debug (fun m -> m "Live in: %a\n" X86.Target.pp_reg v);
         let assigned = get_block_reg alloc_state pos v in
-        let need_to_create_phi = ref false in
-        let check_pred pred =
-          if alloc_state.processed.(pred) then begin
+        let pred_needs_to_create_phi pred =
+          if not alloc_state.processed.(pred) then
+            (* always create phi for backedge *)
+            true
+          else begin
             Logs.debug (fun m ->
                 m "Checking pred %d for block %d\n"
                   (X86.Cfg.idd (Loop.Dom.label_of_position pred))
                   uid);
-            if
-              (not (CCBV.get alloc_state.saved_occupied.(pred) assigned))
-              || Option.map
-                   (fun v -> v.X86.Target.id)
-                   alloc_state.saved_reg_current_var.(pred).(assigned)
-                 <> Some (X86.Target.index v)
-            then need_to_create_phi := true
+            (not (CCBV.get alloc_state.saved_occupied.(pred) assigned))
+            || Option.map
+                 (fun v -> v.X86.Target.id)
+                 alloc_state.saved_reg_current_var.(pred).(assigned)
+               <> Some (X86.Target.index v)
           end
         in
-        List.iter check_pred preds;
-        if !need_to_create_phi then begin
+        if List.exists pred_needs_to_create_phi preds then begin
           Logs.debug (fun m ->
               m "Block %d needs to create phi for %a" uid X86.Target.pp_reg v);
           create_phi alloc_state cfg pos v
