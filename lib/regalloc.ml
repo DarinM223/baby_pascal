@@ -1,6 +1,12 @@
 module RegSet = Spill.Liveness.RegSet
 module RegMap = Spill.Liveness.RegMap
 
+let get_vreg vreg =
+  match vreg with
+  | X86.Target.Virtual vreg -> vreg
+  | r ->
+    failwith @@ Format.asprintf "Not a virtual register, %a" X86.Target.pp_reg r
+
 module Weights = struct
   let use_factor = 1.
   let def_factor = 1.
@@ -62,10 +68,10 @@ let find_reg_index regs reg : int =
          X86.Target.pp_reg reg)
 
 let load_block_state ?(copy = false) state pos =
-  let copy_array = if copy then Array.copy else fun a -> a in
+  let copy_arr = if copy then Array.copy else fun a -> a in
   let copy_bits = if copy then CCBV.copy else fun a -> a in
-  state.reg_current_var <- copy_array state.saved_reg_current_var.(pos);
-  state.reg_current_pref <- copy_array state.saved_reg_current_pref.(pos);
+  state.reg_current_var <- copy_arr state.saved_reg_current_var.(pos);
+  state.reg_current_pref <- copy_arr state.saved_reg_current_pref.(pos);
   state.occupied <- copy_bits state.saved_occupied.(pos);
   for reg = 0 to Array.length state.reg_current_var - 1 do
     match state.reg_current_var.(reg) with
@@ -79,7 +85,22 @@ let store_block_state state pos =
   state.saved_reg_current_pref.(pos) <- state.reg_current_pref;
   state.saved_occupied.(pos) <- state.occupied
 
-let get_register state uid var head : int * float * X86.Cfg.head =
+exception NotColoredYet
+
+let get_block_reg state pos vreg =
+  let exception Return of int in
+  try
+    for reg = 0 to Array.length state.saved_reg_current_var.(pos) - 1 do
+      match state.saved_reg_current_var.(pos).(reg) with
+      | Some vreg' when X86.Target.equal_reg vreg (Virtual vreg') ->
+        raise (Return reg)
+      | _ -> ()
+    done;
+    raise NotColoredYet
+  with Return reg -> reg
+
+let get_register ?(don't_use_for_optimistic_moves = CCBV.empty ()) state uid var
+    head : int * float * X86.Cfg.head =
   (* give preference bonus to ReuseOperand contraints *)
   begin match var with
   | X86.Target.Virtual { reg_constr = ReuseOperand (Virtual r); _ } ->
@@ -123,8 +144,10 @@ let get_register state uid var head : int * float * X86.Cfg.head =
       try
         for i = Array.length preferences - 1 downto 0 do
           let oreg, opref = preferences.(i) in
-          if not (CCBV.get state.occupied oreg) then
-            raise (Break (oreg, opref -. state.reg_current_pref.(oreg)))
+          if
+            (not (CCBV.get state.occupied oreg))
+            && not (CCBV.get don't_use_for_optimistic_moves oreg)
+          then raise (Break (oreg, opref -. state.reg_current_pref.(oreg)))
         done
       with Break (oreg, other_win) ->
         if i + 1 < Array.length preferences then
@@ -134,7 +157,14 @@ let get_register state uid var head : int * float * X86.Cfg.head =
             Logs.debug (fun m ->
                 m "Adding move from %a to %a" X86.Target.pp_reg state.regs.(reg)
                   X86.Target.pp_reg state.regs.(oreg));
-            (* todo: modify occupied, reg_current_var and reg_current_pref *)
+            (* modify occupied, reg_current_var and reg_current_pref for optimistic move *)
+            ovar.reg <- state.regs.(oreg);
+            CCBV.set state.occupied oreg;
+            CCBV.reset state.occupied reg;
+            state.reg_current_var.(oreg) <- Some ovar;
+            state.reg_current_var.(reg) <- None;
+            state.reg_current_pref.(oreg) <- next_pref;
+            state.reg_current_pref.(reg) <- 0.;
             let mov =
               X86.Target.mov
                 ~dest:(Reg state.regs.(oreg))
@@ -153,6 +183,103 @@ let dies state uid a instr_num =
   match state.liveness.dies uid a with
   | Some num when num <= instr_num -> true
   | _ -> false
+
+let swap_regs state src dest =
+  begin match state.reg_current_var.(src) with
+  | Some src_vreg -> src_vreg.reg <- state.regs.(dest)
+  | _ -> ()
+  end;
+  begin match state.reg_current_var.(dest) with
+  | Some dest_vreg -> dest_vreg.reg <- state.regs.(src)
+  | _ -> ()
+  end;
+  let tmp = CCBV.get state.occupied src in
+  CCBV.set_bool state.occupied src (CCBV.get state.occupied dest);
+  CCBV.set_bool state.occupied dest tmp;
+  let tmp = state.reg_current_var.(src) in
+  state.reg_current_var.(src) <- state.reg_current_var.(dest);
+  state.reg_current_var.(dest) <- tmp;
+  let tmp = state.reg_current_pref.(src) in
+  state.reg_current_pref.(src) <- state.reg_current_pref.(dest);
+  state.reg_current_pref.(dest) <- tmp
+
+let permute_values state (permutation : int array) (head : X86.Cfg.head) =
+  Logs.debug (fun m ->
+      m "Permute values permutation %s occupied: %a\n"
+        ([%show: int array] permutation)
+        (Format.pp_print_list
+           ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
+           X86.Target.pp_reg)
+        (List.map (fun r -> state.regs.(r)) (CCBV.to_list state.occupied)));
+  let num_regs = Array.length state.regs in
+  let num_used = Array.make num_regs 0 in
+  for r = 0 to num_regs - 1 do
+    let old_reg = permutation.(r) in
+    (* todo: phi jump args are killed at end of block,
+       once that is fixed, then restore the commented code *)
+    (* if CCBV.get state.occupied old_reg then *)
+    num_used.(old_reg) <- num_used.(old_reg) + 1
+    (* else permutation.(r) <- r (* source register is not live, do nothing *) *)
+  done;
+  let r = ref 0 in
+  let srcs = CCVector.create () in
+  let dests = CCVector.create () in
+  (* create initial parallel copy *)
+  while !r < num_regs do
+    let old_reg = permutation.(!r) in
+    (* copy isn't possible if destination register is still used *)
+    if old_reg = !r || num_used.(!r) > 0 then incr r
+    else begin
+      begin match state.reg_current_var.(old_reg) with
+      | Some vreg -> vreg.reg <- state.regs.(!r)
+      | _ -> ()
+      end;
+      CCBV.set state.occupied !r;
+      CCBV.reset state.occupied old_reg;
+      state.reg_current_var.(!r) <- state.reg_current_var.(old_reg);
+      state.reg_current_var.(old_reg) <- None;
+      state.reg_current_pref.(!r) <- state.reg_current_pref.(old_reg);
+      state.reg_current_pref.(old_reg) <- 0.;
+      CCVector.push srcs (X86.Target.Reg state.regs.(old_reg));
+      CCVector.push dests (X86.Target.Reg state.regs.(!r));
+      permutation.(!r) <- !r;
+      num_used.(old_reg) <- num_used.(old_reg) - 1;
+      if old_reg < !r && num_used.(old_reg) = 0 then r := old_reg else incr r
+    end
+  done;
+  let head =
+    if CCVector.length dests > 0 then
+      X86.Cfg.Head
+        ( head,
+          Instruction
+            (X86.Target.pcopy ~dests:(CCVector.to_list dests)
+               ~srcs:(CCVector.to_list srcs)) )
+    else head
+  in
+  (* resolve remaining cycles with permutation instructions *)
+  r := 0;
+  let head = ref head in
+  while !r < num_regs do
+    let old_reg = permutation.(!r) in
+    if old_reg = !r then incr r
+    else begin
+      let r' = permutation.(old_reg) in
+      swap_regs state old_reg r';
+      Logs.debug (fun m ->
+          m "Swapping %a with %a\n" X86.Target.pp_reg state.regs.(old_reg)
+            X86.Target.pp_reg state.regs.(r'));
+      head :=
+        X86.Cfg.Head
+          ( !head,
+            Instruction
+              (X86.Target.pcopy
+                 ~dests:[ Reg state.regs.(r'); Reg state.regs.(old_reg) ]
+                 ~srcs:[ Reg state.regs.(old_reg); Reg state.regs.(r') ]) );
+      permutation.(old_reg) <- old_reg;
+      permutation.(!r) <- r'
+    end
+  done;
+  !head
 
 module type EnforceConstraints = sig
   val dest_mapping : X86.Target.reg array
@@ -333,7 +460,7 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
     let old_reg = permutation.(dest) in
     saved_pref.(dest) <- state.reg_current_pref.(old_reg);
     match state.reg_current_var.(old_reg) with
-    | Some src ->
+    | Some src when old_reg <> dest ->
       (* If register is live-through and it isn't a
            constrained definition register, then it will still be accessible
            after this instruction, so don't modify the assigned register. *)
@@ -341,7 +468,12 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         let src_reg = find_reg_index state.regs src.reg in
         CCBV.get live_through_regs src_reg
         && not (CCBV.get constrained_def_regs src_reg)
-      then ()
+      then
+        Logs.debug (fun m ->
+            m
+              "Not killing register %a because its register is live-through \
+               and not a constrained definition"
+              X86.Target.pp_reg (Virtual src))
       else begin
         src.reg <- state.regs.(dest);
         kill_reg.(old_reg) <- true
@@ -355,7 +487,7 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         | Tombstone -> Virtual src
         | r -> r
         end
-    | None -> ()
+    | _ -> ()
   done;
   for dest = 0 to num_regs - 1 do
     if kill_reg.(dest) then begin
@@ -406,32 +538,13 @@ let enforce_constraints_pcopy (module State : EnforceConstraints) state uid
         X86.Target.pp_operands !srcs);
   X86.Target.pcopy ~dests:!dests ~srcs:!srcs
 
-let swap_regs state src dest =
-  begin match state.reg_current_var.(src) with
-  | Some src_vreg -> src_vreg.reg <- state.regs.(dest)
-  | _ -> ()
-  end;
-  begin match state.reg_current_var.(dest) with
-  | Some dest_vreg -> dest_vreg.reg <- state.regs.(src)
-  | _ -> ()
-  end;
-  let tmp = CCBV.get state.occupied src in
-  CCBV.set_bool state.occupied src (CCBV.get state.occupied dest);
-  CCBV.set_bool state.occupied dest tmp;
-  let tmp = state.reg_current_var.(src) in
-  state.reg_current_var.(src) <- state.reg_current_var.(dest);
-  state.reg_current_var.(dest) <- tmp;
-  let tmp = state.reg_current_pref.(src) in
-  state.reg_current_pref.(src) <- state.reg_current_pref.(dest);
-  state.reg_current_pref.(dest) <- tmp
-
 let enforce_constraints state uid instr_num pcopy head =
   let s = enforce_constraints_state state uid instr_num pcopy in
   let module State = (val s) in
   let need_swap =
     CCBV.(inter State.live_through_regs State.constrained_def_regs)
   in
-  if not State.need_reassignment then (
+  if not State.need_reassignment then begin
     let orig_pcopy = pcopy in
     let assignment = Array.init (Array.length state.regs) (fun r -> r) in
     let extra_srcs = ref [] in
@@ -454,6 +567,10 @@ let enforce_constraints state uid instr_num pcopy head =
     set_use_def (pcopy.uses, pcopy.defs);
     Logs.debug (fun m ->
         m "Dest Mapping %s\n" ([%show: X86.Target.reg array] State.dest_mapping));
+    Logs.debug (fun m ->
+        m "Assignments %s\n"
+          ([%show: X86.Target.reg array]
+             (Array.map (fun r -> state.regs.(r)) assignment)));
     let pcopy =
       enforce_constraints_pcopy (module State) state uid instr_num assignment
     in
@@ -467,7 +584,8 @@ let enforce_constraints state uid instr_num pcopy head =
     Logs.debug (fun m ->
         m "Regular PCopy %a created from %a\n" X86.Target.pp_instr pcopy
           X86.Target.pp_instr orig_pcopy);
-    (head, pcopy))
+    (head, pcopy)
+  end
   else if not (CCBV.is_empty need_swap) then begin
     Logs.debug (fun m ->
         m "Need swap: %s\n"
@@ -545,40 +663,32 @@ let implement_phi_copies state cfg ~src ~dest =
     | X86.Cfg.Label (_, info) -> info.args
     | X86.Cfg.Entry -> []
   in
-  let module SeenSet = Set.Make (struct
-    type t = int * int
-    let compare = compare
-  end) in
-  let srcs, dests, args, _ =
+  let permutations = Array.init (Array.length state.regs) (fun r -> r) in
+  let args =
     let open X86.Target in
     List.fold_right
-      (fun (arg, phi) (srcs, dests, args, seen) ->
+      (fun (arg, phi) args ->
         match (arg, phi) with
-        | ( Reg (Virtual { reg = arg_reg; _ } | (Physical _ as arg_reg)),
-            (Virtual { reg = phi_reg; _ } | (Physical _ as phi_reg)) )
-          when X86.Target.equal_reg arg_reg phi_reg ->
-          (srcs, dests, arg :: args, seen)
         | ( Reg (Virtual { reg = arg_reg; _ } | (Physical _ as arg_reg)),
             (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ) ->
           let arg_reg_idx = find_reg_index state.regs arg_reg in
           let phi_reg_idx = find_reg_index state.regs (Physical phi_reg) in
-          let copy = Reg (Physical phi_reg) in
-          (* Don't add duplicate swaps, that messes up the parallel move sequentialization *)
-          if
-            SeenSet.(
-              mem (arg_reg_idx, phi_reg_idx) seen
-              || mem (phi_reg_idx, arg_reg_idx) seen)
-          then (srcs, dests, copy :: args, seen)
-          else begin
-            swap_regs state arg_reg_idx phi_reg_idx;
-            ( arg :: copy :: srcs,
-              copy :: arg :: dests,
-              copy :: args,
-              SeenSet.add (arg_reg_idx, phi_reg_idx) seen )
+          if arg_reg_idx <> phi_reg_idx then begin
+            Logs.debug (fun m ->
+                m "Setting jump reg %a to phi reg %a\n" X86.Target.pp_reg
+                  state.regs.(arg_reg_idx) X86.Target.pp_reg
+                  state.regs.(phi_reg_idx));
+            permutations.(phi_reg_idx) <- arg_reg_idx;
+            (* if phi is occupied, swap it with arg_reg *)
+            (* todo: check if correct *)
+            if CCBV.get state.occupied phi_reg_idx then begin
+              permutations.(arg_reg_idx) <- phi_reg_idx
+            end;
+            Reg (Physical phi_reg) :: args
           end
-        | _ -> (srcs, dests, arg :: args, seen))
-      (List.combine args phis)
-      ([], [], [], SeenSet.empty)
+          else arg :: args
+        | _ -> arg :: args)
+      (List.combine args phis) []
   in
   let last =
     match last with
@@ -589,15 +699,8 @@ let implement_phi_copies state cfg ~src ~dest =
       X86.Printer.CBranch (replace_args instr args, l1, l2)
     | X86.Printer.Return _ -> last
   in
-  (* todo: this overwrites existing registers, maybe should swap instead
-     while modifying the virtual register's assigned registers? *)
-  let tail =
-    let open X86 in
-    if List.length dests > 0 then
-      Cfg.Tail (Cfg.Instruction (Target.pcopy ~dests ~srcs), Cfg.Last last)
-    else Cfg.Last last
-  in
-  X86.Cfg.unfocus ((head, tail), cfg)
+  let head = permute_values state permutations head in
+  X86.Cfg.unfocus ((head, Last last), cfg)
 
 let color_instruction state uid instr_num head instr =
   let head, instr =
@@ -613,6 +716,11 @@ let color_instruction state uid instr_num head instr =
           (RegMap.add reg r acc, r)
         | r -> (acc, r))
       RegMap.empty instr
+  in
+  (* Make sure that killed use registers aren't used for optimistic moves,
+     because the move would be inserted before the register is killed *)
+  let don't_use_for_optimistic_moves =
+    CCBV.create ~size:(Array.length state.regs) false
   in
   let remove_reuse_reg reg reg' =
     if RegMap.mem reg reuse_operands then begin
@@ -635,11 +743,16 @@ let color_instruction state uid instr_num head instr =
               m "Killing dead register %a for %a\n" X86.Target.pp_reg a'.reg
                 X86.Target.pp_reg a);
           let reg = find_reg_index state.regs a'.reg in
+          CCBV.set don't_use_for_optimistic_moves reg;
           state.reg_current_var.(reg) <- None;
           state.reg_current_pref.(reg) <- 0.;
           CCBV.reset state.occupied reg;
           remove_reuse_reg a a'.reg
-        | X86.Target.Virtual a' -> remove_reuse_reg reg a'.reg
+        | X86.Target.Virtual a' ->
+          Logs.debug (fun m ->
+              m "Setting existing colored register %a as %a\n" X86.Target.pp_reg
+                reg X86.Target.pp_reg a'.reg);
+          remove_reuse_reg reg a'.reg
         | r -> remove_reuse_reg r r)
       instr
   in
@@ -648,7 +761,9 @@ let color_instruction state uid instr_num head instr =
     X86.Target.fold_reg_defs
       (fun head -> function
         | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r ->
-          let reg, pref, head = get_register state uid r head in
+          let reg, pref, head =
+            get_register ~don't_use_for_optimistic_moves state uid r head
+          in
           Logs.debug (fun m ->
               m "Setting register for %a to %a\n" X86.Target.pp_reg (Virtual r')
                 X86.Target.pp_reg state.regs.(reg));
@@ -737,15 +852,14 @@ let after_color_block state (cfg : X86.Cfg.graph) pos : X86.Cfg.graph =
     List.fold_left
       (fun cfg pred ->
         if state.processed.(pred) then begin
-          load_block_state ~copy:false state pred;
+          load_block_state state pred;
           implement_phi_copies state cfg ~src:pred ~dest:pos
         end
         else cfg)
       cfg (Dom.predecessors pos)
   in
-  load_block_state ~copy:false state pos;
+  load_block_state state pos;
   let succs = Dom.successors pos in
-  List.iter (fun succ -> store_block_state state succ) succs;
   (* if block only has one successor we can add phi copies for current block *)
   match succs with
   | [ succ ] ->
@@ -1053,8 +1167,6 @@ let init_state ~select_state ~regs ~block_execution_frequency ~liveness
        and type uid = int
        and type graph = X86.Cfg.graph) =
   let num_vars = IntHashtbl.length select_state.Select_x86.State.vreg_block in
-  let empty_reg_current_var = Array.make (Array.length regs) None in
-  let empty_reg_current_pref = Array.make (Array.length regs) 0. in
   {
     select_state;
     regs;
@@ -1064,14 +1176,76 @@ let init_state ~select_state ~regs ~block_execution_frequency ~liveness
     reg_current_var = Array.make (Array.length regs) None;
     reg_current_pref = Array.make (Array.length regs) 0.;
     occupied = CCBV.create ~size:(Array.length regs) false;
-    saved_reg_current_var = Array.make Dom.size empty_reg_current_var;
-    saved_reg_current_pref = Array.make Dom.size empty_reg_current_pref;
+    saved_reg_current_var =
+      Array.init Dom.size (fun _ -> Array.make (Array.length regs) None);
+    saved_reg_current_pref =
+      Array.init Dom.size (fun _ -> Array.make (Array.length regs) 0.);
     saved_occupied =
-      Array.make Dom.size (CCBV.create ~size:(Array.length regs) false);
+      Array.init Dom.size (fun _ -> CCBV.create ~size:(Array.length regs) false);
     processed = Array.make Dom.size false;
     num_vars;
     preferences = Array.make_matrix num_vars (Array.length regs) 0.;
   }
+
+let create_phi state cfg pos v =
+  let rec get_reg v' =
+    match v' with
+    | X86.Target.Virtual { reg; _ } when not (X86.Target.equal_reg reg v') ->
+      reg
+    | X86.Target.Physical _ -> v'
+    | _ ->
+      if not (X86.Target.equal_reg v v') then begin
+        let default_reg = get_reg v in
+        Logs.debug (fun m ->
+            m "create_phi: uncolored register %a, using default %a\n"
+              X86.Target.pp_reg v' X86.Target.pp_reg default_reg);
+        default_reg
+      end
+      else
+        failwith
+        @@ Format.asprintf "create_phi: uncolored register %a" X86.Target.pp_reg
+             v
+  in
+  let module Dom = (val state.dom) in
+  let phi_block_label = Dom.label_of_position pos in
+  (* add phi to block label at pos *)
+  let (head, tail), cfg = X86.Cfg.focus (X86.Cfg.idd phi_block_label) cfg in
+  let head =
+    match head with
+    | X86.Cfg.First (Label (l, info)) ->
+      X86.Cfg.First (Label (l, { info with args = get_reg v :: info.args }))
+    | X86.Cfg.First Entry ->
+      failwith "create_phi: cannot create phi for entry block"
+    | X86.Cfg.Head _ -> failwith "create_phi: expected first"
+  in
+  let cfg = X86.Cfg.unfocus ((head, tail), cfg) in
+  (* go into every predecessor of the block and add the phi argument to the end of its jump *)
+  let go_pred cfg pred =
+    load_block_state state pred;
+    let zblock, cfg = X86.Cfg.(focus (idd (Dom.label_of_position pred)) cfg) in
+    let head, last = X86.Cfg.goto_end zblock in
+    (* if predecessor is unprocessed, insert the uncolored virtual register,
+       it will be colored with the right register later. *)
+    let v = if state.processed.(pred) then get_reg v else v in
+    let rewrite_edge instr =
+      let add_phi_arg = function
+        | X86.Target.Label (l, ops) when phi_block_label = Some l ->
+          X86.Target.Label (l, Reg v :: ops)
+        | op -> op
+      in
+      X86.Target.map_uses add_phi_arg instr
+    in
+    let last =
+      match last with
+      | Exit | Return _ -> last
+      | Branch (instr, l) -> Branch (rewrite_edge instr, l)
+      | CBranch (instr, l1, l2) -> CBranch (rewrite_edge instr, l1, l2)
+    in
+    X86.Cfg.unfocus ((head, Last last), cfg)
+  in
+  let cfg = List.fold_left go_pred cfg (Dom.predecessors pos) in
+  load_block_state state pos;
+  cfg
 
 let regalloc_helper ?(args = RegSet.empty)
     ?(regs =
@@ -1096,21 +1270,17 @@ let regalloc_helper ?(args = RegSet.empty)
   combine_congruence_classes alloc_state cfg;
   k_prefs alloc_state;
   let go_block cfg pos =
-    load_block_state ~copy:true alloc_state pos;
-    Logs.debug (fun m ->
-        m "Coloring block %a:\n"
-          (Format.pp_print_option X86.Target.pp_label)
-          (Loop.Dom.label_of_position pos));
-    Logs.debug (fun m ->
-        m "Occupied: %a\n"
-          (Format.pp_print_list
-             ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
-             X86.Target.pp_reg)
-          (List.map
-             (fun r -> alloc_state.regs.(r))
-             (CCBV.to_list alloc_state.occupied)));
     let uid = X86.Cfg.idd (Loop.Dom.label_of_position pos) in
+    Logs.debug (fun m -> m "Coloring block %d:\n" uid);
+    let preds = Loop.Dom.predecessors pos in
+    if not @@ CCList.is_empty preds then begin
+      load_block_state ~copy:true alloc_state (List.hd preds);
+      store_block_state alloc_state pos
+    end;
+    load_block_state alloc_state pos;
     alloc_state.select_state.curr_block := uid;
+
+    (* color initial arguments for entry block *)
     let zblock, cfg = X86.Cfg.focus uid cfg in
     let zblock =
       if uid = X86.Cfg.entry_uid then
@@ -1134,6 +1304,59 @@ let regalloc_helper ?(args = RegSet.empty)
         (head, tail)
       else zblock
     in
+    let cfg = X86.Cfg.(unfocus (zblock, cfg)) in
+
+    Logs.debug (fun m ->
+        m "Current vars: %s\n"
+          ([%show: X86.Target.reg option list]
+             (List.map
+                (Option.map (fun v -> X86.Target.Virtual v))
+                (Array.to_list alloc_state.reg_current_var))));
+
+    (* for each live in, check if it is the same across predecessors
+       if not, create a phi node *)
+    let live_in = liveness.live_in pos in
+    let set_live_in v cfg =
+      try
+        Logs.debug (fun m -> m "Live in: %a\n" X86.Target.pp_reg v);
+        let assigned = get_block_reg alloc_state pos v in
+        let pred_needs_to_create_phi pred =
+          if not alloc_state.processed.(pred) then
+            (* always create phi for backedge *)
+            true
+          else begin
+            Logs.debug (fun m ->
+                m "Checking pred %d for block %d\n"
+                  (X86.Cfg.idd (Loop.Dom.label_of_position pred))
+                  uid);
+            (not (CCBV.get alloc_state.saved_occupied.(pred) assigned))
+            || Option.map
+                 (fun v -> v.X86.Target.id)
+                 alloc_state.saved_reg_current_var.(pred).(assigned)
+               <> Some (X86.Target.index v)
+          end
+        in
+        if List.exists pred_needs_to_create_phi preds then begin
+          Logs.debug (fun m ->
+              m "Block %d needs to create phi for %a" uid X86.Target.pp_reg v);
+          create_phi alloc_state cfg pos v
+        end
+        else cfg
+      with NotColoredYet -> cfg
+    in
+    let cfg = X86.Target.RegSet.fold set_live_in live_in cfg in
+
+    Logs.debug (fun m ->
+        m "Block %d Occupied: %a\n" uid
+          (Format.pp_print_list
+             ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
+             X86.Target.pp_reg)
+          (List.map
+             (fun r -> alloc_state.regs.(r))
+             (CCBV.to_list alloc_state.occupied)));
+
+    (* now color registers for all the instructions in block *)
+    let zblock, cfg = X86.Cfg.focus uid cfg in
     let block = color_block alloc_state (X86.Cfg.zip zblock) in
     let cfg = X86.Cfg.(unfocus (unzip block, cfg)) in
     after_color_block alloc_state cfg pos
@@ -1182,7 +1405,7 @@ let%expect_test "Nested loops register allocation" =
       jl label3, label1, %rbx, $100
     label3(local=false)():
       movq %rsi, %rbx
-      pcopy [(%rsi, %rbx); (%rbx, %rsi); (%r13, %rsi); (%rsi, %r13)]
+      pcopy [(%r13, %rsi); (%rsi, %rbx)]
       jmp label4(%rsi, %r13)
     label4(local=false)(rsi, r13):
       jl label5, label2(%rsi), %r13, $100
@@ -1193,10 +1416,11 @@ let%expect_test "Nested loops register allocation" =
       movq %r14, %r13
       addq %r14, %, $1
       movq %r14, %r14
-      pcopy [(%rsi, %r15); (%r15, %rsi); (%r13, %r14); (%r14, %r13)]
+      pcopy [(%rsi, %r15); (%r15, %rsi)]
+      pcopy [(%r13, %r14); (%r14, %r13)]
       jmp label4(%rsi, %r13)
     label6(local=false)():
-      pcopy [(%rbx, %rax); (%rax, %rbx)]
+      pcopy [(%rbx, %rax)]
       jmp label2(%rbx)
     |}]
 
@@ -1304,7 +1528,7 @@ let%expect_test "Fibonacci register allocation" =
       pcopy [(%rbx, %rdi)]
       jle label2, label3, %rbx, $1
     label1(local=false)(rax):
-      pcopy [(%rax, %rax)]
+      pcopy []
       ret %rax
     label2(local=false)():
       movq %rax, %rbx
@@ -1318,7 +1542,7 @@ let%expect_test "Fibonacci register allocation" =
       movq %r13, %rax
       movq %rdi, %rbx
       subq %rdi, %, $2
-      pcopy [(%rdi, %rdi)]
+      pcopy []
       call fibonacci
       movq %rax, %rax
       movq %rsi, %r13

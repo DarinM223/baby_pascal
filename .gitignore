@@ -2,6 +2,7 @@
 _build/
 *.s
 *.o
+collatz.pas
 isprime.pas
 factorial.pas
 fibonacci.pas
