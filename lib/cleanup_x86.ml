@@ -66,6 +66,30 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
         Cfg.Head (head, Cfg.Instruction (Target.mov ~dest:slot ~src:(Reg reg))))
       used_callee_saves head
   in
+  let lower_immediate_jump tail = function
+    | (X86.Target.Imm _ as src), reg ->
+      Logs.debug (fun m ->
+          m "Post regalloc adding move for immediate jump arg: %a <- %a\n"
+            X86.Target.pp_reg reg X86.Target.pp_operand src);
+      fun tail ->
+        X86.Cfg.Tail
+          (Instruction (X86.Target.mov ~dest:(X86.Target.Reg reg) ~src), tail)
+    | _ -> tail
+  in
+  (* convert jump arguments that are immediates to moves *)
+  let lower_jump_label tail = function
+    | X86.Target.Label (l', args) ->
+      let phis =
+        match X86.Cfg.(firstt (fst (fst (focus (idd (Some l')) cfg)))) with
+        | Entry -> []
+        | Label (_, info) -> info.args
+      in
+      let tail =
+        List.fold_left lower_immediate_jump tail (List.combine args phis)
+      in
+      (tail, X86.Target.Label (l', args))
+    | op -> (tail, op)
+  in
   let go_block cfg block =
     let head, tail = Cfg.unzip block in
     let ( @> ) i t = Cfg.Tail (Instruction i, t) in
@@ -92,11 +116,14 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
         end
       (* lower cmp instructions into cmp + j* *)
       | Cfg.Last
-          (CBranch ({ instr; uses = _ :: _ :: first_use :: uses; defs }, l1, l2))
+          (CBranch
+             (({ instr; uses = _ :: _ :: first_use :: uses; defs } as i), l1, l2))
         when List.exists (fun (_, i) -> i = instr) Target.cond_mapping ->
         List.iter record_operand (first_use :: uses);
         List.iter record_operand defs;
-        Target.mov ~dest:(Reg (Physical tmp)) ~src:first_use
+        let tail, _ = X86.Target.fold_uses lower_jump_label Fun.id i in
+        tail
+        @@ Target.mov ~dest:(Reg (Physical tmp)) ~src:first_use
         @> Target.instr "cmp" ~defs:[ Reg (Physical tmp) ] ~uses
         @> Target.instr instr ~defs:[] ~uses:[ Label (l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
@@ -105,7 +132,8 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
       | Cfg.Last (Branch (i, l)) ->
         List.iter record_operand i.uses;
         List.iter record_operand i.defs;
-        Cfg.Last (Branch (i, l))
+        let tail, i = X86.Target.fold_uses lower_jump_label Fun.id i in
+        tail (Cfg.Last (Branch (i, l)))
       | Cfg.Last (Return i) ->
         List.iter record_operand i.uses;
         List.iter record_operand i.defs;
