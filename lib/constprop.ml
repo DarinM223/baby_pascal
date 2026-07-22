@@ -124,6 +124,9 @@ let state_fact () =
     set = IntHashtbl.replace store;
   }
 
+let is_executable fact uid =
+  uid = Cfg.entry_uid || (fact.Flow.get uid).executable
+
 let rec remove_consecutive_duplicates = function
   | [] -> []
   | [ a ] -> [ a ]
@@ -208,24 +211,37 @@ let constprop (block_args : OperandSet.t NameMap.t)
       let a = fact.get uid in
       let update_block_arg a arg =
         let call_args = NameMap.find arg block_args in
+        Logs.debug (fun m ->
+            m "Call args for phi %a: %s" Name.pp arg
+              ([%show: (Cfg.uid * Target.operand) list]
+                 (OperandSet.to_list call_args)));
         let get_values acc = function
-          | uid, Target.Const i when (fact.get uid).executable ->
-            Defined i :: acc
-          | uid, Target.Reg arg when (fact.get uid).executable ->
+          | uid, Target.Const i when is_executable fact uid -> Defined i :: acc
+          | uid, Target.Reg arg when is_executable fact uid ->
             begin match NameMap.find_opt arg a.mapping with
-            | Some NeverDefined | None -> acc
+            | Some NeverDefined -> acc
             | Some v -> v :: acc
+            | None -> OverDefined :: acc
             end
-          | _ -> acc
+          | uid, _ ->
+            Logs.debug (fun m -> m "Call block %d not executable" uid);
+            acc
         in
         let values =
           call_args |> OperandSet.to_list |> List.fold_left get_values []
         in
-        add_mapping a arg
-          (match remove_consecutive_duplicates values with
+        Logs.debug (fun m -> m "Lattices: %s\n" ([%show: lattice list] values));
+        let lattice =
+          match remove_consecutive_duplicates values with
           | [ v ] -> Some v
           | [] -> None
-          | _ -> Some OverDefined)
+          | _ -> Some OverDefined
+        in
+        Logs.debug (fun m ->
+            m "Adding mapping %a -> %a\n" Name.pp arg
+              (Format.pp_print_option pp_lattice)
+              lattice);
+        add_mapping a arg lattice
       in
       if not !converged then begin
         let a = List.fold_left update_block_arg a info.args in
@@ -289,7 +305,11 @@ let constprop (block_args : OperandSet.t NameMap.t)
     if not !converged then Flow.Dataflow (handle_instruction a instr)
     else if
       all_defs_defined () && not (Normalize.Target.is_side_effectful instr)
-    then Flow.Rewrite Cfg.empty
+    then begin
+      Logs.debug (fun m ->
+          m "Killing dead instruction %a\n" Target.pp_instr instr);
+      Flow.Rewrite Cfg.empty
+    end
     else
       let instr, changed = rewrite_uses lookup_operand a instr in
       if changed then
@@ -299,7 +319,7 @@ let constprop (block_args : OperandSet.t NameMap.t)
   let get_args uid =
     List.map (fun n -> Target.Reg n) (IntHashtbl.find args_tbl uid)
   in
-  let last_outs _ a = function
+  let last_outs uid a = function
     | Cfg.Exit ->
       if not !converged then Flow.Dataflow (fun set -> set Cfg.entry_uid a)
       else Flow.Dataflow (fun _ -> ())
@@ -328,9 +348,17 @@ let constprop (block_args : OperandSet.t NameMap.t)
       if not !converged then
         let flow =
           match (lookup_operand a lhs, lookup_operand a rhs) with
-          | OverDefined, _ | _, OverDefined -> set_both_executable
-          | NeverDefined, _ | _, NeverDefined -> fun _ -> ()
-          | Defined l, Defined r -> set_cond_executable (apply_cond l r cond)
+          | OverDefined, _ | _, OverDefined ->
+            Logs.debug (fun m -> m "Block %d branches both executable\n" uid);
+            set_both_executable
+          | NeverDefined, _ | _, NeverDefined ->
+            Logs.debug (fun m -> m "Block %d has never defined branches\n" uid);
+            fun _ -> ()
+          | Defined l, Defined r ->
+            Logs.debug (fun m ->
+                m "Block %d branches both defined as %d, %d with cond %a\n" uid
+                  l r Target.pp_cond cond);
+            set_cond_executable (apply_cond l r cond)
         in
         Flow.Dataflow flow
       else
@@ -356,6 +384,14 @@ let constprop (block_args : OperandSet.t NameMap.t)
       pass graph
       (fun () -> fact.get Cfg.entry_uid)
   in
+  Logs.debug (fun m ->
+      m "Executable blocks: %s\n"
+        ([%show: (Cfg.label option * bool) list]
+           (List.map
+              (fun block ->
+                let label = Cfg.block_label block in
+                (label, is_executable fact (Cfg.idd label)))
+              (Cfg.reverse_postorder_dfs graph))));
   (Cfg.Blocks.filter (fun uid _ -> not (fact.skip_block uid)) graph, changed)
 
 let remove_empty_blocks graph =

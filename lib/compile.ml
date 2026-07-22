@@ -17,8 +17,10 @@ let compile program =
   in
   let rec round args cfg =
     let cfg, changed = Deadcode.M.deadcode cfg in
-    let block_args = Constprop.block_args cfg in
-    let cfg, changed' = Constprop.constprop block_args args cfg in
+    let cfg, changed' =
+      let block_args = Constprop.block_args cfg in
+      Constprop.constprop block_args args cfg
+    in
     if changed || changed' then round args cfg else cfg
   in
   let lower_cfg f args cfg =
@@ -30,7 +32,11 @@ let compile program =
     let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
     let cfg = Construct.rename_variables (module Dom) cfg in
     let args = List.map (fun arg -> (arg, 0)) args in
-    (* let cfg = round args cfg in *)
+    Format.printf "===================================\n";
+    Format.printf "%s's initial cfg:\n" f;
+    Format.printf "===================================\n";
+    Format.printf "%a\n" Normalize.Cfg.pp_graph cfg;
+    let cfg = round args cfg in
     Format.printf "===================================\n";
     Format.printf "%s's cfg after optimization passes:\n" f;
     Format.printf "===================================\n";
