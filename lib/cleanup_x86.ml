@@ -66,18 +66,18 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
         Cfg.Head (head, Cfg.Instruction (Target.mov ~dest:slot ~src:(Reg reg))))
       used_callee_saves head
   in
-  let lower_immediate_jump tail = function
+  let lower_immediate_jump f = function
     | (X86.Target.Imm _ as src), reg ->
       Logs.debug (fun m ->
           m "Post regalloc adding move for immediate jump arg: %a <- %a\n"
             X86.Target.pp_reg reg X86.Target.pp_operand src);
       fun tail ->
         X86.Cfg.Tail
-          (Instruction (X86.Target.mov ~dest:(X86.Target.Reg reg) ~src), tail)
-    | _ -> tail
+          (Instruction (X86.Target.mov ~dest:(X86.Target.Reg reg) ~src), f tail)
+    | _ -> f
   in
   (* convert jump arguments that are immediates to moves *)
-  let lower_jump_label tail = function
+  let lower_jump_label f = function
     | X86.Target.Label (l', args) ->
       let phis =
         match X86.Cfg.(firstt (fst (fst (focus (idd (Some l')) cfg)))) with
@@ -85,10 +85,10 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
         | Label (_, info) -> info.args
       in
       let tail =
-        List.fold_left lower_immediate_jump tail (List.combine args phis)
+        List.fold_left lower_immediate_jump f (List.combine args phis)
       in
       (tail, X86.Target.Label (l', args))
-    | op -> (tail, op)
+    | op -> (f, op)
   in
   let go_block cfg block =
     let head, tail = Cfg.unzip block in
