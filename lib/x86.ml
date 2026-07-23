@@ -89,6 +89,7 @@ module Target = struct
         args
   let pp_operand = pp_operand' pp_reg
   let show_operand = Format.asprintf "%a" (pp_operand' pp_reg)
+  let reg reg = Reg reg
   let label label args = Label (label, args)
   let destruct_label = function
     | Label (l, args) -> Some (l, args)

@@ -151,11 +151,12 @@ let test_loops () =
           in
           [%show: (int * (int * int) list) list] next_use_distances
         end);
-  let liveness = Spill.Liveness.calc cfg in
+  let liveness = Spill.X86.Liveness.calc cfg in
   let module Spill =
-    Spill.Make
-      (Loop)
+    Spill.Make (X86.Target) (X86.Cfg) (Loop) (Select_x86.State)
+      (Spill.X86.Liveness)
       (struct
+        let reg_class = X86.Target.Int
         let k = 16
         let next_use_distances = next_use_distances
         let liveness = liveness

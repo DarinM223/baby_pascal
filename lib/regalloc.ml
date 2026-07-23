@@ -1,5 +1,5 @@
-module RegSet = Spill.Liveness.RegSet
-module RegMap = Spill.Liveness.RegMap
+module RegSet = X86.Target.RegSet
+module RegMap = X86.Target.RegMap
 
 let get_vreg vreg =
   match vreg with
@@ -29,7 +29,7 @@ type state = {
   saved_reg_current_var : X86.Target.virtual_reg option array array;
   saved_reg_current_pref : float array array;
   saved_occupied : CCBV.t array;
-  liveness : Spill.Liveness.t;
+  liveness : Spill.X86.Liveness.t;
   dom :
     (module Dominator.S
        with type label = X86.Cfg.label
@@ -1131,11 +1131,12 @@ let spill_helper ?(args = [])
        and type Dom.position = int
        and type Dom.uid = int) state cfg =
   let next_use_distances = Spill.next_use_distances (module Loop) cfg in
-  let liveness = Spill.Liveness.calc cfg in
+  let liveness = Spill.X86.Liveness.calc cfg in
   let module Spill' =
-    Spill.Make
-      (Loop)
+    Spill.Make (X86.Target) (X86.Cfg) (Loop) (Select_x86.State)
+      (Spill.X86.Liveness)
       (struct
+        let reg_class = X86.Target.Int
         let k = 16
         let next_use_distances = next_use_distances
         let liveness = liveness
@@ -1257,7 +1258,7 @@ let regalloc_helper ?(args = RegSet.empty)
        and type Dom.uid = int
        and type Dom.graph = X86.Cfg.graph) state cfg k_prefs =
   (* have to recalculate because added spills may have modified the instruction numbers *)
-  let liveness = Spill.Liveness.calc cfg in
+  let liveness = Spill.X86.Liveness.calc cfg in
   let module Freq = Execfreq.Make (X86.Cfg) (Loop) (X86.ExecfreqRequirements) in
   let block_execution_frequency uid =
     Freq.bfreq.(Loop.Dom.position_of_uid uid)

@@ -1,15 +1,12 @@
 open X86
-module NameHashtbl = CCHashtbl.Make (struct
-  include Normalize.Name
-  let equal = equal
-  let hash = Hashtbl.hash
-end)
+module NameHashtbl = Normalize.NameHashtbl
 module IntHashtbl = Utils.IntHashtbl
 
 let ( let* ) = ( @@ )
 let hashtbl_size = 100
 
 module State = struct
+  module Target = Target
   type t = {
     fresh_vreg : Target.reg_class -> Target.reg;
     mapping : Target.operand NameHashtbl.t;

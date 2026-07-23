@@ -42,7 +42,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   let liveness =
     X86.Target.
       {
-        Spill.Liveness.live_in = (fun _ -> RegSet.empty);
+        Spill.X86.Liveness.live_in = (fun _ -> RegSet.empty);
         live_out = (fun _ -> RegSet.empty);
         used_in_block = (fun _ -> RegSet.empty);
         dies;

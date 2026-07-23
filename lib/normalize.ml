@@ -19,6 +19,12 @@ module NameSet = struct
   let pp = pp Name.pp
 end
 
+module NameHashtbl = CCHashtbl.Make (struct
+  include Name
+  let equal = equal
+  let hash = Hashtbl.hash
+end)
+
 module Target = struct
   type reg = Name.t [@@deriving show, eq]
   type regs = reg list [@@deriving show, eq]
