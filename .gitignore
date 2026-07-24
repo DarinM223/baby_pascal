@@ -2,6 +2,7 @@
 _build/
 *.s
 *.o
+*.pas.test
 collatz.pas
 isprime.pas
 factorial.pas
