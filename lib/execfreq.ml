@@ -31,7 +31,7 @@ module type Requirements = sig
   val uses : Target.instr -> Target.operands
   val call : string
   val ret : string
-  val cond_mapping : (Instruction.Cond.t * string) list
+  val cond_mapping : (Graph.Cond.t * string) list
   val exit : string
 end
 
@@ -53,7 +53,7 @@ struct
     let get cond =
       snd (List.find (fun (c, _) -> c = cond) Requirements.cond_mapping)
     in
-    match List.map get Instruction.Cond.[ LT; LE; EQ ] with
+    match List.map get Graph.Cond.[ LT; LE; EQ ] with
     | [ lt; le; eq ] -> (lt, le, eq)
     | _ -> failwith "Could not find instructions for lt, le, and eq"
 

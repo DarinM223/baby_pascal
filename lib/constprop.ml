@@ -18,10 +18,8 @@ module OperandSet = struct
   let pp = pp pp_tuple
 end
 
-let hashtbl_size = 100
-
 let block_args_fact () =
-  let store = IntHashtbl.create hashtbl_size in
+  let store = IntHashtbl.create Utils.hashtbl_size in
   {
     Flow.init_info = NameMap.empty;
     add_info = NameMap.union (fun _ a b -> Some (OperandSet.union a b));
@@ -34,7 +32,7 @@ let block_args_fact () =
 
 let block_args graph =
   let fact = block_args_fact () in
-  let args_tbl = IntHashtbl.create hashtbl_size in
+  let args_tbl = IntHashtbl.create Utils.hashtbl_size in
   let first_in a = function
     | Cfg.Entry -> a
     | Cfg.Label ((uid, _), info) ->
@@ -104,7 +102,7 @@ type t = {
 [@@deriving show, eq]
 
 let state_fact () =
-  let store = IntHashtbl.create hashtbl_size in
+  let store = IntHashtbl.create Utils.hashtbl_size in
   {
     Flow.init_info = { mapping = NameMap.empty; executable = false };
     add_info =
@@ -152,12 +150,12 @@ let apply_bop l r = function
   | Ast.Ge -> if l >= r then 1 else 0
 
 let apply_cond l r = function
-  | Instruction.Cond.LT -> l < r
-  | Instruction.Cond.LE -> l <= r
-  | Instruction.Cond.GT -> l > r
-  | Instruction.Cond.GE -> l >= r
-  | Instruction.Cond.EQ -> l = r
-  | Instruction.Cond.NE -> l <> r
+  | Graph.Cond.LT -> l < r
+  | LE -> l <= r
+  | GT -> l > r
+  | GE -> l >= r
+  | EQ -> l = r
+  | NE -> l <> r
 
 let rewrite_uses lookup_operand a instr =
   let handle_operand op =
@@ -186,7 +184,7 @@ let constprop (block_args : OperandSet.t NameMap.t)
     (function_args : Name.t list) graph =
   let fact = state_fact () in
   let converged = ref false in
-  let args_tbl = IntHashtbl.create hashtbl_size in
+  let args_tbl = IntHashtbl.create Utils.hashtbl_size in
   let lookup_operand a = function
     | Target.Const c -> Defined c
     | Target.Reg r ->

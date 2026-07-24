@@ -187,25 +187,18 @@ module Target = struct
   let map_defs f i = snd (fold_defs (fun _ op -> ((), f op)) () i)
   let fold_reg_defs f = fold_defs (fold_reg_operand f)
 
-  let rec regset_of_operand = function
-    | Label (_, args) ->
-      args
-      |> List.filter (fun n -> not (is_tombstone n))
-      |> List.fold_left
-           (fun acc o -> RegSet.union acc (regset_of_operand o))
-           RegSet.empty
-    | Reg reg ->
-      if Reg.is_tombstone reg then RegSet.empty else RegSet.singleton reg
-    | _ -> RegSet.empty
-
   let uses instr =
-    srcs instr |> List.map regset_of_operand
-    |> List.fold_left RegSet.union RegSet.empty
+    fst
+    @@ fold_reg_uses
+         (fun acc reg -> (RegSet.add reg acc, reg))
+         RegSet.empty instr
   let defs instr =
-    dests instr |> List.map regset_of_operand
-    |> List.fold_left RegSet.union RegSet.empty
+    fst
+    @@ fold_reg_defs
+         (fun acc reg -> (RegSet.add reg acc, reg))
+         RegSet.empty instr
 
-  type cond = Instruction.Cond.t [@@deriving show, eq]
+  type cond = Graph.Cond.t [@@deriving show, eq]
   let constrained physical_reg = function
     | Physical p ->
       if p <> physical_reg then
@@ -227,7 +220,7 @@ module Target = struct
     | _ -> failwith "reuse_op: expected register"
   let goto l ops = { instr = "jmp"; defs = []; uses = [ Label (l, ops) ] }
   let cond_mapping =
-    Instruction.Cond.
+    Graph.Cond.
       [
         (LT, "jl"); (LE, "jle"); (GT, "jg"); (GE, "jge"); (EQ, "jz"); (NE, "jnz");
       ]

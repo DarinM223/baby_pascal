@@ -25,9 +25,8 @@ module Make
       module type of Graph.Make (Target))
         (Flow : Dataflow.S with module G = G) =
 struct
-  let hashtbl_size = 100
   let fact () =
-    let store = IntHashtbl.create hashtbl_size in
+    let store = IntHashtbl.create Utils.hashtbl_size in
     {
       Flow.init_info = Target.RegSet.empty;
       add_info = Target.RegSet.union;
@@ -59,11 +58,9 @@ struct
     let instr = Target.map_uses go_use instr in
     (instr, !changed)
 
-  let hashtbl_size = 100
-
   let deadcode graph =
     let fact = fact () in
-    let block_args = IntHashtbl.create hashtbl_size in
+    let block_args = IntHashtbl.create Utils.hashtbl_size in
     let first_in a = function
       | G.Entry -> Flow.Dataflow a
       | G.Label (((uid, _) as l), info) ->

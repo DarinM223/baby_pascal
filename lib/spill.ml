@@ -1,4 +1,3 @@
-let hashtbl_size = 100
 let m = 10_000
 
 module IntHashtbl = Utils.IntHashtbl
@@ -18,7 +17,7 @@ type state = {
   count : int;
 }
 let fact () =
-  let store = IntHashtbl.create hashtbl_size in
+  let store = IntHashtbl.create Utils.hashtbl_size in
   (* if variable doesn't exist in distances map it has distance of infinity *)
   let init_info =
     {
@@ -191,7 +190,7 @@ module Liveness = struct
       max_register_pressure : G.uid -> int;
     }
     let fact () =
-      let store = IntHashtbl.create hashtbl_size in
+      let store = IntHashtbl.create Utils.hashtbl_size in
       {
         Flow.init_info =
           {
@@ -345,7 +344,7 @@ struct
 
   let init_usual (wexit : Loop.Dom.position -> RegSet.t)
       (block : Loop.Dom.position) =
-    let freq = IntHashtbl.create hashtbl_size in
+    let freq = IntHashtbl.create Utils.hashtbl_size in
     let take = ref RegSet.empty in
     let cand = ref RegSet.empty in
     let preds_length = List.length (Loop.Dom.predecessors block) in
@@ -441,8 +440,8 @@ struct
   let init (state : State.t) =
     {
       select_state = state;
-      spill_mapping = IntHashtbl.create hashtbl_size;
-      copies = RegHashtbl.create hashtbl_size;
+      spill_mapping = IntHashtbl.create Utils.hashtbl_size;
+      copies = RegHashtbl.create Utils.hashtbl_size;
     }
 
   open struct

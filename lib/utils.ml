@@ -7,3 +7,5 @@ module IntMap = struct
   let pp pp_v = pp CCInt.pp pp_v
 end
 module IntHashtbl = CCHashtbl.Make (CCInt)
+
+let hashtbl_size = 100

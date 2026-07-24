@@ -7,32 +7,8 @@ module type Operand = sig
   val is_tombstone : 'a operand -> bool
 end
 
-module Cond = struct
-  type t =
-    | LT
-    | LE
-    | GT
-    | GE
-    | EQ
-    | NE
-  [@@deriving show { with_path = false }, eq, ord]
-
-  let of_bop = function
-    | Ast.Lt -> LT
-    | Ast.Le -> LE
-    | Ast.Gt -> GT
-    | Ast.Ge -> GE
-    | Ast.Eq -> EQ
-    | Ast.Neq -> NE
-    | _ -> failwith "Invalid binary operator"
-end
-
 module type Target = sig
-  type label
-  type cond = Cond.t [@@deriving show, eq]
-  type operand
-  type operands = operand list
-  type instr
+  include Graph.Target
   val label : label -> operands -> operand
   val destruct_label : operand -> (label * operands) option
   val is_tombstone : operand -> bool
@@ -42,12 +18,13 @@ module type Target = sig
   val map_uses : (operand -> operand) -> instr -> instr
   val fold_defs : ('a -> operand -> 'a * operand) -> 'a -> instr -> 'a * instr
   val map_defs : (operand -> operand) -> instr -> instr
+  val is_side_effectful : instr -> bool
 end
 
 module Make (T : Operand) = struct
   type label = T.label
-  type cond = Cond.t [@@deriving show, eq]
-  let cond_of_bop = Cond.of_bop
+  type cond = Graph.Cond.t [@@deriving show, eq]
+  let cond_of_bop = Graph.Cond.of_bop
 
   (* destination goes before sources for operands *)
   type instr =

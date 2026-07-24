@@ -1,6 +1,5 @@
 module IntMap = Map.Make (Int)
 module IntHashtbl = Utils.IntHashtbl
-let hashtbl_size = 100
 
 module Make
     (Target : Deadcode.Target)

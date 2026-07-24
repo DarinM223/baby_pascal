@@ -1,3 +1,23 @@
+module Cond = struct
+  type t =
+    | LT
+    | LE
+    | GT
+    | GE
+    | EQ
+    | NE
+  [@@deriving show { with_path = false }, eq, ord]
+
+  let of_bop = function
+    | Ast.Lt -> LT
+    | Ast.Le -> LE
+    | Ast.Gt -> GT
+    | Ast.Ge -> GE
+    | Ast.Eq -> EQ
+    | Ast.Neq -> NE
+    | _ -> failwith "Invalid binary operator"
+end
+
 module type Target = sig
   type label
   type reg
@@ -6,7 +26,7 @@ module type Target = sig
   type operands = operand list
   type instr
 
-  type cond = Instruction.Cond.t
+  type cond = Cond.t
 
   val goto : label -> operands -> instr
   val cbranch :
@@ -203,6 +223,7 @@ module type Maker = functor (Target : Target with type label = int * string) ->
 
 (* Interface of graph.ml *)
 module type Intf = sig
+  module Cond = Cond
   module type Target = Target
   module type S = S
   module type Extra = Extra

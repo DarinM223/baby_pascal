@@ -17,10 +17,8 @@ let uid_of_label = function
   | None -> Cfg.entry_uid
   | Some (uid, _) -> uid
 
-let hashtbl_size = 100
-
 let name_fact () =
-  let store = IntHashtbl.create hashtbl_size in
+  let store = IntHashtbl.create Utils.hashtbl_size in
   {
     Flow.init_info = NameSet.empty;
     add_info = NameSet.union;
@@ -138,8 +136,8 @@ let insert_phis_pruned (live : liveness) =
 let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
     graph =
   let ( let* ) = ( @@ ) in
-  let count = NameHashtbl.create hashtbl_size in
-  let stack = NameHashtbl.create hashtbl_size in
+  let count = NameHashtbl.create Utils.hashtbl_size in
+  let stack = NameHashtbl.create Utils.hashtbl_size in
   let rec rename graph label children k =
     let zblock, graph =
       match label with

@@ -3,7 +3,6 @@ module NameHashtbl = Normalize.NameHashtbl
 module IntHashtbl = Utils.IntHashtbl
 
 let ( let* ) = ( @@ )
-let hashtbl_size = 100
 
 module State = struct
   module Target = Target
@@ -18,7 +17,7 @@ module State = struct
 
   let init () =
     let curr_block = ref Cfg.entry_uid in
-    let vreg_block = IntHashtbl.create hashtbl_size in
+    let vreg_block = IntHashtbl.create Utils.hashtbl_size in
     let fresh_vreg =
       let c = ref (-1) in
       fun clz ->
@@ -30,7 +29,7 @@ module State = struct
         reg
     in
     let stack_offset = ref 0 in
-    let mapping = NameHashtbl.create hashtbl_size in
+    let mapping = NameHashtbl.create Utils.hashtbl_size in
     let new_stack_slot size =
       let slot = !stack_offset in
       stack_offset := !stack_offset + size;

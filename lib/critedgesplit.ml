@@ -10,8 +10,6 @@ module type Requirements = sig
     'a * Target.instr
 end
 
-let hashtbl_size = 100
-
 module Make
     (Fresh : Normalize.Fresh)
     (G :
@@ -38,7 +36,7 @@ struct
         match last with
         | G.Exit | G.Branch _ | G.Return _ -> (last, cfg)
         | G.CBranch (instr, l1, l2) ->
-          let subst = LabelTbl.create hashtbl_size in
+          let subst = LabelTbl.create Utils.hashtbl_size in
           let cfg, instr =
             Requirements.fold_uses
               (fun cfg op ->
