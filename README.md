@@ -3,6 +3,8 @@ Baby Pascal
 
 A compiler for a minimal dialect of Pascal. It is similar to [this project](https://github.com/DarinM223/baby-pascal), the main differences are:
 
+* `mllex` and `menhir` for the lexer and parser instead of a hand-rolled lexer and recursive descent + Pratt parser
+* Coopers algorithm for computing dominators instead of Lengauer-Tarjan
 * Zipper control flow graphs instead of LLVM-style control flow graphs
 * Instruction selection based off of pattern matching on lists of trees instead of doing tile cutting on DAGs
 * SSA chordal register allocation instead of linear scan
@@ -20,7 +22,6 @@ A compiler for a minimal dialect of Pascal. It is similar to [this project](http
 - [ ] Strength reduction
 - [x] Critical edge splitting
 - [ ] E-graph based optimizations
-- [ ] Autovectorization
 - [x] Undag into list of trees
 - [x] X86 Instruction selection (basic)
 - [ ] ARM Instruction selection
@@ -32,3 +33,8 @@ A compiler for a minimal dialect of Pascal. It is similar to [this project](http
 - [x] Randomized testing for register shuffles in register allocation
 - [x] Lower parallel moves
 - [ ] Comprehensive IR fuzz testing
+- [ ] Add floats to language
+- [ ] Test spilling and register allocation with multiple register classes
+- [ ] Add arrays to language
+- [ ] Add structs to language
+- [ ] Autovectorization
