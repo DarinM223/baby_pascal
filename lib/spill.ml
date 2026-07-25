@@ -1,152 +1,168 @@
-let m = 10_000
-
 module IntHashtbl = Utils.IntHashtbl
 module IntMap = Utils.IntMap
 
-let count_instructions (tail : X86.Cfg.tail) =
-  let rec go acc = function
-    | X86.Printer.Last _ -> acc
-    | X86.Printer.Tail (_, t) -> go (acc + 1) t
-  in
-  go 1 tail
-
-type state = {
-  distances : int IntMap.t;
-  distances_per_instruction : int IntMap.t array;
-  block_pos : int;
-  count : int;
-}
-let fact () =
-  let store = IntHashtbl.create Utils.hashtbl_size in
-  (* if variable doesn't exist in distances map it has distance of infinity *)
-  let init_info =
-    {
-      distances = IntMap.empty;
-      distances_per_instruction = Array.make 0 IntMap.empty;
-      block_pos = 0;
-      count = 0;
+module NextUseDistances = struct
+  module type S = sig
+    module G : Graph.S
+    type distances = {
+      at_block : G.uid -> int IntMap.t;
+      at_instruction : G.uid -> int -> int IntMap.t;
     }
-  in
-  {
-    X86.Flow.init_info;
-    add_info =
-      (fun a b ->
+    val calc : G.graph -> distances
+  end
+
+  let m = 10_000
+
+  module Make
+      (Target : Isa.Target)
+      (G :
+        Graph.S
+          with type Target.reg = Target.reg
+           and type Target.operand = Target.operand
+           and type Target.instr = Target.instr)
+      (Flow : Dataflow.S with module G = G)
+      (Loop :
+        Loopnesting.S
+          with type Dom.label = G.label
+           and type Dom.position = int
+           and type Dom.uid = G.uid) : S with module G = G = struct
+    module G = G
+    let count_instructions (tail : G.tail) =
+      let rec go acc = function
+        | G.Tail (_, t) -> go (acc + 1) t
+        | Last _ -> acc
+      in
+      go 1 tail
+
+    type state = {
+      distances : int IntMap.t;
+      distances_per_instruction : int IntMap.t array;
+      block_pos : int;
+      count : int;
+    }
+    let fact () =
+      let store = IntHashtbl.create Utils.hashtbl_size in
+      (* if variable doesn't exist in distances map it has distance of infinity *)
+      let init_info =
         {
-          a with
-          distances =
-            IntMap.union
-              (fun _ v1 v2 -> Some (min v1 v2))
-              a.distances b.distances;
-        });
-    changed =
-      (fun ~before ~after ->
-        not (IntMap.equal Int.equal before.distances after.distances));
-    skip_block = Fun.const false;
-    get = IntHashtbl.find store;
-    set = IntHashtbl.replace store;
-  }
+          distances = IntMap.empty;
+          distances_per_instruction = Array.make 0 IntMap.empty;
+          block_pos = 0;
+          count = 0;
+        }
+      in
+      {
+        Flow.init_info;
+        add_info =
+          (fun a b ->
+            {
+              a with
+              distances =
+                IntMap.union
+                  (fun _ v1 v2 -> Some (min v1 v2))
+                  a.distances b.distances;
+            });
+        changed =
+          (fun ~before ~after ->
+            not (IntMap.equal Int.equal before.distances after.distances));
+        skip_block = Fun.const false;
+        get = IntHashtbl.find store;
+        set = IntHashtbl.replace store;
+      }
 
-type distances = {
-  at_block : X86.Cfg.uid -> int IntMap.t;
-  at_instruction : X86.Cfg.uid -> int -> int IntMap.t;
-}
+    type distances = {
+      at_block : G.uid -> int IntMap.t;
+      at_instruction : G.uid -> int -> int IntMap.t;
+    }
 
-(* todo: next use distances need to be calculated per instruction as well *)
-let next_use_distances
-    (module Loop : Loopnesting.S
-      with type Dom.label = X86.Cfg.label
-       and type Dom.position = int
-       and type Dom.uid = X86.Cfg.uid) (graph : X86.Cfg.graph) : distances =
-  (* edges leading out of loops:
-     if u in loop_headers then header(v) != u else header(v) != header(u) *)
-  (* each block has a unique length because critical edges are assumed
-     to already be split and the only different case is edges leading out
-     of loops, which must originate from nodes with multiple successors.
-     That means that destination nodes must have only one predecessor if
-     they are edges out of loops, otherwise its length is 0. *)
-  let block_lengths =
-    Array.init Loop.Dom.size @@ fun v ->
-    let preds = Loop.Dom.predecessors v in
-    match preds with
-    | [ u ]
-      when if Loop.(PositionSet.mem u loop_headers) then Loop.loop_header v <> u
-           else Loop.(loop_header v <> loop_header u) ->
-      m
-    | _ -> 0
-  in
-  (* track current instruction number offset starting from 0
-     then distance is num_instructions[block] - offset *)
-  let block_num_instructions =
-    Array.init Loop.Dom.size @@ fun p ->
-    let uid = X86.Cfg.idd (Loop.Dom.label_of_position p) in
-    let (_, tail), _ = X86.Cfg.focus uid graph in
-    count_instructions tail
-  in
-  let fact = fact () in
-  let handle_instruction i a =
-    let l = block_lengths.(a.block_pos) in
-    let num_instructions = block_num_instructions.(a.block_pos) in
-    let rec handle_use acc = function
-      | X86.Target.Reg r ->
-        IntMap.add (X86.Target.index r) (l + num_instructions - a.count) acc
-      | X86.Target.Label (_, uses) -> List.fold_left handle_use acc uses
-      | _ -> acc
-    in
-    let distances = List.fold_left handle_use a.distances i.X86.Target.uses in
-    a.distances_per_instruction.(num_instructions - 1 - a.count) <- distances;
-    { a with distances; count = a.count + 1 }
-  in
-  let first_in a _ = { a with count = 0 } in
-  let middle_in a (X86.Cfg.Instruction i) = handle_instruction i a in
-  let transfer block_pos fact =
-    let l = block_lengths.(block_pos) in
-    let num_instructions = block_num_instructions.(block_pos) in
-    let distances =
-      IntMap.map (fun dist -> l + num_instructions + dist) fact.distances
-    in
-    let distances_per_instruction = Array.make num_instructions IntMap.empty in
-    distances_per_instruction.(num_instructions - 1) <- distances;
-    { fact with block_pos; distances_per_instruction; distances }
-  in
-  let last_in uid =
-    let pos = Loop.Dom.position_of_uid uid in
-    let lookup uid' =
-      let pos' = Loop.Dom.position_of_uid uid' in
-      (* if edge is a loop backedge, then any next-use distances will be after the
-         redefinition of the variable making them invalid *)
-      if Loop.Dom.dominates pos' pos then fact.init_info else fact.get uid'
-    in
-    function
-    | X86.Cfg.Exit -> { (transfer pos fact.init_info) with count = 1 }
-    | X86.Cfg.Branch (i, (uid', _)) ->
-      handle_instruction i @@ transfer pos @@ lookup uid'
-    | X86.Cfg.CBranch (i, (uid1, _), (uid2, _)) ->
-      handle_instruction i @@ transfer pos
-      @@ fact.add_info (lookup uid1) (lookup uid2)
-    | X86.Cfg.Return i -> handle_instruction i @@ transfer pos fact.init_info
-  in
-  let analysis =
-    (fact, { X86.Flow.BackwardAnalysis.first_in; middle_in; last_in })
-  in
-  let _ = X86.Flow.BackwardAnalysis.run analysis graph in
-  {
-    at_block = (fun uid -> (fact.get uid).distances);
-    at_instruction =
-      (fun uid instr_num ->
-        (fact.get uid).distances_per_instruction.(instr_num));
-  }
+    (* next use distances need to be calculated per instruction *)
+    let calc (graph : G.graph) : distances =
+      (* edges leading out of loops:
+         if u in loop_headers then header(v) != u else header(v) != header(u) *)
+      (* each block has a unique length because critical edges are assumed
+         to already be split and the only different case is edges leading out
+         of loops, which must originate from nodes with multiple successors.
+         That means that destination nodes must have only one predecessor if
+         they are edges out of loops, otherwise its length is 0. *)
+      let block_lengths =
+        Array.init Loop.Dom.size @@ fun v ->
+        let preds = Loop.Dom.predecessors v in
+        match preds with
+        | [ u ]
+          when if Loop.(PositionSet.mem u loop_headers) then
+                 Loop.loop_header v <> u
+               else Loop.(loop_header v <> loop_header u) ->
+          m
+        | _ -> 0
+      in
+      (* track current instruction number offset starting from 0
+         then distance is num_instructions[block] - offset *)
+      let block_num_instructions =
+        Array.init Loop.Dom.size @@ fun p ->
+        let uid = G.idd (Loop.Dom.label_of_position p) in
+        let (_, tail), _ = G.focus uid graph in
+        count_instructions tail
+      in
+      let fact = fact () in
+      let handle_instruction i a =
+        let l = block_lengths.(a.block_pos) in
+        let num_instructions = block_num_instructions.(a.block_pos) in
+        let handle_use acc r =
+          (IntMap.add (Target.index r) (l + num_instructions - a.count) acc, r)
+        in
+        let distances, _ = Target.fold_reg_uses handle_use a.distances i in
+        a.distances_per_instruction.(num_instructions - 1 - a.count) <-
+          distances;
+        { a with distances; count = a.count + 1 }
+      in
+      let first_in a _ = { a with count = 0 } in
+      let middle_in a (G.Instruction i) = handle_instruction i a in
+      let transfer block_pos fact =
+        let l = block_lengths.(block_pos) in
+        let num_instructions = block_num_instructions.(block_pos) in
+        let distances =
+          IntMap.map (fun dist -> l + num_instructions + dist) fact.distances
+        in
+        let distances_per_instruction =
+          Array.make num_instructions IntMap.empty
+        in
+        distances_per_instruction.(num_instructions - 1) <- distances;
+        { fact with block_pos; distances_per_instruction; distances }
+      in
+      let last_in uid =
+        let pos = Loop.Dom.position_of_uid uid in
+        let lookup uid' =
+          let pos' = Loop.Dom.position_of_uid uid' in
+          (* if edge is a loop backedge, then any next-use distances will be after the
+             redefinition of the variable making them invalid *)
+          if Loop.Dom.dominates pos' pos then fact.init_info else fact.get uid'
+        in
+        function
+        | G.Exit -> { (transfer pos fact.init_info) with count = 1 }
+        | Branch (i, (uid', _)) ->
+          handle_instruction i @@ transfer pos @@ lookup uid'
+        | CBranch (i, (uid1, _), (uid2, _)) ->
+          handle_instruction i @@ transfer pos
+          @@ fact.add_info (lookup uid1) (lookup uid2)
+        | Return i -> handle_instruction i @@ transfer pos fact.init_info
+      in
+      let analysis =
+        (fact, { Flow.BackwardAnalysis.first_in; middle_in; last_in })
+      in
+      let _ = Flow.BackwardAnalysis.run analysis graph in
+      {
+        at_block = (fun uid -> (fact.get uid).distances);
+        at_instruction =
+          (fun uid instr_num ->
+            (fact.get uid).distances_per_instruction.(instr_num));
+      }
+  end
+end
 
 module Liveness = struct
   module type S = sig
     module Target : Isa.Target
-    module G :
-      Graph.S
-        with type Target.label = Target.label
-         and type Target.reg = Target.reg
-         and type Target.regs = Target.regs
-         and type Target.operand = Target.operand
-         and type Target.operands = Target.operands
-         and type Target.instr = Target.instr
+    module G : Graph.S
     type t = {
       live_in : G.uid -> Target.RegSet.t;
       live_out : G.uid -> Target.RegSet.t;
@@ -160,15 +176,10 @@ module Liveness = struct
       (Target : Isa.Target)
       (G :
         Graph.S
-          with type Target.label = Target.label
-           and type Target.reg = Target.reg
-           and type Target.regs = Target.regs
-           and type Target.operand = Target.operand
-           and type Target.operands = Target.operands
+          with type Target.reg = Target.reg
            and type Target.instr = Target.instr)
-      (Flow : module type of Dataflow.Make (G)) :
-    S with module Target = Target and module G = G =
-  struct
+      (Flow : Dataflow.S with module G = G) :
+    S with module Target = Target and module G = G = struct
     module Target = Target
     module G = G
     module RegSet = Target.RegSet
@@ -299,29 +310,26 @@ module Liveness = struct
           (fun uid -> (fact.get uid).max_register_pressure);
       }
   end
-  end
+end
 
 module Make
     (Target : Isa.Target)
     (G :
       Graph.S
-        with type Target.label = Target.label
-         and type Target.reg = Target.reg
-         and type Target.regs = Target.regs
-         and type Target.operand = Target.operand
-         and type Target.operands = Target.operands
+        with type Target.reg = Target.reg
          and type Target.instr = Target.instr)
+    (State : Isa.State with module Target = Target)
+    (Liveness : Liveness.S with module Target = Target and module G = G)
     (Loop :
       Loopnesting.S
         with type Dom.label = G.label
          and type Dom.position = int
          and type Dom.uid = G.uid)
-    (State : Isa.State with module Target = Target)
-    (Liveness : Liveness.S with module Target = Target and module G = G)
+    (NextUseDistances : NextUseDistances.S with module G = G)
     (M : sig
       val reg_class : Target.reg_class
       val k : int
-      val next_use_distances : distances
+      val next_use_distances : NextUseDistances.distances
       val liveness : Liveness.t
     end) =
 struct
@@ -671,5 +679,8 @@ struct
 end
 
 module X86 = struct
+  module NextUseDistances =
+    NextUseDistances.Make (X86.Target) (X86.Cfg) (X86.Flow)
   module Liveness = Liveness.Make (X86.Target) (X86.Cfg) (X86.Flow)
+  module Make = Make (X86.Target) (X86.Cfg) (Select_x86.State) (Liveness)
 end

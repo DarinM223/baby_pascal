@@ -1130,11 +1130,11 @@ let spill_helper ?(args = [])
       with type Dom.label = X86.Cfg.label
        and type Dom.position = int
        and type Dom.uid = int) state cfg =
-  let next_use_distances = Spill.next_use_distances (module Loop) cfg in
+  let module NextUseDistances = Spill.X86.NextUseDistances (Loop) in
+  let next_use_distances = NextUseDistances.calc cfg in
   let liveness = Spill.X86.Liveness.calc cfg in
   let module Spill' =
-    Spill.Make (X86.Target) (X86.Cfg) (Loop) (Select_x86.State)
-      (Spill.X86.Liveness)
+    Spill.X86.Make (Loop) (NextUseDistances)
       (struct
         let reg_class = X86.Target.Int
         let k = 16

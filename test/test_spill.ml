@@ -139,7 +139,8 @@ let test_loops () =
   let module Extra = (val extra) in
   let module Dom = Dominator.Make (X86.Cfg) (Extra) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-  let next_use_distances = Spill.next_use_distances (module Loop) cfg in
+  let module NextUseDistances = Spill.X86.NextUseDistances (Loop) in
+  let next_use_distances = NextUseDistances.calc cfg in
   Logs.debug (fun m ->
       m "Next use distances: %s\n"
         begin
@@ -153,8 +154,7 @@ let test_loops () =
         end);
   let liveness = Spill.X86.Liveness.calc cfg in
   let module Spill =
-    Spill.Make (X86.Target) (X86.Cfg) (Loop) (Select_x86.State)
-      (Spill.X86.Liveness)
+    Spill.X86.Make (Loop) (NextUseDistances)
       (struct
         let reg_class = X86.Target.Int
         let k = 16
