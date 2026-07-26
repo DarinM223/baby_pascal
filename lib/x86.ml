@@ -151,9 +151,9 @@ module Target = struct
     uses : operands;
   }
   [@@deriving eq]
+  let is_pcopy instr = instr.instr = "pcopy"
   let pp_instr fmt i =
-    match i.instr with
-    | "pcopy" ->
+    if is_pcopy i then
       let pad_uses =
         List.append i.uses
           (List.init
@@ -161,7 +161,7 @@ module Target = struct
              (fun _ -> Reg Tombstone))
       in
       Format.fprintf fmt "pcopy %a" pp_pcopy (List.combine i.defs pad_uses)
-    | _ ->
+    else
       let pp_operands = Format.pp_print_list ~pp_sep pp_operand in
       Format.fprintf fmt "%s %a" i.instr pp_operands (i.defs @ i.uses)
   let show_instr = Format.asprintf "%a" pp_instr
@@ -406,7 +406,7 @@ module SeqpcopyRequirements :
   Seqpcopy.Requirements with module Target = Target = struct
   module Target = Target
   let temp = Target.Reg (Target.Physical Regs.r8)
-  let is_pcopy instr = instr.Target.instr = "pcopy"
+  let is_pcopy = Target.is_pcopy
   let mov = Target.mov
   let uses instr = List.map Target.to_colored instr.Target.uses
   let defs instr = List.map Target.to_colored instr.Target.defs

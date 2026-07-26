@@ -358,6 +358,28 @@ struct
         is necessary *)
   end
 
+  let iter_use_defs ~k_pair_both_regs ?(k_pair_use_reg = fun _ -> ())
+      ?(k_pair_def_reg = fun _ -> ()) ?(k_pair_no_reg = fun _ -> ())
+      ?(k_def_only = fun _ -> ()) instr =
+    let rec go = function
+      | use :: uses, def :: defs ->
+        begin match (Target.destruct_reg use, Target.destruct_reg def) with
+        | Some use, Some def -> k_pair_both_regs (use, def)
+        | Some use, None -> k_pair_use_reg (use, def)
+        | None, Some def -> k_pair_def_reg (use, def)
+        | None, None -> k_pair_no_reg (use, def)
+        end;
+        go (uses, defs)
+      | [], def :: defs ->
+        begin match Target.destruct_reg def with
+        | Some def -> k_def_only def
+        | None -> ()
+        end;
+        go ([], defs)
+      | _, [] -> ()
+    in
+    go (Target.srcs instr, Target.dests instr)
+
   let enforce_constraints_state state uid instr_num instr =
     let num_regs = Array.length state.regs in
     (* Mapping from register to destination register in original instruction.
@@ -393,24 +415,17 @@ struct
         end
       | _ -> ()
     in
-    let rec go_uses_defs = function
-      | Target.Reg use :: uses, Target.Reg def :: defs ->
-        if use <> Tombstone && def <> Tombstone then begin
-          remove_constrained_use_live_throughs (use, def);
-          mark_constrained_def_regs (fun idx r -> dest_mapping.(idx) <- r) def
-        end;
-        go_uses_defs (uses, defs)
-      | _ :: uses, _ :: defs -> go_uses_defs (uses, defs)
-      | [], Target.Reg def :: defs ->
-        if def <> Tombstone then begin
-          mark_constrained_def_regs
-            (fun idx r -> clobber_mapping.(idx) <- r)
-            def
-        end;
-        go_uses_defs ([], defs)
-      | _ -> ()
+    let k_pair_both_regs = function
+      | Target.Tombstone, _ | _, Target.Tombstone -> ()
+      | use, def ->
+        remove_constrained_use_live_throughs (use, def);
+        mark_constrained_def_regs (fun idx r -> dest_mapping.(idx) <- r) def
     in
-    go_uses_defs (Target.srcs instr, Target.dests instr);
+    let k_def_only def =
+      if def <> Target.Tombstone then
+        mark_constrained_def_regs (fun idx r -> clobber_mapping.(idx) <- r) def
+    in
+    iter_use_defs ~k_pair_both_regs ~k_def_only instr;
     CCBV.iter_true live_through_regs (fun reg ->
         Logs.debug (fun m ->
             m "Live through: %a\n" Target.pp_reg state.regs.(reg)));
@@ -474,13 +489,7 @@ struct
         done
       | _ -> ()
     in
-    let rec go_constrained_uses = function
-      | Target.Reg use :: uses, Target.Reg def :: defs ->
-        remove_constrained_use_edges (use, def);
-        go_constrained_uses (uses, defs)
-      | _ -> ()
-    in
-    go_constrained_uses (Target.srcs instr, Target.dests instr);
+    iter_use_defs ~k_pair_both_regs:remove_constrained_use_edges instr;
     Hungarian.min_to_max_cost ~max_cost:9 cost;
     Logs.debug (fun m ->
         m "Cost matrix: \n%a\n"
@@ -754,7 +763,7 @@ struct
 
   let color_instruction state uid instr_num head instr =
     let head, instr =
-      if instr.Target.instr = "pcopy" then
+      if Target.is_pcopy instr then
         enforce_constraints state uid instr_num instr head
       else (head, instr)
     in
@@ -918,17 +927,24 @@ struct
 
   let build_preferences state graph : unit =
     let preferences = state.preferences in
+    let iter_of_fold fold f instr =
+      fst
+      @@ fold
+           (fun () reg ->
+             f reg;
+             ((), reg))
+           () instr
+    in
     let rec handle_operand ?(def = false) uid live = function
-      | Target.(Reg (Virtual { id; reg_constr = ReuseOperand reg; _ })) when def
-        ->
+      | Target.Virtual { id; reg_constr = ReuseOperand reg; _ } when def ->
         (* add preferences to use variable when there is a reuse operand def *)
-        let op = Target.index reg in
+        let op = reg.id in
         for i = 0 to Array.length preferences.(op) - 1 do
           preferences.(op).(i) <- preferences.(op).(i) +. preferences.(id).(i)
         done
-      | X86.Target.(Reg (Virtual { id; reg_constr = UsePhysical phys; _ })) ->
+      | Target.Virtual { id; reg_constr = UsePhysical phys; _ } ->
         begin try
-          let reg = find_reg_index state.regs (X86.Target.Physical phys) in
+          let reg = find_reg_index state.regs (Target.Physical phys) in
           let weight = state.block_execution_frequency uid in
           let penalty =
             weight *. if def then Weights.def_factor else Weights.use_factor
@@ -945,35 +961,35 @@ struct
                 preferences.(live).(reg) <- preferences.(live).(reg) -. penalty)
         with _ -> ()
         end
-      | X86.Target.Label (_, ops) -> List.iter (handle_operand uid live) ops
       | _ -> ()
     in
-    let rec handle_pcopy = function
-      | ( X86.Target.Reg (Virtual { id = src; _ }) :: srcs,
-          X86.Target.Reg (Virtual { id = dest; reg_constr = UsePhysical _; _ })
-          :: dests ) ->
+    let handle_pcopy = function
+      | ( Target.Virtual { id = src; _ },
+          Target.Virtual { id = dest; reg_constr = UsePhysical _; _ } ) ->
         (* add preferences to use variable when there is a pcopy to a constrained def *)
         for i = 0 to Array.length preferences.(src) - 1 do
           preferences.(src).(i) <-
             preferences.(src).(i) +. preferences.(dest).(i)
-        done;
-        handle_pcopy (srcs, dests)
+        done
       | _ -> ()
     in
-    let handle_instruction uid live (instr : X86.Target.instr) =
-      List.iter (handle_operand ~def:true uid live) instr.defs;
+    let handle_instruction uid live (instr : Target.instr) =
+      iter_of_fold Target.fold_reg_defs
+        (handle_operand ~def:true uid live)
+        instr;
       let defs =
-        X86.Target.defs instr |> X86.Target.RegSet.elements
-        |> List.map X86.Target.index |> CCBV.of_list
+        Target.defs instr |> Target.RegSet.elements |> List.map Target.index
+        |> CCBV.of_list
       in
       CCBV.diff_into ~into:live defs;
-      List.iter (handle_operand uid live) instr.uses;
+      iter_of_fold Target.fold_reg_uses (handle_operand uid live) instr;
       let uses =
-        X86.Target.uses instr |> X86.Target.RegSet.elements
-        |> List.map X86.Target.index |> CCBV.of_list
+        Target.uses instr |> Target.RegSet.elements |> List.map Target.index
+        |> CCBV.of_list
       in
       CCBV.union_into ~into:live uses;
-      if instr.instr = "pcopy" then handle_pcopy (instr.uses, instr.defs)
+      if Target.is_pcopy instr then
+        iter_use_defs ~k_pair_both_regs:handle_pcopy instr
     in
     let go_block block =
       let uid = X86.Cfg.id block in
