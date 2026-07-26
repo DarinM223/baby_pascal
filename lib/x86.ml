@@ -4,13 +4,20 @@ module Target = struct
     | Int
     | Float
   [@@deriving eq]
+  let pp_reg_class fmt = function
+    | Int -> Format.fprintf fmt ""
+    | Float -> Format.fprintf fmt "f"
+
   type physical_reg = int * reg_class * string [@@deriving eq]
+  let pp_physical_reg fmt (_, _, s) = Format.fprintf fmt "%s" s
+  let show_physical_reg phys = Format.asprintf "%a" pp_physical_reg phys
+
   type reg_constr =
     | Any
     | OnReg
     | OnStack
     | UsePhysical of physical_reg
-    | ReuseOperand of reg
+    | ReuseOperand of virtual_reg
   and virtual_reg = {
     id : int;
     reg_class : reg_class;
@@ -21,23 +28,14 @@ module Target = struct
     | Physical of physical_reg
     | Virtual of virtual_reg
     | Tombstone
-  let pp_reg_class fmt = function
-    | Int -> Format.fprintf fmt ""
-    | Float -> Format.fprintf fmt "f"
+  [@@deriving show]
   let show_reg_class = Format.asprintf "%a" pp_reg_class
   let rec pp_reg_constr fmt = function
     | Any -> Format.fprintf fmt "any"
     | OnReg -> Format.fprintf fmt "reg"
     | OnStack -> Format.fprintf fmt "stack"
     | UsePhysical r -> Format.fprintf fmt "(%%%a)" pp_reg (Physical r)
-    | ReuseOperand r ->
-      let id =
-        match r with
-        | Physical (id, _, _) -> id
-        | Virtual v -> v.id
-        | Tombstone -> failwith "reusing tombstone"
-      in
-      Format.fprintf fmt "(reuse=%%%d)" id
+    | ReuseOperand r -> Format.fprintf fmt "(reuse=%%%d)" r.id
 
   and pp_reg fmt = function
     | Physical (_, _, s) -> Format.fprintf fmt "%s" s
@@ -90,6 +88,9 @@ module Target = struct
   let pp_operand = pp_operand' pp_reg
   let show_operand = Format.asprintf "%a" (pp_operand' pp_reg)
   let reg reg = Reg reg
+  let destruct_reg = function
+    | Reg r -> Some r
+    | _ -> None
   let label label args = Label (label, args)
   let destruct_label = function
     | Label (l, args) -> Some (l, args)
@@ -211,7 +212,10 @@ module Target = struct
   let reuse reg = function
     | Physical _ -> failwith "reuse: expected virtual register"
     | Virtual v ->
-      v.reg_constr <- ReuseOperand reg;
+      begin match reg with
+      | Virtual vreg -> v.reg_constr <- ReuseOperand vreg
+      | _ -> ()
+      end;
       Virtual v
     | Tombstone -> failwith "reuse: got tombstone"
   let reuse_op op dest =
