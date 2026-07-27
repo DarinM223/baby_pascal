@@ -7,11 +7,11 @@ module Make
          and type Target.instr = Target.instr)
     (State : Isa.State with module Target = Target)
     (Liveness : Spill.Liveness.S with module Target = Target and module G = G)
-    (Loop :
-      Loopnesting.S
-        with type Dom.label = G.label
-         and type Dom.position = int
-         and type Dom.uid = G.uid) =
+    (Dom :
+      Dominator.S
+        with type label = G.label
+         and type position = int
+         and type uid = G.uid) =
 struct
   module RegSet = Target.RegSet
   module RegMap = Target.RegMap
@@ -380,6 +380,14 @@ struct
     in
     go (Target.srcs instr, Target.dests instr)
 
+  let iter_of_fold fold f instr =
+    fst
+    @@ fold
+         (fun () reg ->
+           f reg;
+           ((), reg))
+         () instr
+
   let enforce_constraints_state state uid instr_num instr =
     let num_regs = Array.length state.regs in
     (* Mapping from register to destination register in original instruction.
@@ -611,22 +619,25 @@ struct
       let assignment = Array.init (Array.length state.regs) (fun r -> r) in
       let extra_srcs = ref [] in
       let extra_dests = ref [] in
-      let rec set_use_def = function
-        | ( Target.Reg (Virtual use) :: uses,
-            Target.Reg (Virtual { reg_constr = UsePhysical phys; _ }) :: defs )
-          ->
+      let add_non_constrained_def (use, def) =
+        (* Some pcopies don't have register constrained definitions, add those directly *)
+        extra_srcs := use :: !extra_srcs;
+        extra_dests := def :: !extra_dests
+      in
+      let set_assignment = function
+        | ( Target.Virtual use,
+            Target.Virtual { reg_constr = UsePhysical phys; _ } ) ->
           let def = find_reg_index state.regs (Physical phys) in
           let use = find_reg_index state.regs use.reg in
-          assignment.(def) <- use;
-          set_use_def (uses, defs)
-        | use :: uses, def :: defs ->
-          (* Some pcopies don't have register constrained definitions, add those directly *)
-          extra_srcs := use :: !extra_srcs;
-          extra_dests := def :: !extra_dests;
-          set_use_def (uses, defs)
-        | _ -> ()
+          assignment.(def) <- use
+        | use, def -> add_non_constrained_def (Target.reg use, Target.reg def)
       in
-      set_use_def (pcopy.uses, pcopy.defs);
+      iter_use_defs ~k_pair_both_regs:set_assignment
+        ~k_pair_use_reg:(fun (use, def) ->
+          add_non_constrained_def (Target.reg use, def))
+        ~k_pair_def_reg:(fun (use, def) ->
+          add_non_constrained_def (use, Target.reg def))
+        ~k_pair_no_reg:add_non_constrained_def pcopy;
       Logs.debug (fun m ->
           m "Dest Mapping %s\n" ([%show: Target.reg array] State.dest_mapping));
       Logs.debug (fun m ->
@@ -637,11 +648,14 @@ struct
         enforce_constraints_pcopy (module State) state uid instr_num assignment
       in
       let pcopy =
-        {
-          pcopy with
-          uses = List.rev !extra_srcs @ pcopy.uses;
-          defs = List.rev !extra_dests @ pcopy.defs;
-        }
+        List.fold_left
+          (fun pcopy src -> Target.prepend_use src pcopy)
+          pcopy !extra_srcs
+      in
+      let pcopy =
+        List.fold_left
+          (fun pcopy dest -> Target.prepend_def dest pcopy)
+          pcopy !extra_dests
       in
       Logs.debug (fun m ->
           m "Regular PCopy %a created from %a\n" Target.pp_instr pcopy
@@ -692,8 +706,8 @@ struct
   (* Insert parallel copy instruction in src block to move arguments
    to assigned registers in dest block. *)
   let implement_phi_copies state cfg ~src ~dest =
-    let dest_label = Loop.Dom.label_of_position dest in
-    let zblock, cfg = G.(focus (idd (Loop.Dom.label_of_position src)) cfg) in
+    let dest_label = Dom.label_of_position dest in
+    let zblock, cfg = G.(focus (idd (Dom.label_of_position src)) cfg) in
     let head, last = G.goto_end zblock in
     let get_args instr =
       Target.srcs instr
@@ -898,7 +912,7 @@ struct
         end
     in
     let block = G.zip (go 0 head tail) in
-    let pos = Loop.Dom.position_of_uid uid in
+    let pos = Dom.position_of_uid uid in
     state.processed.(pos) <- true;
     block
 
@@ -912,11 +926,10 @@ struct
             implement_phi_copies state cfg ~src:pred ~dest:pos
           end
           else cfg)
-        cfg
-        (Loop.Dom.predecessors pos)
+        cfg (Dom.predecessors pos)
     in
     load_block_state state pos;
-    let succs = Loop.Dom.successors pos in
+    let succs = Dom.successors pos in
     (* if block only has one successor we can add phi copies for current block *)
     match succs with
     | [ succ ] ->
@@ -927,14 +940,6 @@ struct
 
   let build_preferences state graph : unit =
     let preferences = state.preferences in
-    let iter_of_fold fold f instr =
-      fst
-      @@ fold
-           (fun () reg ->
-             f reg;
-             ((), reg))
-           () instr
-    in
     let rec handle_operand ?(def = false) uid live = function
       | Target.Virtual { id; reg_constr = ReuseOperand reg; _ } when def ->
         (* add preferences to use variable when there is a reuse operand def *)
@@ -992,74 +997,73 @@ struct
         iter_use_defs ~k_pair_both_regs:handle_pcopy instr
     in
     let go_block block =
-      let uid = X86.Cfg.id block in
+      let uid = G.id block in
       let live_out = state.liveness.live_out uid in
       let live =
-        CCBV.of_list
-          (List.map X86.Target.index (X86.Target.RegSet.elements live_out))
+        CCBV.of_list (List.map Target.index (Target.RegSet.elements live_out))
       in
-      let head, last = X86.Cfg.(goto_end (unzip block)) in
+      let head, last = G.(goto_end (unzip block)) in
       begin match last with
-      | X86.Printer.Exit -> ()
-      | X86.Printer.Branch (i, _) -> handle_instruction uid live i
-      | X86.Printer.CBranch (i, _, _) -> handle_instruction uid live i
-      | X86.Printer.Return i -> handle_instruction uid live i
+      | G.Exit -> ()
+      | Branch (i, _) -> handle_instruction uid live i
+      | CBranch (i, _, _) -> handle_instruction uid live i
+      | Return i -> handle_instruction uid live i
       end;
       let rec go_head = function
-        | X86.Cfg.Head (head, Instruction i) ->
+        | G.Head (head, Instruction i) ->
           handle_instruction uid live i;
           go_head head
-        | X86.Cfg.First _ -> () (* ignore phis *)
+        | First _ -> () (* ignore phis *)
       in
       go_head head
     in
-    let rpo = X86.Cfg.reverse_postorder_dfs graph in
+    let rpo = G.reverse_postorder_dfs graph in
     List.iter go_block rpo
 
   let create_congruence_class state classes graph block =
     let live =
-      let live_out = state.liveness.live_out (X86.Cfg.id block) in
-      CCBV.of_list
-        (List.map X86.Target.index (X86.Target.RegSet.elements live_out))
+      let live_out = state.liveness.live_out (G.id block) in
+      CCBV.of_list (List.map Target.index (Target.RegSet.elements live_out))
     in
     let liveness_transfer instr =
       let defs =
-        X86.Target.defs instr |> X86.Target.RegSet.elements
-        |> List.map X86.Target.index |> CCBV.of_list
+        Target.defs instr |> Target.RegSet.elements |> List.map Target.index
+        |> CCBV.of_list
       in
       let uses =
-        X86.Target.uses instr |> X86.Target.RegSet.elements
-        |> List.map X86.Target.index |> CCBV.of_list
+        Target.uses instr |> Target.RegSet.elements |> List.map Target.index
+        |> CCBV.of_list
       in
       CCBV.diff_into ~into:live defs;
       CCBV.union_into ~into:live uses
     in
     let handle_jump_arg succ args i arg =
-      let succ = X86.Cfg.idd (Some succ) in
+      let succ = G.idd (Some succ) in
       let live = state.liveness.live_in succ in
       let check_interferes v =
         Unionfind.equal_repr
-          (Unionfind.find classes (X86.Target.index v))
-          (Unionfind.find classes (X86.Target.index arg))
+          (Unionfind.find classes (Target.index v))
+          (Unionfind.find classes (Target.index arg))
       in
       (* interferes if anything in live_in of block successor has the same set representative as jump arg
        or if other args in jump has same set representative as jump arg *)
       let interferes =
         RegSet.exists check_interferes live
         || args
-           |> List.filter_map (function
-             | X86.Target.Reg r when not (X86.Target.equal_reg r arg) -> Some r
-             | _ -> None)
+           |> List.filter_map (fun op ->
+               match Target.destruct_reg op with
+               | Some r when not (Target.equal_reg r arg) -> Some r
+               | _ -> None)
            |> List.exists check_interferes
       in
       (* if no interference, merge jump arg and successor phi classes and add preferences to set representative *)
       if not interferes then
         let phi =
-          match X86.Cfg.(first (fst (focus succ graph))) with
-          | X86.Cfg.Entry ->
+          match G.(first (fst (focus succ graph))) with
+          | G.Entry ->
             failwith
               "create_congruence_class: jump with arguments to entry block"
-          | X86.Cfg.Label (_, info) ->
+          | Label (_, info) ->
             begin match List.nth_opt info.args i with
             | Some phi -> phi
             | None ->
@@ -1067,8 +1071,8 @@ struct
                 "create_congruence_class: jump has different arity to phis"
             end
         in
-        let arg_repr = Unionfind.find classes (X86.Target.index arg) in
-        let phi_repr = Unionfind.find classes (X86.Target.index phi) in
+        let arg_repr = Unionfind.find classes (Target.index arg) in
+        let phi_repr = Unionfind.find classes (Target.index phi) in
         let merged_repr = Unionfind.union classes arg_repr phi_repr in
         let other_repr =
           if Unionfind.equal_repr merged_repr phi_repr then arg_repr
@@ -1082,36 +1086,37 @@ struct
     in
     let handle_jump instr =
       List.iter
-        (function
-          | X86.Target.Label (succ, args) ->
+        (fun op ->
+          match Target.destruct_label op with
+          | Some (succ, args) ->
             List.iteri
-              (fun i -> function
-                | X86.Target.Reg r -> handle_jump_arg succ args i r
+              (fun i op ->
+                match Target.destruct_reg op with
+                | Some r -> handle_jump_arg succ args i r
                 | _ -> ())
               args
           | _ -> ())
-        instr.X86.Target.uses
+        (Target.srcs instr)
     in
-    let head, last = X86.Cfg.(goto_end (unzip block)) in
+    let head, last = G.(goto_end (unzip block)) in
     begin match last with
-    | X86.Printer.Exit -> ()
-    | X86.Printer.Branch (instr, _) ->
+    | G.Exit -> ()
+    | Branch (instr, _) ->
       handle_jump instr;
       liveness_transfer instr
-    | X86.Printer.CBranch (instr, _, _) ->
+    | CBranch (instr, _, _) ->
       handle_jump instr;
       liveness_transfer instr
-    | X86.Printer.Return instr -> liveness_transfer instr
+    | Return instr -> liveness_transfer instr
     end;
     let handle_reuse_operand_def = function
-      | X86.Target.(Reg (Virtual { id; reg_constr = ReuseOperand op; _ })) ->
-        let op = X86.Target.index op in
+      | Target.Virtual { id; reg_constr = ReuseOperand op; _ } ->
         let interferes = ref false in
         let exception Break in
         (* if any current live variables has the same set representative as the reused operand then it interferes *)
         begin try
           CCBV.iter_true live @@ fun v ->
-          if Unionfind.(equal_repr (find classes v) (find classes op)) then begin
+          if Unionfind.(equal_repr (find classes v) (find classes op.id)) then begin
             interferes := true;
             raise Break
           end
@@ -1119,13 +1124,14 @@ struct
         end;
         (* if no interference then merge classes for reuse operand def and use variables *)
         if not !interferes then
-          ignore Unionfind.(union classes (find classes id) (find classes op))
+          ignore
+            Unionfind.(union classes (find classes id) (find classes op.id))
       | _ -> ()
     in
     let rec go_head = function
-      | X86.Cfg.First _ -> ()
-      | X86.Cfg.Head (head, Instruction instr) ->
-        List.iter handle_reuse_operand_def instr.defs;
+      | G.First _ -> ()
+      | Head (head, Instruction instr) ->
+        iter_of_fold Target.fold_reg_defs handle_reuse_operand_def instr;
         liveness_transfer instr;
         go_head head
     in
@@ -1139,14 +1145,13 @@ struct
 
   let combine_congruence_classes state graph =
     let classes = Unionfind.create state.num_vars in
-    let rpo = X86.Cfg.reverse_postorder_dfs graph in
+    let rpo = G.reverse_postorder_dfs graph in
     List.iter (create_congruence_class state classes graph) rpo;
     Array.iteri
       (fun v _ -> set_congruence_prefs state classes v)
       state.preferences
 
-  let rec add_trace (module Dom : Dominator.S with type position = int) trace
-      seen order block =
+  let rec add_trace trace seen order block =
     if not seen.(block) then begin
       let best_pred =
         Dom.predecessors block
@@ -1161,7 +1166,7 @@ struct
       in
       let order =
         match best_pred with
-        | Some pred -> add_trace (module Dom) trace seen order pred
+        | Some pred -> add_trace trace seen order pred
         | None -> order
       in
       seen.(block) <- true;
@@ -1170,7 +1175,6 @@ struct
     else order
 
   let blockorder state =
-    let module Dom = (val state.dom) in
     let trace = Array.make Dom.size 0. in
     for b = Dom.size - 1 downto 0 do
       let uid = X86.Cfg.idd (Dom.label_of_position b) in
@@ -1184,57 +1188,52 @@ struct
     let blocks = Array.init Dom.size (fun i -> i) in
     Array.sort (fun a b -> Float.compare trace.(a) trace.(b)) blocks;
     let seen = Array.make Dom.size false in
-    List.rev @@ Array.fold_left (add_trace (module Dom) trace seen) [] blocks
+    List.rev @@ Array.fold_left (add_trace trace seen) [] blocks
 
   let create_phi state cfg pos v =
     let rec get_reg v' =
       match v' with
-      | X86.Target.Virtual { reg; _ } when not (X86.Target.equal_reg reg v') ->
-        reg
-      | X86.Target.Physical _ -> v'
+      | Target.Virtual { reg; _ } when not (Target.equal_reg reg v') -> reg
+      | Target.Physical _ -> v'
       | _ ->
-        if not (X86.Target.equal_reg v v') then begin
+        if not (Target.equal_reg v v') then begin
           let default_reg = get_reg v in
           Logs.debug (fun m ->
               m "create_phi: uncolored register %a, using default %a\n"
-                X86.Target.pp_reg v' X86.Target.pp_reg default_reg);
+                Target.pp_reg v' Target.pp_reg default_reg);
           default_reg
         end
         else
           failwith
-          @@ Format.asprintf "create_phi: uncolored register %a"
-               X86.Target.pp_reg v
+          @@ Format.asprintf "create_phi: uncolored register %a" Target.pp_reg v
     in
-    let module Dom = (val state.dom) in
     let phi_block_label = Dom.label_of_position pos in
     (* add phi to block label at pos *)
-    let (head, tail), cfg = X86.Cfg.focus (X86.Cfg.idd phi_block_label) cfg in
+    let (head, tail), cfg = G.focus (G.idd phi_block_label) cfg in
     let head =
       match head with
-      | X86.Cfg.First (Label (l, info)) ->
-        X86.Cfg.First (Label (l, { info with args = get_reg v :: info.args }))
-      | X86.Cfg.First Entry ->
-        failwith "create_phi: cannot create phi for entry block"
-      | X86.Cfg.Head _ -> failwith "create_phi: expected first"
+      | G.First (Label (l, info)) ->
+        G.First (Label (l, { info with args = get_reg v :: info.args }))
+      | First Entry -> failwith "create_phi: cannot create phi for entry block"
+      | Head _ -> failwith "create_phi: expected first"
     in
-    let cfg = X86.Cfg.unfocus ((head, tail), cfg) in
+    let cfg = G.unfocus ((head, tail), cfg) in
     (* go into every predecessor of the block and add the phi argument to the end of its jump *)
     let go_pred cfg pred =
       load_block_state state pred;
-      let zblock, cfg =
-        X86.Cfg.(focus (idd (Dom.label_of_position pred)) cfg)
-      in
-      let head, last = X86.Cfg.goto_end zblock in
+      let zblock, cfg = G.(focus (idd (Dom.label_of_position pred)) cfg) in
+      let head, last = G.goto_end zblock in
       (* if predecessor is unprocessed, insert the uncolored virtual register,
        it will be colored with the right register later. *)
       let v = if state.processed.(pred) then get_reg v else v in
       let rewrite_edge instr =
-        let add_phi_arg = function
-          | X86.Target.Label (l, ops) when phi_block_label = Some l ->
-            X86.Target.Label (l, Reg v :: ops)
-          | op -> op
+        let add_phi_arg op =
+          match Target.destruct_label op with
+          | Some (l, ops) when phi_block_label = Some l ->
+            Target.label l (Target.reg v :: ops)
+          | _ -> op
         in
-        X86.Target.map_uses add_phi_arg instr
+        Target.map_uses add_phi_arg instr
       in
       let last =
         match last with
@@ -1242,19 +1241,18 @@ struct
         | Branch (instr, l) -> Branch (rewrite_edge instr, l)
         | CBranch (instr, l1, l2) -> CBranch (rewrite_edge instr, l1, l2)
       in
-      X86.Cfg.unfocus ((head, Last last), cfg)
+      G.unfocus ((head, Last last), cfg)
     in
     let cfg = List.fold_left go_pred cfg (Dom.predecessors pos) in
     load_block_state state pos;
     cfg
 
   let color_graph state args cfg k_prefs =
-    let module Dom = (val state.dom) in
     build_preferences state cfg;
     combine_congruence_classes state cfg;
     k_prefs state;
     let go_block cfg pos =
-      let uid = X86.Cfg.idd (Dom.label_of_position pos) in
+      let uid = G.idd (Dom.label_of_position pos) in
       Logs.debug (fun m -> m "Coloring block %d:\n" uid);
       let preds = Dom.predecessors pos in
       if not @@ CCList.is_empty preds then begin
@@ -1265,18 +1263,17 @@ struct
       state.select_state.curr_block := uid;
 
       (* color initial arguments for entry block *)
-      let zblock, cfg = X86.Cfg.focus uid cfg in
+      let zblock, cfg = G.focus uid cfg in
       let zblock =
-        if uid = X86.Cfg.entry_uid then
+        if uid = G.entry_uid then
           let head, tail = zblock in
           let head =
             RegSet.fold
               (function
-                | X86.Target.Virtual r' as r when X86.Target.equal_reg r'.reg r
-                  ->
+                | Target.Virtual r' as r when Target.equal_reg r'.reg r ->
                   fun head ->
                     let reg, pref, head =
-                      get_register state X86.Cfg.entry_uid r head
+                      get_register state G.entry_uid r head
                     in
                     r'.reg <- state.regs.(reg);
                     state.reg_current_var.(reg) <- Some r';
@@ -1289,13 +1286,13 @@ struct
           (head, tail)
         else zblock
       in
-      let cfg = X86.Cfg.(unfocus (zblock, cfg)) in
+      let cfg = G.(unfocus (zblock, cfg)) in
 
       Logs.debug (fun m ->
           m "Current vars: %s\n"
-            ([%show: X86.Target.reg option list]
+            ([%show: Target.reg option list]
                (List.map
-                  (Option.map (fun v -> X86.Target.Virtual v))
+                  (Option.map (fun v -> Target.Virtual v))
                   (Array.to_list state.reg_current_var))));
 
       (* for each live in, check if it is the same across predecessors
@@ -1303,7 +1300,7 @@ struct
       let live_in = state.liveness.live_in pos in
       let set_live_in v cfg =
         try
-          Logs.debug (fun m -> m "Live in: %a\n" X86.Target.pp_reg v);
+          Logs.debug (fun m -> m "Live in: %a\n" Target.pp_reg v);
           let assigned = get_block_reg state pos v in
           let pred_needs_to_create_phi pred =
             if not state.processed.(pred) then
@@ -1312,60 +1309,52 @@ struct
             else begin
               Logs.debug (fun m ->
                   m "Checking pred %d for block %d\n"
-                    (X86.Cfg.idd (Dom.label_of_position pred))
+                    (G.idd (Dom.label_of_position pred))
                     uid);
               (not (CCBV.get state.saved_occupied.(pred) assigned))
               || Option.map
-                   (fun v -> v.X86.Target.id)
+                   (fun v -> v.Target.id)
                    state.saved_reg_current_var.(pred).(assigned)
-                 <> Some (X86.Target.index v)
+                 <> Some (Target.index v)
             end
           in
           if List.exists pred_needs_to_create_phi preds then begin
             Logs.debug (fun m ->
-                m "Block %d needs to create phi for %a" uid X86.Target.pp_reg v);
+                m "Block %d needs to create phi for %a" uid Target.pp_reg v);
             create_phi state cfg pos v
           end
           else cfg
         with NotColoredYet -> cfg
       in
-      let cfg = X86.Target.RegSet.fold set_live_in live_in cfg in
+      let cfg = Target.RegSet.fold set_live_in live_in cfg in
 
       Logs.debug (fun m ->
           m "Block %d Occupied: %a\n" uid
             (Format.pp_print_list
                ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
-               X86.Target.pp_reg)
+               Target.pp_reg)
             (List.map (fun r -> state.regs.(r)) (CCBV.to_list state.occupied)));
 
       (* now color registers for all the instructions in block *)
-      let zblock, cfg = X86.Cfg.focus uid cfg in
-      let block = color_block state (X86.Cfg.zip zblock) in
-      let cfg = X86.Cfg.(unfocus (unzip block, cfg)) in
+      let zblock, cfg = G.focus uid cfg in
+      let block = color_block state (G.zip zblock) in
+      let cfg = G.(unfocus (unzip block, cfg)) in
       after_color_block state cfg pos
     in
     let blockorder = blockorder state in
     Logs.debug (fun m ->
         m "Block order: %s\n"
-          ([%show: X86.Cfg.label option list]
+          ([%show: G.label option list]
              (List.map Dom.label_of_position blockorder)));
     List.fold_left go_block cfg blockorder
 
-  let init_state ~select_state ~regs ~block_execution_frequency ~liveness
-      (module Dom : Dominator.S
-        with type label = X86.Cfg.label
-         and type position = int
-         and type uid = int
-         and type graph = X86.Cfg.graph) =
-    let num_vars =
-      Utils.IntHashtbl.length select_state.Select_x86.State.vreg_block
-    in
+  let init_state ~select_state ~regs ~block_execution_frequency ~liveness =
+    let num_vars = Utils.IntHashtbl.length select_state.State.vreg_block in
     {
       select_state;
       regs;
       block_execution_frequency;
       liveness;
-      dom = (module Dom);
       reg_current_var = Array.make (Array.length regs) None;
       reg_current_pref = Array.make (Array.length regs) 0.;
       occupied = CCBV.create ~size:(Array.length regs) false;
@@ -1423,28 +1412,34 @@ let spill_helper ?(args = [])
   in
   Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
 
-module X86 = struct end
-
-let regalloc_helper ?(args = X86.Target.RegSet.empty)
-    ?(regs =
-      X86.Regs.int_regs |> Array.of_list
-      |> Array.map (fun r -> X86.Target.Physical r))
-    (module Loop : Loopnesting.S
-      with type Dom.label = X86.Cfg.label
-       and type Dom.position = int
-       and type Dom.uid = int
-       and type Dom.graph = X86.Cfg.graph) state cfg k_prefs =
-  (* have to recalculate because added spills may have modified the instruction numbers *)
-  let liveness = Spill.X86.Liveness.calc cfg in
-  let module Freq = Execfreq.Make (X86.Cfg) (Loop) (X86.ExecfreqRequirements) in
-  let block_execution_frequency uid =
-    Freq.bfreq.(Loop.Dom.position_of_uid uid)
-  in
-  let alloc_state =
-    init_state ~select_state:state ~block_execution_frequency ~liveness ~regs
-      (module Loop.Dom)
-  in
-  color_graph alloc_state args cfg k_prefs
+module X86Helper
+    (Loop :
+      Loopnesting.S
+        with type Dom.label = X86.Cfg.label
+         and type Dom.position = int
+         and type Dom.uid = int
+         and type Dom.graph = X86.Cfg.graph) =
+struct
+  module Regalloc =
+    Make (X86.Target) (X86.Cfg) (Select_x86.State) (Spill.X86.Liveness)
+      (Loop.Dom)
+  let regalloc ?(args = X86.Target.RegSet.empty)
+      ?(regs =
+        X86.Regs.int_regs |> Array.of_list
+        |> Array.map (fun r -> X86.Target.Physical r)) state cfg k_prefs =
+    (* have to recalculate because added spills may have modified the instruction numbers *)
+    let liveness = Spill.X86.Liveness.calc cfg in
+    let module Freq = Execfreq.Make (X86.Cfg) (Loop) (X86.ExecfreqRequirements)
+    in
+    let block_execution_frequency uid =
+      Freq.bfreq.(Loop.Dom.position_of_uid uid)
+    in
+    let alloc_state =
+      Regalloc.init_state ~select_state:state ~block_execution_frequency
+        ~liveness ~regs
+    in
+    Regalloc.color_graph alloc_state args cfg k_prefs
+end
 
 let%expect_test "Nested loops register allocation" =
   let cfg = Examples.nested_loops in
@@ -1454,9 +1449,12 @@ let%expect_test "Nested loops register allocation" =
   let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
   let cfg = spill_helper (module Loop) state cfg in
+  let module Helper = X86Helper (Loop) in
   let cfg =
-    regalloc_helper (module Loop) state cfg @@ fun state ->
-    Format.printf "%a\n" (pp_preferences state.regs) state.preferences;
+    Helper.regalloc state cfg @@ fun state ->
+    Format.printf "%a\n"
+      (Helper.Regalloc.pp_preferences state.regs)
+      state.preferences;
     [%expect
       {|
     [0 -> [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 1 ->
@@ -1541,13 +1539,13 @@ let%expect_test "Fibonacci register allocation" =
       movq %29any, %30(reuse=%31)
       jmp label1(%29any)
     |}];
+  let module Helper = X86Helper (Loop) in
   let cfg =
-    regalloc_helper
-      ~args:(RegSet.of_list (reg_ops srcs))
-      (module Loop)
-      state cfg
+    Helper.regalloc ~args:(X86.Target.RegSet.of_list (reg_ops srcs)) state cfg
     @@ fun state ->
-    Format.printf "%a\n" (pp_preferences state.regs) state.preferences;
+    Format.printf "%a\n"
+      (Helper.Regalloc.pp_preferences state.regs)
+      state.preferences;
     [%expect
       {|
     [0 -> [rax: -1.000000, rbx: -1.000000, rcx: -1.000000, rdx: -1.000000, rsi: -1.000000, rdi: 0.000000, rsp: -1.000000, rbp: -1.000000, r8: -1.000000, r9: -1.000000, r10: -1.000000, r11: -1.000000, r12: -1.000000, r13: -1.000000, r14: -1.000000, r15: -1.000000], 1 ->

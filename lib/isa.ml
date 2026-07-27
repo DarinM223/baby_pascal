@@ -45,6 +45,9 @@ module type Target = sig
   type pcopy = (operand * operand) list [@@deriving show, eq]
   val is_pcopy : instr -> bool
 
+  val prepend_use : operand -> instr -> instr
+  val prepend_def : operand -> instr -> instr
+
   val map_reg_uses : (reg -> reg) -> instr -> instr
   val fold_reg_uses : ('a -> reg -> 'a * reg) -> 'a -> instr -> 'a * instr
   val fold_reg_defs : ('a -> reg -> 'a * reg) -> 'a -> instr -> 'a * instr

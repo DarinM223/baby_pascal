@@ -15,6 +15,14 @@ let get_physical = function
     failwith
     @@ Format.asprintf "Not a physical register, %a" X86.Target.pp_reg r
 
+let find_reg_index regs reg : int =
+  match CCArray.find_idx (X86.Target.equal_reg reg) regs with
+  | Some (index, _) -> index
+  | None ->
+    failwith
+      (Format.asprintf "find_reg: couldn't find index for register %a"
+         X86.Target.pp_reg reg)
+
 let setup_register_shuffle ~(regs : X86.Target.reg array)
     ~(extra_curr_live : reg_mapping) ~(uses : reg_mapping) ~(defs : reg_mapping)
     ~(extra_clobbered_regs : reg_mapping) =
@@ -50,9 +58,11 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
       }
   in
   let open Regalloc in
+  let module Regalloc =
+    Make (X86.Target) (X86.Cfg) (Select_x86.State) (Spill.X86.Liveness) (Dom)
+  in
   let state =
-    init_state ~select_state ~regs ~block_execution_frequency ~liveness
-      (module Dom)
+    Regalloc.init_state ~select_state ~regs ~block_execution_frequency ~liveness
   in
   let idx phys = find_reg_index regs (X86.Target.Physical phys) in
   let set_reg idx = function
@@ -103,7 +113,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   let srcs, dests = (to_operands srcs, to_operands dests) in
   let instr = X86.Target.pcopy ~dests ~srcs in
   let head, instr =
-    color_instruction state uid instr_num (X86.Cfg.First Entry) instr
+    Regalloc.color_instruction state uid instr_num (X86.Cfg.First Entry) instr
   in
   Format.printf "Live through: %s\n"
     ([%show: (int * bool) list] (Utils.IntHashtbl.to_list live_through));
@@ -112,16 +122,16 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
       (fun acc -> function
         | X86.Target.Reg (Virtual { reg_constr = UsePhysical phys; _ } as reg)
           ->
-          RegMap.add (Physical phys) reg acc
+          X86.Target.RegMap.add (Physical phys) reg acc
         | _ -> acc)
-      RegMap.empty
+      X86.Target.RegMap.empty
       (CCList.drop (List.length srcs) dests)
   in
   let id = X86.Target.index in
   let reg vreg = (get_vreg vreg).reg in
   let live_through_clobbered vreg =
     try
-      let clobbered = RegMap.find (reg vreg) clobbered in
+      let clobbered = X86.Target.RegMap.find (reg vreg) clobbered in
       Utils.IntHashtbl.mem live_through (id clobbered)
     with Not_found -> false
   in
@@ -147,7 +157,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
         (option X86.Target.(testable pp_reg equal_reg))
         (mk_check "current var" src)
         (if live_through_clobbered src then
-           Some (RegMap.find (reg src) clobbered)
+           Some (X86.Target.RegMap.find (reg src) clobbered)
          else if Utils.IntHashtbl.mem live_through (id src) then Some src
          else if Utils.IntHashtbl.mem live_through (id dest) then Some dest
          else None)
@@ -158,7 +168,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
         (option X86.Target.(testable pp_reg equal_reg))
         (mk_check "current var" dest)
         (if live_through_clobbered dest then
-           Some (RegMap.find (reg dest) clobbered)
+           Some (X86.Target.RegMap.find (reg dest) clobbered)
          else if Utils.IntHashtbl.mem live_through (id dest) then Some dest
          else None)
         (Option.map
@@ -196,7 +206,7 @@ let test_pcopy_instr ~regs head =
         |> X86.Target.map_uses X86.Target.to_colored
         |> X86.Target.map_defs (function
           | X86.Target.Reg (Virtual { reg_constr = UsePhysical phys; _ }) ->
-            Reg regs.(Regalloc.find_reg_index regs (Physical phys))
+            Reg regs.(find_reg_index regs (Physical phys))
           | op -> op)
       in
       let tail = Sequentialize.parallel_copy_instr instr tail in

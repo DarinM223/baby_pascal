@@ -76,12 +76,11 @@ let compile program =
           else None)
       |> Array.of_list
     in
+    let module Helper = Regalloc.X86Helper (Loop) in
     let cfg =
-      Regalloc.regalloc_helper
+      Helper.regalloc
         ~args:(X86.Target.RegSet.of_list (Regalloc.reg_ops srcs))
-        ~regs
-        (module Loop)
-        state cfg
+        ~regs state cfg
         (fun _ -> ())
     in
     Format.printf "===================================\n";

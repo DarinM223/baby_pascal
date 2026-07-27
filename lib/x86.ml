@@ -166,6 +166,9 @@ module Target = struct
       Format.fprintf fmt "%s %a" i.instr pp_operands (i.defs @ i.uses)
   let show_instr = Format.asprintf "%a" pp_instr
 
+  let prepend_use op i = { i with uses = op :: i.uses }
+  let prepend_def op i = { i with defs = op :: i.defs }
+
   let srcs i = i.uses
   let dests i = i.defs
   let fold_uses f init i =
