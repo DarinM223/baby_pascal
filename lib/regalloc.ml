@@ -1177,7 +1177,7 @@ struct
   let blockorder state =
     let trace = Array.make Dom.size 0. in
     for b = Dom.size - 1 downto 0 do
-      let uid = X86.Cfg.idd (Dom.label_of_position b) in
+      let uid = G.idd (Dom.label_of_position b) in
       let t =
         List.fold_left
           (fun acc pred -> max acc trace.(pred))
@@ -1371,47 +1371,6 @@ struct
     }
 end
 
-let reg_ops =
-  List.filter_map (function
-    | X86.Target.Reg r -> Some r
-    | _ -> None)
-
-let spill_helper ?(args = [])
-    (module Loop : Loopnesting.S
-      with type Dom.label = X86.Cfg.label
-       and type Dom.position = int
-       and type Dom.uid = int) state cfg =
-  let module NextUseDistances = Spill.X86.NextUseDistances (Loop) in
-  let next_use_distances = NextUseDistances.calc cfg in
-  let liveness = Spill.X86.Liveness.calc cfg in
-  let module Spill' =
-    Spill.X86.Make (Loop) (NextUseDistances)
-      (struct
-        let reg_class = X86.Target.Int
-        let k = 16
-        let next_use_distances = next_use_distances
-        let liveness = liveness
-      end) in
-  let spill_state = Spill'.init state in
-  let cfg = Spill'.spill ~args spill_state cfg in
-  let module Reconstruct = Reconstruct.Make (X86.Target) (X86.Cfg) (Loop.Dom) in
-  let reconstruct_copies reg _ graph =
-    let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
-    let def_blocks =
-      List.map
-        (fun r ->
-          Deadcode.IntHashtbl.find spill_state.select_state.vreg_block
-            (X86.Target.index r))
-        (reg :: copies)
-    in
-    Reconstruct.reconstruct
-      (fun () -> spill_state.select_state.fresh_vreg Int)
-      (Spill'.RegSet.singleton reg)
-      (Spill'.RegSet.of_list copies)
-      def_blocks graph
-  in
-  Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
-
 module X86Helper
     (Loop :
       Loopnesting.S
@@ -1448,7 +1407,7 @@ let%expect_test "Nested loops register allocation" =
   let extra = X86.Cfg.precalculate_edges cfg in
   let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-  let cfg = spill_helper (module Loop) state cfg in
+  let cfg = Spill.X86.spill_helper (module Loop) state cfg in
   let module Helper = X86Helper (Loop) in
   let cfg =
     Helper.regalloc state cfg @@ fun state ->
@@ -1503,11 +1462,11 @@ let%expect_test "Nested loops register allocation" =
 let%expect_test "Fibonacci register allocation" =
   let cfg = Examples.fibonacci in
   let state = Select_x86.State.init () in
-  let srcs, cfg = Select_x86.codegen_test_helper ~args:[ "v" ] state cfg in
+  let args, cfg = Select_x86.codegen_test_helper ~args:[ "v" ] state cfg in
   let extra = X86.Cfg.precalculate_edges cfg in
   let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-  let cfg = spill_helper ~args:(reg_ops srcs) (module Loop) state cfg in
+  let cfg = Spill.X86.spill_helper ~args (module Loop) state cfg in
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
@@ -1541,7 +1500,7 @@ let%expect_test "Fibonacci register allocation" =
     |}];
   let module Helper = X86Helper (Loop) in
   let cfg =
-    Helper.regalloc ~args:(X86.Target.RegSet.of_list (reg_ops srcs)) state cfg
+    Helper.regalloc ~args:(X86.Target.RegSet.of_list args) state cfg
     @@ fun state ->
     Format.printf "%a\n"
       (Helper.Regalloc.pp_preferences state.regs)
