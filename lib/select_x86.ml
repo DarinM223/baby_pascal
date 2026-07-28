@@ -244,8 +244,13 @@ let codegen_block state ((first, tail) : Undag.Cfg.block) : Cfg.block =
   (first, tail)
 
 let codegen_function ?(args = []) (state : State.t) (graph : Undag.Cfg.graph) :
-    Target.operand list * Cfg.graph =
+    Target.reg list * Cfg.graph =
   let srcs = List.init (List.length args) (call_conv_int state) in
+  let reg_ops =
+    List.filter_map (function
+      | X86.Target.Reg r -> Some r
+      | _ -> None)
+  in
   let dests =
     List.map
       (fun arg -> Target.Reg (State.assign_vreg state Int (Reg arg)))
@@ -263,8 +268,8 @@ let codegen_function ?(args = []) (state : State.t) (graph : Undag.Cfg.graph) :
   let zblock, graph = X86.Cfg.focus_entry graph in
   match zblock with
   | First Entry, tail when List.length args > 0 ->
-    (srcs, X86.Cfg.unfocus ((First Entry, Tail (pcopy, tail)), graph))
-  | _ -> (srcs, X86.Cfg.unfocus (zblock, graph))
+    (reg_ops srcs, X86.Cfg.unfocus ((First Entry, Tail (pcopy, tail)), graph))
+  | _ -> (reg_ops srcs, X86.Cfg.unfocus (zblock, graph))
 
 let codegen_test_helper ?(args = []) state cfg =
   let extra = Normalize.Cfg.precalculate_edges cfg in

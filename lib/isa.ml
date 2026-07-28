@@ -1,9 +1,27 @@
 module type Target = sig
-  include Instruction.Target
   type reg_class [@@deriving show, eq]
-  type physical_reg [@@deriving eq]
+  type physical_reg [@@deriving show, eq]
+  type reg_constr =
+    | Any
+    | OnReg
+    | OnStack
+    | UsePhysical of physical_reg
+    | ReuseOperand of virtual_reg
+  and virtual_reg = {
+    id : int;
+    reg_class : reg_class;
+    mutable reg : reg;
+    mutable reg_constr : reg_constr;
+  }
+  and reg =
+    | Physical of physical_reg
+    | Virtual of virtual_reg
+    | Tombstone
+  [@@deriving show]
+  include Instruction.Target with type reg := reg
   val index : reg -> int
   val reg : reg -> operand
+  val destruct_reg : operand -> reg option
 
   val fold_reg_operand :
     ('a -> reg -> 'a * reg) -> 'a -> operand -> 'a * operand
@@ -25,6 +43,10 @@ module type Target = sig
   module RegMap : Map.S with type key = reg
 
   type pcopy = (operand * operand) list [@@deriving show, eq]
+  val is_pcopy : instr -> bool
+
+  val prepend_use : operand -> instr -> instr
+  val prepend_def : operand -> instr -> instr
 
   val map_reg_uses : (reg -> reg) -> instr -> instr
   val fold_reg_uses : ('a -> reg -> 'a * reg) -> 'a -> instr -> 'a * instr

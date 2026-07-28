@@ -58,7 +58,7 @@ let compile program =
         cfg Undag.Cfg.empty
     in
     let state = Select_x86.State.init () in
-    let srcs, cfg = Select_x86.codegen_function ~args state cfg in
+    let args, cfg = Select_x86.codegen_function ~args state cfg in
     Format.printf "===================================\n";
     Format.printf "%s's cfg after codegen:\n" f;
     Format.printf "===================================\n";
@@ -66,9 +66,7 @@ let compile program =
     let extra = X86.Cfg.precalculate_edges cfg in
     let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
     let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-    let cfg =
-      Regalloc.(spill_helper ~args:(reg_ops srcs) (module Loop) state cfg)
-    in
+    let cfg = Spill.X86.spill_helper ~args (module Loop) state cfg in
     let regs =
       X86.Regs.int_regs
       |> List.filter_map (fun ((_, _, reg) as r) ->
@@ -76,12 +74,9 @@ let compile program =
           else None)
       |> Array.of_list
     in
+    let module Helper = Regalloc.X86Helper (Loop) in
     let cfg =
-      Regalloc.regalloc_helper
-        ~args:(X86.Target.RegSet.of_list (Regalloc.reg_ops srcs))
-        ~regs
-        (module Loop)
-        state cfg
+      Helper.regalloc ~args:(X86.Target.RegSet.of_list args) ~regs state cfg
         (fun _ -> ())
     in
     Format.printf "===================================\n";
