@@ -29,7 +29,7 @@ let test_example_1 () =
   in
   let expected = Undag.Cfg.(zip (fst (focus_entry expected))) in
   (check Undag.Cfg.(testable pp_block equal_block))
-    "Produces proper graph" block expected
+    "Produces proper graph" expected block
 
 let test_use_in_jump () =
   let cfg =
@@ -64,7 +64,7 @@ let test_use_in_jump () =
   in
   let expected = Undag.Cfg.(zip (fst (focus_entry expected))) in
   (check Undag.Cfg.(testable pp_block equal_block))
-    "Produces proper graph" block expected
+    "Produces proper graph" expected block
 
 let _ =
   run "Test undag to list of trees"

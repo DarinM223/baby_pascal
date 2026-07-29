@@ -55,7 +55,7 @@ let test_example_1 () =
     @@ focus_entry empty
   in
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" result expected
+    "Produces proper graph" expected result
 
 let test_map_first_last () =
   let open Normalize.Target in
@@ -95,7 +95,7 @@ let test_map_first_last () =
       Last (Branch (goto (2, "") [ reg "a"; reg "b" ], (2, ""))) )
   in
   (check (testable pp_zblock equal_zblock))
-    "Produces proper zipper" zblock expected;
+    "Produces proper zipper" expected zblock;
   let cfg = unfocus (zblock, rest) in
   let expected =
     unfocus
@@ -105,7 +105,7 @@ let test_map_first_last () =
     @@ label (2, "")
     @@ exit @@ focus_entry empty
   in
-  (check (testable pp_graph equal_graph)) "Produces proper graph" cfg expected
+  (check (testable pp_graph equal_graph)) "Produces proper graph" expected cfg
 
 let _ =
   run "Normalize to zipper cfg"

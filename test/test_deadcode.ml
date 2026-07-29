@@ -23,9 +23,9 @@ let test_simple () =
     @@ focus_entry empty
   in
   let cfg, changed = Deadcode.M.deadcode cfg in
-  (check bool) "Graph changed" changed true;
+  (check bool) "Graph changed" true changed;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" expected cfg
 
 let test_branch () =
   let cfg =
@@ -64,9 +64,9 @@ let test_branch () =
     @@ focus_entry empty
   in
   let cfg, changed = Deadcode.M.deadcode cfg in
-  (check bool) "Graph changed" changed true;
+  (check bool) "Graph changed" true changed;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" expected cfg
 
 let test_block_args () =
   let cfg =
@@ -98,9 +98,9 @@ let test_block_args () =
     @@ exit @@ focus_entry empty
   in
   let cfg, changed = Deadcode.M.deadcode cfg in
-  (check bool) "Graph changed" changed true;
+  (check bool) "Graph changed" true changed;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" expected cfg
 
 let _ =
   run "Dead code elimination"

@@ -17,7 +17,7 @@ let test_print () =
       ~defs:[ Reg (reuse v1 v3) ]
       ~uses:[ Reg v1; Reg (constrained Regs.rax v2) ]
   in
-  (check string) "add" (show_instr instr) "addq %3(reuse=%1), %1any, %2(%rax)";
+  (check string) "add" "addq %3(reuse=%1), %1any, %2(%rax)" (show_instr instr);
   let v1 = new_reg { id = 1; reg_class = Float; reg_constr = OnStack; reg } in
   let v2 = new_reg { id = 2; reg_class = Float; reg_constr = OnReg; reg } in
   let v3 = new_reg { id = 3; reg_class = Float; reg_constr = OnReg; reg } in
@@ -25,7 +25,7 @@ let test_print () =
     mov ~dest:(Reg v1)
       ~src:(MemAddr { base = v2; index = v3; scale = 10; displacement = 15 })
   in
-  (check string) "mov" (show_instr instr) "movq %1fstack, 15(%2freg,%3freg,10)";
+  (check string) "mov" "movq %1fstack, 15(%2freg,%3freg,10)" (show_instr instr);
   let v1 = new_reg { id = 1; reg_class = Int; reg_constr = Any; reg } in
   let v2 = new_reg { id = 2; reg_class = Int; reg_constr = Any; reg } in
   let v3 = new_reg { id = 3; reg_class = Int; reg_constr = Any; reg } in
@@ -35,8 +35,8 @@ let test_print () =
       ~dests:[ Reg (constrained Regs.rdi v3); Reg (constrained Regs.rsi v4) ]
       ~srcs:[ Reg v1; Reg v2 ]
   in
-  (check string) "pcopy" (show_instr instr)
-    "pcopy [(%3(%rdi), %1any); (%4(%rsi), %2any)]"
+  (check string) "pcopy" "pcopy [(%3(%rdi), %1any); (%4(%rsi), %2any)]"
+    (show_instr instr)
 
 let _ =
   run "Test undag to list of trees"

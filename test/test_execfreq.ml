@@ -24,8 +24,9 @@ let test_nested_loops () =
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
   let module Freq = Execfreq.Make (X86.Cfg) (Loop) (X86.ExecfreqRequirements) in
   (check (array (float 0.1)))
-    "Execution frequencies per block" Freq.bfreq
+    "Execution frequencies per block"
     [| 1.; 1.; 5.; 4.; 4.54545; 0.545455; 1. |]
+    Freq.bfreq
 
 let _ =
   Logs.set_reporter (Logs_fmt.reporter ());

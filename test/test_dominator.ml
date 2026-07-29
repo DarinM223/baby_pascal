@@ -48,7 +48,7 @@ let test_dom () =
         ] )
   in
   (check Dom.(testable pp_tree equal_tree))
-    "Produces proper dominator tree" tree expected;
+    "Produces proper dominator tree" expected tree;
   let tree =
     Lazy.force Dom.dominator_tree_at (Extra.position_of_label (Some (3, "")))
   in
@@ -64,27 +64,23 @@ let test_dom () =
           ] ))
   in
   (check Dom.(testable pp_tree equal_tree))
-    "Produces proper dominator subtree" tree expected;
-  (check bool) "Entry dominates middle node"
+    "Produces proper dominator subtree" expected tree;
+  (check bool) "Entry dominates middle node" true
     (Dom.dominates
        (Extra.position_of_label None)
-       (Extra.position_of_label (Some (3, ""))))
-    true;
-  (check bool) "Middle node dominates leaf node"
+       (Extra.position_of_label (Some (3, ""))));
+  (check bool) "Middle node dominates leaf node" true
     (Dom.dominates
        (Extra.position_of_label (Some (2, "")))
-       (Extra.position_of_label (Some (5, ""))))
-    true;
-  (check bool) "Child doesn't dominate parent"
+       (Extra.position_of_label (Some (5, ""))));
+  (check bool) "Child doesn't dominate parent" false
     (Dom.dominates
        (Extra.position_of_label (Some (5, "")))
-       (Extra.position_of_label (Some (3, ""))))
-    false;
-  (check bool) "Different child doesn't dominate leaf node"
+       (Extra.position_of_label (Some (3, ""))));
+  (check bool) "Different child doesn't dominate leaf node" false
     (Dom.dominates
        (Extra.position_of_label (Some (4, "")))
-       (Extra.position_of_label (Some (5, ""))))
-    false;
+       (Extra.position_of_label (Some (5, ""))));
   let df = Lazy.force Dom.dominator_frontier in
   let labels =
     [
@@ -114,8 +110,8 @@ let test_dom () =
     (fun (label, expected) ->
       (check (list optlabel))
         (Format.asprintf "Dominator frontier for label %a" pp_optlabel label)
-        (List.map Extra.label_of_position (df (Extra.position_of_label label)))
-        expected)
+        expected
+        (List.map Extra.label_of_position (df (Extra.position_of_label label))))
     (List.combine labels expected)
 
 let _ =

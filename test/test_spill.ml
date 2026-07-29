@@ -219,8 +219,8 @@ label6(local=false)(35any):
   in
   Logs.debug (fun m -> m "Spilled graph: %a\n" X86.Printer.pp_graph cfg);
   let cfg_pretty = Format.asprintf "%a" X86.Printer.pp_graph cfg in
-  (check string) "Produces proper graph before SSA reconstruction" cfg_pretty
-    expected;
+  (check string) "Produces proper graph before SSA reconstruction" expected
+    cfg_pretty;
   let module Reconstruct = Reconstruct.Make (X86.Target) (X86.Cfg) (Dom) in
   let reconstruct_copies reg _ graph =
     let copies = Spill.RegHashtbl.find_all state.copies reg in
@@ -294,7 +294,7 @@ label6(local=false)(35any):
   ret %38any
 |}
   in
-  (check string) "Check reconstructed graph" cfg_pretty expected
+  (check string) "Check reconstructed graph" expected cfg_pretty
 
 let _ =
   Logs.set_reporter (Logs_fmt.reporter ());

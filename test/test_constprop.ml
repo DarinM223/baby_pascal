@@ -28,7 +28,7 @@ let test_block_args () =
   (check
      Constprop.(
        testable (NameMap.pp OperandSet.pp) (NameMap.equal OperandSet.equal)))
-    "Produces proper mapping" result expected
+    "Produces proper mapping" expected result
 
 let test_const_prop_simple () =
   let cfg =
@@ -48,9 +48,9 @@ let test_const_prop_simple () =
   in
   let block_args = Constprop.block_args cfg in
   let cfg, changed = Constprop.constprop block_args [] cfg in
-  (check bool) "Graph changed" changed true;
+  (check bool) "Graph changed" true changed;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" expected cfg
 
 let test_const_prop_args () =
   let cfg =
@@ -76,9 +76,9 @@ let test_const_prop_args () =
   in
   let block_args = Constprop.block_args cfg in
   let cfg, changed = Constprop.constprop block_args [] cfg in
-  (check bool) "Graph changed" changed true;
+  (check bool) "Graph changed" true changed;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" expected cfg
 
 let test_const_prop_branch () =
   let cfg =
@@ -109,9 +109,9 @@ let test_const_prop_branch () =
   in
   let block_args = Constprop.block_args cfg in
   let cfg, changed = Constprop.constprop block_args [] cfg in
-  (check bool) "Graph changed" changed true;
+  (check bool) "Graph changed" true changed;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected;
+    "Produces proper graph" expected cfg;
   let cfg = Constprop.remove_empty_blocks cfg in
   let expected =
     let open Normalize.Target in
@@ -122,7 +122,7 @@ let test_const_prop_branch () =
     @@ return ~uses:[ Const 1 ] @@ focus_entry empty
   in
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Removes empty blocks" cfg expected
+    "Removes empty blocks" expected cfg
 
 let test_const_prop_function_args () =
   let cfg =
@@ -149,9 +149,9 @@ let test_const_prop_function_args () =
   let cfg, changed =
     Constprop.constprop block_args Normalize.Target.[ name "a"; name "b" ] cfg
   in
-  (check bool) "Graph changed" changed true;
+  (check bool) "Graph changed" true changed;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" expected cfg
 
 let test_const_prop_exit () =
   let cfg =
@@ -175,9 +175,9 @@ let test_const_prop_exit () =
   in
   let block_args = Constprop.block_args cfg in
   let cfg, changed = Constprop.constprop block_args [] cfg in
-  (check bool) "Graph changed" changed true;
+  (check bool) "Graph changed" true changed;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" expected cfg
 
 let _ =
   run "Normalize to zipper cfg"

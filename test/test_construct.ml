@@ -58,7 +58,7 @@ let test_figure_19_2 () =
     @@ exit @@ focus_entry empty
   in
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" expected cfg
 
 let test_figure_19_3 () =
   let cfg =
@@ -108,7 +108,7 @@ let test_figure_19_3 () =
     @@ exit @@ focus_entry empty
   in
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" expected cfg
 
 let test_figure_19_4 () =
   let ast =
@@ -177,7 +177,7 @@ let test_figure_19_4 () =
     @@ focus_entry empty
   in
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" expected cfg
 
 let test_pruned () =
   let ast =
@@ -225,7 +225,7 @@ let test_pruned () =
     @@ focus_entry empty
   in
   (check Normalize.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" expected cfg
 
 let _ =
   run "Test SSA construction for zipper CFG"

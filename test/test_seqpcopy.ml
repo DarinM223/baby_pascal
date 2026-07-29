@@ -48,7 +48,7 @@ let test_simple_x86 () =
     @@ focus_entry empty
   in
   (check X86.Cfg.(testable pp_graph equal_graph))
-    "Produces proper graph" cfg expected
+    "Produces proper graph" expected cfg
 
 let _ =
   run "Test sequentializing parallel copies"

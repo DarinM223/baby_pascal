@@ -54,7 +54,7 @@ struct
                       l'
                   in
                   let head =
-                    G.(First (Label (l', { local = true; args = [] })))
+                    G.(First (Label (l', { local = false; args = [] })))
                   in
                   let tail = G.(Last (Branch (G.Target.goto l ops, l))) in
                   let block = G.zip (head, tail) in

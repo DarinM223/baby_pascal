@@ -31,7 +31,7 @@ let test_nested_loops_headers () =
       ]
   in
   (check Loop.PositionSet.(testable pp equal))
-    "Loop headers" Loop.loop_headers expected;
+    "Loop headers" expected Loop.loop_headers;
   let nodes =
     [|
       None;
@@ -44,9 +44,8 @@ let test_nested_loops_headers () =
     |]
   in
   for i = 0 to 6 do
-    (check int) "Labels match with positions"
+    (check int) "Labels match with positions" i
       (Dom.position_of_label nodes.(i))
-      i
   done;
   let expected =
     Loop.PositionSet.
@@ -61,7 +60,7 @@ let test_nested_loops_headers () =
       |]
   in
   (check (array Loop.PositionSet.(testable pp equal)))
-    "Loop nodes" Loop.loop_nodes expected
+    "Loop nodes" expected Loop.loop_nodes
 
 let _ =
   run "Loop nesting"

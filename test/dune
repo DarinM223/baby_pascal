@@ -7,6 +7,7 @@
   test_loopnesting
   test_deadcode
   test_constprop
+  test_critedgesplit
   test_undag
   test_select_x86
   test_spill

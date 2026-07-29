@@ -68,7 +68,7 @@ end
   in
   (check
      (option Ast.(testable (pp_program pp_stmt) (equal_program equal_stmt))))
-    "Produces proper program" program (Some expected)
+    "Produces proper program" (Some expected) program
 
 let _ =
   run "Parser"
