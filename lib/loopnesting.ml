@@ -1,11 +1,3 @@
-module LabelSet = struct
-  include CCSet.Make (Int)
-  let pp = pp Format.pp_print_int
-end
-module LabelMap = struct
-  include CCMap.Make (Int)
-  let pp pp_v = pp Format.pp_print_int pp_v
-end
 module type S = sig
   module Dom : Dominator.S
   module PositionSet : sig

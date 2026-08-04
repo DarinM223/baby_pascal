@@ -1,4 +1,3 @@
-(** Goes from minimum cost matching to maximum cost matching *)
 let min_to_max_cost ?max_cost cost =
   let max_cost =
     match max_cost with
@@ -7,7 +6,6 @@ let min_to_max_cost ?max_cost cost =
   in
   Array.iteri (fun i cost_value -> cost.(i) <- max_cost - cost_value) cost
 
-(** Hungarian algorithm, does perfect matching only *)
 let solve ~cost ~num_rows ~num_cols =
   let no_exist = -1 in
   (* The row of a marked zero in a column *)
