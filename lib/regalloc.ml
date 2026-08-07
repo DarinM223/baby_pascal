@@ -256,7 +256,8 @@ struct
     state.reg_current_pref.(src) <- state.reg_current_pref.(dest);
     state.reg_current_pref.(dest) <- tmp
 
-  let permute_values state (permutation : int array) (head : G.head) =
+  let permute_values ?(permute_dead_regs = false) state
+      (permutation : int array) (head : G.head) =
     Logs.debug (fun m ->
         m "Permute values permutation %s occupied: %a\n"
           ([%show: int array] permutation)
@@ -268,11 +269,9 @@ struct
     let num_used = Array.make num_regs 0 in
     for r = 0 to num_regs - 1 do
       let old_reg = permutation.(r) in
-      (* todo: phi jump args are killed at end of block,
-       once that is fixed, then restore the commented code *)
-      (* if CCBV.get state.occupied old_reg then *)
-      num_used.(old_reg) <- num_used.(old_reg) + 1
-      (* else permutation.(r) <- r (* source register is not live, do nothing *) *)
+      if permute_dead_regs || CCBV.get state.occupied old_reg then
+        num_used.(old_reg) <- num_used.(old_reg) + 1
+      else permutation.(r) <- r (* source register is not live, do nothing *)
     done;
     let r = ref 0 in
     let srcs = CCVector.create () in
@@ -391,12 +390,12 @@ struct
   let enforce_constraints_state state uid instr_num instr =
     let num_regs = Array.length state.regs in
     (* Mapping from register to destination register in original instruction.
-     Used for reusing existing virtual registers in the original pcopy. *)
+       Used for reusing existing virtual registers in the original pcopy. *)
     let dest_mapping = Array.make num_regs Target.Tombstone in
     let clobber_mapping = Array.make num_regs Target.Tombstone in
     (* Registers that are currently being occupied by values
-     that live through the instruction
-     occupied regs - regs that die at the instruction *)
+       that live through the instruction
+       occupied regs - regs that die at the instruction *)
     let live_through_regs = CCBV.copy state.occupied in
     let constrained_def_regs = CCBV.create ~size:num_regs false in
     let need_reassignment = ref false in
@@ -521,7 +520,7 @@ struct
     let num_regs = Array.length state.regs in
     let open State in
     (* After, the index of permutation is the destination register
-     and the value is the source register *)
+       and the value is the source register *)
     let srcs = ref [] in
     let dests = ref [] in
     let saved_pref = Array.make num_regs 0. in
@@ -690,13 +689,14 @@ struct
       let pcopy' = Target.pcopy ~dests ~srcs in
       Logs.debug (fun m ->
           m "Emitting swap parallel copy: %a\n" Target.pp_instr pcopy');
+      let head = G.Head (head, Instruction pcopy') in
       let assignment =
         enforce_constraints_assignment (module State) state pcopy
       in
       let pcopy =
         enforce_constraints_pcopy (module State) state uid instr_num assignment
       in
-      (G.Head (head, Instruction pcopy'), pcopy)
+      (head, pcopy)
     end
     else
       let assignment = enforce_constraints_assignment s state pcopy in
@@ -704,7 +704,7 @@ struct
       (head, pcopy)
 
   (* Insert parallel copy instruction in src block to move arguments
-   to assigned registers in dest block. *)
+     to assigned registers in dest block. *)
   let implement_phi_copies state cfg ~src ~dest =
     let dest_label = Dom.label_of_position dest in
     let zblock, cfg = G.(focus (idd (Dom.label_of_position src)) cfg) in
@@ -772,7 +772,9 @@ struct
       | CBranch (instr, l1, l2) -> CBranch (replace_args instr args, l1, l2)
       | Return _ -> last
     in
-    let head = permute_values state permutations head in
+    (* todo: phi jump args are killed at end of block,
+       once that is fixed, then restore the commented code *)
+    let head = permute_values ~permute_dead_regs:true state permutations head in
     G.unfocus ((head, Last last), cfg)
 
   let color_instruction state uid instr_num head instr =
@@ -804,52 +806,56 @@ struct
       end
       else reg'
     in
+    let kill_vreg vreg =
+      Logs.debug (fun m ->
+          m "Killing dead register %a for %a\n" Target.pp_reg vreg.Target.reg
+            Target.pp_reg (Virtual vreg));
+      let reg = find_reg_index state.regs vreg.reg in
+      CCBV.set don't_use_for_optimistic_moves reg;
+      state.reg_current_var.(reg) <- None;
+      state.reg_current_pref.(reg) <- 0.;
+      CCBV.reset state.occupied reg;
+      remove_reuse_reg (Virtual vreg) vreg.reg
+    in
     (* Update instruction uses, replacing virtual registers with physical registers,
        removing dead uses from the currently occupied registers,
        and removing reuse operand uses *)
-    let instr =
-      Target.map_reg_uses
-        (fun reg ->
-          match reg with
-          | Target.Virtual a' as a when dies state uid a instr_num ->
-            Logs.debug (fun m ->
-                m "Killing dead register %a for %a\n" Target.pp_reg a'.reg
-                  Target.pp_reg a);
-            let reg = find_reg_index state.regs a'.reg in
-            CCBV.set don't_use_for_optimistic_moves reg;
-            state.reg_current_var.(reg) <- None;
-            state.reg_current_pref.(reg) <- 0.;
-            CCBV.reset state.occupied reg;
-            remove_reuse_reg a a'.reg
-          | Target.Virtual a' ->
-            Logs.debug (fun m ->
-                m "Setting existing colored register %a as %a\n" Target.pp_reg
-                  reg Target.pp_reg a'.reg);
-            remove_reuse_reg reg a'.reg
-          | r -> remove_reuse_reg r r)
-        instr
+    let go_use = function
+      | Target.Virtual vreg when dies state uid (Virtual vreg) instr_num ->
+        kill_vreg vreg
+      | Target.Virtual vreg as reg ->
+        Logs.debug (fun m ->
+            m "Setting existing colored register %a as %a\n" Target.pp_reg reg
+              Target.pp_reg vreg.reg);
+        remove_reuse_reg reg vreg.reg
+      | Target.Physical _ as reg ->
+        begin match state.reg_current_var.(find_reg_index state.regs reg) with
+        | Some vreg when dies state uid (Virtual vreg) instr_num ->
+          kill_vreg vreg
+        | (exception Not_found) | _ -> remove_reuse_reg reg reg
+        end
+      | reg -> remove_reuse_reg reg reg
     in
+    let instr = Target.map_reg_uses go_use instr in
     (* Assign registers for definitions *)
-    let head, instr =
-      Target.fold_reg_defs
-        (fun head -> function
-          | Target.Virtual r' as r when Target.equal_reg r'.reg r ->
-            let reg, pref, head =
-              get_register ~don't_use_for_optimistic_moves state uid r head
-            in
-            Logs.debug (fun m ->
-                m "Setting register for %a to %a\n" Target.pp_reg (Virtual r')
-                  Target.pp_reg state.regs.(reg));
-            r'.reg <- state.regs.(reg);
-            if not (dies state uid r instr_num) then begin
-              CCBV.set state.occupied reg;
-              state.reg_current_var.(reg) <- Some r';
-              state.reg_current_pref.(reg) <- pref
-            end;
-            (head, r'.reg)
-          | r -> (head, r))
-        head instr
+    let go_def head = function
+      | Target.Virtual r' as r when Target.equal_reg r'.reg r ->
+        let reg, pref, head =
+          get_register ~don't_use_for_optimistic_moves state uid r head
+        in
+        Logs.debug (fun m ->
+            m "Setting register for %a to %a\n" Target.pp_reg (Virtual r')
+              Target.pp_reg state.regs.(reg));
+        r'.reg <- state.regs.(reg);
+        if not (dies state uid r instr_num) then begin
+          CCBV.set state.occupied reg;
+          state.reg_current_var.(reg) <- Some r';
+          state.reg_current_pref.(reg) <- pref
+        end;
+        (head, r'.reg)
+      | r -> (head, r)
     in
+    let head, instr = Target.fold_reg_defs go_def head instr in
     (* Check reuse operands assigned registers match *)
     RegMap.iter
       (fun use def ->
