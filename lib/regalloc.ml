@@ -286,16 +286,20 @@ struct
         | Some vreg -> vreg.reg <- state.regs.(!r)
         | _ -> ()
         end;
+        (* copy source to destination (copy not move) *)
         CCBV.set state.occupied !r;
-        CCBV.reset state.occupied old_reg;
         state.reg_current_var.(!r) <- state.reg_current_var.(old_reg);
-        state.reg_current_var.(old_reg) <- None;
         state.reg_current_pref.(!r) <- state.reg_current_pref.(old_reg);
-        state.reg_current_pref.(old_reg) <- 0.;
         CCVector.push srcs (Target.reg state.regs.(old_reg));
         CCVector.push dests (Target.reg state.regs.(!r));
         permutation.(!r) <- !r;
         num_used.(old_reg) <- num_used.(old_reg) - 1;
+        (* if source register no longer used, remove it from occupied *)
+        if num_used.(old_reg) = 0 then begin
+          CCBV.reset state.occupied old_reg;
+          state.reg_current_var.(old_reg) <- None;
+          state.reg_current_pref.(old_reg) <- 0.
+        end;
         if old_reg < !r && num_used.(old_reg) = 0 then r := old_reg else incr r
       end
     done;
