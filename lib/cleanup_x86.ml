@@ -30,7 +30,7 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
   in
   let restore tail =
     let aligned_stack_offset =
-      align_stack_offset !called_function !(state.stack_offset)
+      align_stack_offset !called_function state.stack_offset
     in
     let tail =
       if aligned_stack_offset > 0 then
@@ -49,7 +49,7 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
   in
   let prelude head =
     let aligned_stack_offset =
-      align_stack_offset !called_function !(state.stack_offset)
+      align_stack_offset !called_function state.stack_offset
     in
     let head =
       if aligned_stack_offset > 0 then

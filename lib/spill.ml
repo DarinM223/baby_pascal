@@ -597,7 +597,7 @@ struct
             (diff saved_s_entry.(curr) saved_s_exit.(pred))
             saved_w_exit.(pred))
       in
-      state.select_state.curr_block := uid pred;
+      state.select_state.curr_block <- uid pred;
       let zblock, graph = G.focus (uid pred) graph in
       let head, last = G.goto_end zblock in
       let insert_instr f var head = G.Head (head, Instruction (f var)) in
@@ -641,7 +641,7 @@ struct
       in
       Logs.debug (fun m ->
           m "Block %d all processed: %b\n" block_uid all_processed);
-      state.select_state.curr_block := block_uid;
+      state.select_state.curr_block <- block_uid;
       let zblock, graph = G.focus block_uid graph in
       let zblock, { w = w_exit; s = s_exit } =
         min_algorithm ~add_spills:all_processed state zblock

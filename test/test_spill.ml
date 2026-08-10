@@ -30,9 +30,9 @@ let test_loops () =
     let first_loop_temps, second_loop_temps =
       (Array.of_list (CCList.take 8 temps), Array.of_list (CCList.drop 8 temps))
     in
-    state.curr_block := 1;
+    state.curr_block <- 1;
     let block1_arg1 = state.fresh_vreg Int in
-    state.curr_block := 2;
+    state.curr_block <- 2;
     let block2_arg1 = state.fresh_vreg Int in
     let block2_temp1 = state.fresh_vreg Int in
     let block2_temp2 = state.fresh_vreg Int in
@@ -41,23 +41,23 @@ let test_loops () =
     let block2_temp5 = state.fresh_vreg Int in
     let block2_temp6 = state.fresh_vreg Int in
     let block2_temp7 = state.fresh_vreg Int in
-    state.curr_block := 3;
+    state.curr_block <- 3;
     let block3_arg1 = state.fresh_vreg Int in
-    state.curr_block := 4;
+    state.curr_block <- 4;
     let block4_arg1 = state.fresh_vreg Int in
-    state.curr_block := 5;
+    state.curr_block <- 5;
     let block5_arg1 = state.fresh_vreg Int in
     let block5_temp1 = state.fresh_vreg Int in
     let block5_temp2 = state.fresh_vreg Int in
     let block5_temp3 = state.fresh_vreg Int in
     let block5_temp4 = state.fresh_vreg Int in
     let block5_temp5 = state.fresh_vreg Int in
-    state.curr_block := 6;
+    state.curr_block <- 6;
     let block6_arg1 = state.fresh_vreg Int in
     let block6_temp1 = state.fresh_vreg Int in
     let block6_temp2 = state.fresh_vreg Int in
     let block6_temp3 = state.fresh_vreg Int in
-    state.curr_block := 0;
+    state.curr_block <- 0;
     unfocus @@ init_temps
     @@ branch ~args:[ Reg first_loop_temps.(7) ] (1, "label1")
     @@ label ~args:[ block1_arg1 ] (1, "label1")

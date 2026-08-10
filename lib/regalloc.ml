@@ -1270,7 +1270,7 @@ struct
         store_block_state state pos
       end;
       load_block_state state pos;
-      state.select_state.curr_block := uid;
+      state.select_state.curr_block <- uid;
 
       (* color initial arguments for entry block *)
       let zblock, cfg = G.focus uid cfg in

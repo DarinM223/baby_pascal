@@ -9,40 +9,40 @@ module State = struct
   type t = {
     fresh_vreg : Target.reg_class -> Target.reg;
     mapping : Target.operand NameHashtbl.t;
-    curr_block : Cfg.uid ref;
     vreg_block : Cfg.uid IntHashtbl.t;
-    stack_offset : int ref;
     new_stack_slot : int -> Target.operand;
+    mutable curr_block : Cfg.uid;
+    mutable stack_offset : int;
+    mutable frame_pointer : Target.reg option;
   }
 
   let init () =
-    let curr_block = ref Cfg.entry_uid in
     let vreg_block = IntHashtbl.create Utils.hashtbl_size in
-    let fresh_vreg =
-      let c = ref (-1) in
-      fun clz ->
-        incr c;
-        IntHashtbl.replace vreg_block !c !curr_block;
-        let rec reg =
-          Target.Virtual { id = !c; reg_class = clz; reg; reg_constr = Any }
-        in
-        reg
-    in
-    let stack_offset = ref 0 in
     let mapping = NameHashtbl.create Utils.hashtbl_size in
-    let new_stack_slot size =
-      let slot = !stack_offset in
-      stack_offset := !stack_offset + size;
-      Target.StackSlot slot
+    let c = ref (-1) in
+    let rec r =
+      {
+        fresh_vreg =
+          (fun clz ->
+            incr c;
+            IntHashtbl.replace vreg_block !c r.curr_block;
+            let rec reg =
+              Target.Virtual { id = !c; reg_class = clz; reg; reg_constr = Any }
+            in
+            reg);
+        mapping;
+        vreg_block;
+        new_stack_slot =
+          (fun size ->
+            let slot = r.stack_offset in
+            r.stack_offset <- r.stack_offset + size;
+            Target.StackSlot slot);
+        curr_block = Cfg.entry_uid;
+        stack_offset = 0;
+        frame_pointer = None;
+      }
     in
-    {
-      fresh_vreg;
-      mapping;
-      curr_block;
-      vreg_block;
-      stack_offset;
-      new_stack_slot;
-    }
+    r
 
   let assign_vreg { fresh_vreg; mapping; _ } clz = function
     | Undag.Target.Reg n ->
@@ -218,6 +218,38 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
     Cfg.Last
       (Cfg.CBranch
          (Target.cbranch ~args:[ src1; src2 ] cond l1 l1args l2 l2args, l1, l2))
+  | Undag.Target.Alloca (dest, size) ->
+    let open Target in
+    let dest = assign_vreg Int dest in
+    (* lea (use)slot, (def)reg *)
+    begin match state.frame_pointer with
+    | Some _ when state.curr_block <> X86.Cfg.entry_uid ->
+      let rsp_address =
+        MemAddr
+          {
+            base = Physical Regs.rsp;
+            index = Physical Regs.rsp;
+            scale = 0;
+            displacement = 0;
+          }
+      in
+      (* for dynamic allocas, you need to manually increase the stack *)
+      instr "subq" ~defs:[ Reg (Physical Regs.rsp) ] ~uses:[ Imm size ]
+      @> instr "lea" ~defs:[ dest ] ~uses:[ rsp_address ]
+      @> k dest
+    | _ ->
+      (* alloca in entry block, so use it as a stack slot *)
+      let slot = state.new_stack_slot size in
+      instr "lea" ~defs:[ dest ] ~uses:[ slot ] @> k dest
+    end
+  | Undag.Target.Load (dest, src) ->
+    let dest = assign_vreg Int dest in
+    let* src = translate_operand src in
+    Target.mov ~dest ~src @> k dest
+  | Undag.Target.Store (ptr, value) ->
+    let* ptr = translate_operand ptr in
+    let* value = translate_operand value in
+    Target.mov ~dest:ptr ~src:value @> k (Imm 0)
 
 let codegen_block state ((first, tail) : Undag.Cfg.block) : Cfg.block =
   let first =
@@ -261,7 +293,7 @@ let codegen_function ?(args = []) (state : State.t) (graph : Undag.Cfg.graph) :
   let graph =
     List.fold_left
       (fun acc block ->
-        state.curr_block := Undag.Cfg.id block;
+        state.curr_block <- Undag.Cfg.id block;
         X86.Cfg.Blocks.insert (codegen_block state block) acc)
       X86.Cfg.empty blocks
   in

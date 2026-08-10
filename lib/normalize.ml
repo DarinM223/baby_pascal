@@ -37,6 +37,7 @@ module Target = struct
       (List.filter (fun n -> not (Name.is_tombstone n)) a)
       (List.filter (fun n -> not (Name.is_tombstone n)) b)
 
+  (* TODO: add types to operands *)
   module Operand = struct
     type label = int * string [@@deriving show, eq]
     type 'a t =
@@ -96,7 +97,7 @@ module Target = struct
     |> List.fold_left RegSet.union RegSet.empty
 
   let is_side_effectful = function
-    | Call _ | Return _ -> true
+    | Call _ | Return _ | Alloca _ | Load _ | Store _ -> true
     | _ -> false
 end
 

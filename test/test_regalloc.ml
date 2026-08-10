@@ -37,7 +37,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
       + length extra_clobbered_regs)
   in
   let uid, instr_num = (2, 5) in
-  select_state.curr_block := uid;
+  select_state.curr_block <- uid;
   let vregs = Array.init num_vregs (fun _ -> select_state.fresh_vreg Int) in
   let live_through = Utils.IntHashtbl.create num_vregs in
   let dies _uid = function

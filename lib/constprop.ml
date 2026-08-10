@@ -282,6 +282,13 @@ let constprop (block_args : OperandSet.t NameMap.t)
         | NeverDefined, _ | _, NeverDefined -> None
         | Defined l, Defined r -> Some (Defined (apply_bop l r bop)))
     | Target.Bop _ -> failwith "handle_instruction: bop destination not a name"
+    | Target.Alloca (Reg res, _) | Target.Load (Reg res, _) ->
+      add_mapping a res (Some OverDefined)
+    | Target.Alloca _ ->
+      failwith "handle_instruction: alloca destination not a name"
+    | Target.Load _ ->
+      failwith "handle_instruction: load destination not a name"
+    | Target.Store _ -> a
     | Target.Call (Reg r, _, _) ->
       { a with mapping = NameMap.add r OverDefined a.mapping }
     | Target.Call _ ->

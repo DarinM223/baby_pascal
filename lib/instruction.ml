@@ -36,6 +36,12 @@ module Make (T : Operand) = struct
     | Return of operands
     | Uop of operand * Ast.uop * operand
     | Bop of operand * Ast.bop * operand * operand
+    (* TODO: add GetElementPtr for indexing into structs and things
+       that require more complicated address computations
+       Might have to add types to the IR as well. *)
+    | Alloca of operand * int
+    | Load of operand * operand
+    | Store of operand * operand
   and operand = instr T.operand
   and operands = instr T.operands [@@deriving show, eq]
 
@@ -44,22 +50,22 @@ module Make (T : Operand) = struct
   let is_tombstone = T.is_tombstone
 
   let srcs = function
-    | Assign (_, o) -> [ o ]
     | Call (_, o1, o2) -> o1 :: o2
     | Goto (l, args) -> [ T.label l args ]
     | Cbranch (o1, o2, _, l1, l1args, l2, l2args) ->
       [ T.label l1 l1args; T.label l2 l2args; o1; o2 ]
     | Return o -> o
-    | Uop (_, _, o) -> [ o ]
-    | Bop (_, _, o1, o2) -> [ o1; o2 ]
+    | Assign (_, o) | Uop (_, _, o) | Load (_, o) -> [ o ]
+    | Bop (_, _, o1, o2) | Store (o1, o2) -> [ o1; o2 ]
+    | Alloca _ -> []
   let dests = function
     | Assign (o, _) -> [ o ]
     | Call (o, _, _) -> [ o ]
-    | Goto (_, _) -> []
-    | Cbranch (_, _, _, _, _, _, _) -> []
-    | Return _ -> []
     | Uop (o, _, _) -> [ o ]
     | Bop (o, _, _, _) -> [ o ]
+    | Load (o, _) -> [ o ]
+    | Alloca (o, _) -> [ o ]
+    | Cbranch _ | Goto (_, _) | Return _ | Store _ -> []
 
   let fold_uses f acc =
     let f acc op = if T.is_tombstone op then (acc, op) else f acc op in
@@ -98,6 +104,14 @@ module Make (T : Operand) = struct
       let acc, s1 = f acc s1 in
       let acc, s2 = f acc s2 in
       (acc, Bop (d, op, s1, s2))
+    | Load (dest, addr) ->
+      let acc, addr = f acc addr in
+      (acc, Load (dest, addr))
+    | Store (addr, v) ->
+      let acc, addr = f acc addr in
+      let acc, v = f acc v in
+      (acc, Store (addr, v))
+    | Alloca (dest, offset) -> (acc, Alloca (dest, offset))
   let map_uses f i = snd (fold_uses (fun _ op -> ((), f op)) () i)
   let fold_defs f acc =
     let f acc op = if T.is_tombstone op then (acc, op) else f acc op in
@@ -108,16 +122,19 @@ module Make (T : Operand) = struct
     | Call (d, sf, s) ->
       let acc, d = f acc d in
       (acc, Call (d, sf, s))
-    | Goto (l, args) -> (acc, Goto (l, args))
-    | Cbranch (o1, o2, c, l1, l1args, l2, l2args) ->
-      (acc, Cbranch (o1, o2, c, l1, l1args, l2, l2args))
-    | Return o -> (acc, Return o)
     | Uop (d, op, s) ->
       let acc, d = f acc d in
       (acc, Uop (d, op, s))
     | Bop (d, op, s1, s2) ->
       let acc, d = f acc d in
       (acc, Bop (d, op, s1, s2))
+    | Load (d, s) ->
+      let acc, d = f acc d in
+      (acc, Load (d, s))
+    | Alloca (d, offset) ->
+      let acc, d = f acc d in
+      (acc, Alloca (d, offset))
+    | (Cbranch _ | Goto _ | Return _ | Store _) as op -> (acc, op)
   let map_defs f i = snd (fold_defs (fun _ op -> ((), f op)) () i)
 
   let assign ~dest ~src = Assign (dest, src)
@@ -147,5 +164,8 @@ module Convert (X : Operand) (Y : Operand with type label = X.label) = struct
       | X'.Return os -> Y'.Return (List.map f os)
       | X'.Uop (d, op, o) -> Y'.Uop (f d, op, f o)
       | X'.Bop (d, op, o1, o2) -> Y'.Bop (f d, op, f o1, f o2)
+      | X'.Alloca (d, offset) -> Y'.Alloca (f d, offset)
+      | X'.Load (d, o) -> Y'.Load (f d, f o)
+      | X'.Store (o1, o2) -> Y'.Store (f o1, f o2)
   end
 end

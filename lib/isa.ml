@@ -68,10 +68,11 @@ module type State = sig
   type t = {
     fresh_vreg : Target.reg_class -> Target.reg;
     mapping : Target.operand Normalize.NameHashtbl.t;
-    curr_block : int ref;
     vreg_block : int Utils.IntHashtbl.t;
-    stack_offset : int ref;
     new_stack_slot : int -> Target.operand;
+    mutable curr_block : int;
+    mutable stack_offset : int;
+    mutable frame_pointer : Target.reg option;
   }
   val init : unit -> t
   val assign_vreg : t -> Target.reg_class -> 'a Undag.Target.t -> Target.reg
