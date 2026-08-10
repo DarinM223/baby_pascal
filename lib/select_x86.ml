@@ -36,7 +36,10 @@ module State = struct
           (fun size ->
             let slot = r.stack_offset in
             r.stack_offset <- r.stack_offset + size;
-            Target.StackSlot slot);
+            if Option.is_some r.frame_pointer then
+              Target.StackSlot
+                { relative_to_base = true; offset = -(slot + size) }
+            else Target.StackSlot { relative_to_base = false; offset = slot });
         curr_block = Cfg.entry_uid;
         stack_offset = 0;
         frame_pointer = None;
@@ -52,14 +55,16 @@ module State = struct
     | _ -> failwith "assign_vreg: expected destination to be register"
 end
 
-let call_conv_int { State.fresh_vreg; new_stack_slot; _ } = function
+let call_conv_int ~caller { State.fresh_vreg; new_stack_slot; _ } = function
   | 0 -> Target.(Reg (constrained Regs.rdi (fresh_vreg Int)))
   | 1 -> Target.(Reg (constrained Regs.rsi (fresh_vreg Int)))
   | 2 -> Target.(Reg (constrained Regs.rdx (fresh_vreg Int)))
   | 3 -> Target.(Reg (constrained Regs.rcx (fresh_vreg Int)))
   | 4 -> Target.(Reg (constrained Regs.r8 (fresh_vreg Int)))
   | 5 -> Target.(Reg (constrained Regs.r9 (fresh_vreg Int)))
-  | _ -> new_stack_slot 8
+  | n ->
+    if caller then new_stack_slot 8
+    else Target.StackSlot { relative_to_base = true; offset = (n - 5) * 8 }
 
 let rec select ({ State.fresh_vreg; mapping; _ } as state)
     (instruction : Undag.Target.instr) (k : Target.operand -> Cfg.tail) :
@@ -191,7 +196,7 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
       | _ -> failwith "call: expected function to be label"
     in
     let* args = translate_operands args in
-    let dests = List.(init (length args) (call_conv_int state)) in
+    let dests = List.(init (length args) (call_conv_int ~caller:true state)) in
     let clobbered =
       List.map (fun r -> Reg (constrained r (fresh_vreg Int))) Regs.caller_save
     in
@@ -277,7 +282,7 @@ let codegen_block state ((first, tail) : Undag.Cfg.block) : Cfg.block =
 
 let codegen_function ?(args = []) (state : State.t) (graph : Undag.Cfg.graph) :
     Target.reg list * Cfg.graph =
-  let srcs = List.init (List.length args) (call_conv_int state) in
+  let srcs = List.init (List.length args) (call_conv_int ~caller:false state) in
   let reg_ops =
     List.filter_map (function
       | X86.Target.Reg r -> Some r

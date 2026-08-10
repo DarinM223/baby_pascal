@@ -70,7 +70,7 @@ let compile program =
     let regs =
       X86.Regs.int_regs
       |> List.filter_map (fun ((_, _, reg) as r) ->
-          if reg <> "r8" && reg <> "rsp" then Some (X86.Target.Physical r)
+          if reg <> "r10" && reg <> "rsp" then Some (X86.Target.Physical r)
           else None)
       |> Array.of_list
     in
@@ -84,7 +84,8 @@ let compile program =
     Format.printf "===================================\n";
     Format.printf "%a\n" X86.Printer.pp_graph cfg;
     let cfg = X86.Sequentialize.sequentialize cfg in
-    Cleanup_x86.cleanup state X86.Regs.r8 cfg
+    let cfg = Cleanup_x86.cleanup state X86.Regs.r10 cfg in
+    ((state.stack_offset, state.frame_pointer), cfg)
   in
   let lower_decl = function
     | Ast.Function (f, args, ret, body) ->
@@ -100,10 +101,11 @@ let write_file out program =
   let out = Format.formatter_of_out_channel out in
   Format.fprintf out ".global main\n.text\n";
   let write_decl = function
-    | Ast.Function (f, _args, _ret, body) ->
-      Format.fprintf out "%s: %a\n" f X86.Writer.pp_graph body
-    | Ast.Procedure (f, _args, body) ->
-      Format.fprintf out "%s: %a\n" f X86.Writer.pp_graph body
+    | Ast.Function (f, _args, _ret, (state, body)) ->
+      Format.fprintf out "%s: %a\n" f (X86.Writer.pp_graph state) body
+    | Ast.Procedure (f, _args, (state, body)) ->
+      Format.fprintf out "%s: %a\n" f (X86.Writer.pp_graph state) body
   in
   List.iter write_decl program.Ast.decls;
-  Format.fprintf out "main: %a\n" X86.Writer.pp_graph program.main
+  let state, main = program.main in
+  Format.fprintf out "main: %a\n" (X86.Writer.pp_graph state) main

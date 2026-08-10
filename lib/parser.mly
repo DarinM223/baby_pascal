@@ -56,6 +56,7 @@ statement:
 | f = IDENT LPAREN exprs = separated_list(COMMA, expr) RPAREN {Ast.Call (f, exprs)}
 
 expr:
+| LPAREN e = expr RPAREN {e}
 | NOT e = expr {Ast.Uop (Not, e)}
 | lhs = expr EQUALS rhs = expr {Ast.Bop (Eq, lhs, rhs)}
 | lhs = expr NEQUALS rhs = expr {Ast.Bop (Neq, lhs, rhs)}

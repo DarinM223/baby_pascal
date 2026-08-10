@@ -69,3 +69,15 @@ else
   diff isprime.pas.test examples/isprime.pas.expected
   exit 1
 fi
+
+dune exec compile examples/callconv.pas &> /dev/null
+./build.sh callconv.pas
+./callconv.pas > callconv.pas.test
+if cmp --silent callconv.pas.test examples/callconv.pas.expected; then
+  echo "callconv test succeeded"
+else
+  echo "callconv test failed"
+  echo "Diff:"
+  diff callconv.pas.test examples/callconv.pas.expected
+  exit 1
+fi

@@ -69,7 +69,12 @@ module Target = struct
         scale : int;
         displacement : int;
       }
-    | StackSlot of int
+    | StackSlot of {
+        relative_to_base : bool;
+            (** if true, then offset is added to base pointer (the original
+                stack pointer) instead of the current stack pointer *)
+        offset : int;
+      }
     | Label of label * operand list
   [@@deriving eq]
   let pp_sep fmt () = Format.fprintf fmt ", "
@@ -79,7 +84,7 @@ module Target = struct
     | MemAddr addr ->
       Format.fprintf fmt "%d(%%%a,%%%a,%d)" addr.displacement pp_reg addr.base
         pp_reg addr.index addr.scale
-    | StackSlot offset -> Format.fprintf fmt "%d(%%rsp)" offset
+    | StackSlot { offset; _ } -> Format.fprintf fmt "%d(%%rsp)" offset
     | Label (l, []) -> Format.fprintf fmt "%s" (snd l)
     | Label (l, args) ->
       Format.fprintf fmt "%s(%a)" (snd l)
@@ -347,11 +352,21 @@ module Writer = struct
              Target.pp_reg_class v.reg_class Target.pp_reg_constr v.reg_constr
       end
     | Tombstone -> ()
-  let pp_operand fmt = function
-    | Target.Label (l, _) -> Format.fprintf fmt "%s" (snd l)
+  let pp_operand (stack_offset, frame_pointer) fmt = function
+    | Target.StackSlot { relative_to_base = true; offset } ->
+      begin match frame_pointer with
+      | Some reg -> Format.fprintf fmt "%d(%%%a)" offset Target.pp_reg reg
+      | None ->
+        Target.pp_operand' pp_reg fmt
+          (Target.StackSlot
+             { relative_to_base = false; offset = offset + stack_offset })
+      end
+    | Label (l, _) -> Format.fprintf fmt "%s" (snd l)
     | op -> Target.pp_operand' pp_reg fmt op
-  let pp_instr fmt i =
-    let pp_operands = Format.pp_print_list ~pp_sep:Target.pp_sep pp_operand in
+  let pp_instr state fmt i =
+    let pp_operands =
+      Format.pp_print_list ~pp_sep:Target.pp_sep (pp_operand state)
+    in
     Format.fprintf fmt "%s %a" i.Target.instr pp_operands
       (List.filter (fun op -> not (Target.is_tombstone op)) (i.uses @ i.defs))
   let pp_label fmt (_, l) = Format.fprintf fmt "%s" l
@@ -368,27 +383,33 @@ module Writer = struct
   let pp_first fmt = function
     | Entry -> ()
     | Label (l, _info) -> Format.fprintf fmt "%a:" pp_label l
-  let pp_middle fmt (Instruction instr) = Format.fprintf fmt "%a" pp_instr instr
-  let pp_last fmt = function
+  let pp_middle state fmt (Instruction instr) =
+    Format.fprintf fmt "%a" (pp_instr state) instr
+  let pp_last state fmt = function
     | Exit | Return _ -> Format.fprintf fmt "ret"
-    | Branch (i, _) | CBranch (i, _, _) -> Format.fprintf fmt "%a" pp_instr i
+    | Branch (i, _) | CBranch (i, _, _) ->
+      Format.fprintf fmt "%a" (pp_instr state) i
 
   type head = Cfg.head =
     | First of first
     | Head of head * middle
-  let rec pp_head fmt = function
+  let rec pp_head state fmt = function
     | First f -> Format.fprintf fmt "%a@\n" pp_first f
-    | Head (h, m) -> Format.fprintf fmt "%a  %a@\n" pp_head h pp_middle m
+    | Head (h, m) ->
+      Format.fprintf fmt "%a  %a@\n" (pp_head state) h (pp_middle state) m
   type tail = Cfg.tail =
     | Last of last
     | Tail of middle * tail
-  let rec pp_tail fmt = function
-    | Last l -> Format.fprintf fmt "%a@\n" pp_last l
-    | Tail (m, t) -> Format.fprintf fmt "%a@\n  %a" pp_middle m pp_tail t
+  let rec pp_tail state fmt = function
+    | Last l -> Format.fprintf fmt "%a@\n" (pp_last state) l
+    | Tail (m, t) ->
+      Format.fprintf fmt "%a@\n  %a" (pp_middle state) m (pp_tail state) t
   type block = first * tail
-  let pp_block fmt (f, t) = Format.fprintf fmt "%a@\n  %a" pp_first f pp_tail t
-  let pp_graph fmt =
-    Cfg.Blocks.iter (fun _ block -> Format.fprintf fmt "%a" pp_block block)
+  let pp_block state fmt (f, t) =
+    Format.fprintf fmt "%a@\n  %a" pp_first f (pp_tail state) t
+  let pp_graph state fmt =
+    Cfg.Blocks.iter (fun _ block ->
+        Format.fprintf fmt "%a" (pp_block state) block)
 end
 
 module Deadcode = Deadcode.Make (Target) (Cfg) (Flow)
