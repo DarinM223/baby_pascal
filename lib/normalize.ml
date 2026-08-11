@@ -151,6 +151,11 @@ let normalize (module Fresh : Fresh) (stmt : Ast.stmt) : Cfg.graph =
         Cfg.instruction (Target.bop bop ~src1:e1 ~src2:e2 ~dest:tmp)
         @@ rest @@ zgraph
     | Ast.Call (f, es) -> go_call (Target.Label ((-1, f), [])) es k
+    | Ast.Load e ->
+      let* e = go_expr e in
+      let tmp = Target.Reg (fresh ()) in
+      let rest = k tmp in
+      fun zgraph -> Cfg.instruction (Target.Load (tmp, e)) @@ rest @@ zgraph
   and short_circuit t f = function
     | Ast.Bool b -> Cfg.branch (if b then t else f)
     | Ast.Uop (Ast.Not, e) -> short_circuit f t e
@@ -222,6 +227,12 @@ let normalize (module Fresh : Fresh) (stmt : Ast.stmt) : Cfg.graph =
         Cfg.label begin_label @@ branch_cond @@ Cfg.label t @@ body
         @@ Cfg.branch begin_label @@ zgraph
     | Ast.Call (f, es) -> go_call (Target.Label ((-1, f), [])) es Fun.(const id)
+    | Ast.Alloca (x, _ty, size) ->
+      Cfg.instruction (Target.Alloca (Target.reg x, size))
+    | Ast.Store (ptr, value) ->
+      let* ptr = go_expr ptr in
+      let* value = go_expr value in
+      Cfg.instruction (Target.Store (ptr, value))
   in
   let next = lazy (new_label ()) in
   let stmt = go_stmt next stmt in

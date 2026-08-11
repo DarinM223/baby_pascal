@@ -3,6 +3,7 @@ type typ =
   | TBoolean
   | TVoid
   | TFunction of typ list * typ option
+  | TPointer of typ
 [@@deriving show, eq]
 type uop = Not [@@deriving show, eq]
 type bop =
@@ -26,6 +27,7 @@ type expr =
   | Var of string
   | Uop of uop * expr
   | Bop of bop * expr * expr
+  | Load of expr
   | Call of string * expr list
 [@@deriving show, eq]
 
@@ -34,6 +36,8 @@ type stmt =
   | If of expr * stmt * stmt
   | While of expr * stmt
   | Call of string * expr list
+  | Alloca of string * typ * int
+  | Store of expr * expr
   | Group of stmt list
 [@@deriving show, eq]
 

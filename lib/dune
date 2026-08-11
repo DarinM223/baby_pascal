@@ -4,7 +4,13 @@
  (preprocess
   (pps ppx_deriving.std ppx_expect))
  (flags
-  (:standard -w +A-4-41-39-40-42-70 -warn-error -A))
+  (:standard
+   -w
+   +A-4-41-39-40-42-70
+   -warn-error
+   -A
+   -warn-error
+   +partial-match))
  (libraries containers containers-data logs logs.fmt))
 
 (ocamllex

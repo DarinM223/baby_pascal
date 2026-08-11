@@ -2,7 +2,7 @@
 %token PLUS MINUS TIMES DIV NOT AND OR LT LE GT GE
 %token VAR
 %token TRUE FALSE
-%token FUNCTION PROCEDURE BEGIN END IF THEN ELSE WHILE DO
+%token FUNCTION PROCEDURE BEGIN END IF THEN ELSE WHILE DO ALLOCA
 %token INTEGER BOOLEAN VOID
 %token<string> IDENT
 %token<int> INT
@@ -38,6 +38,7 @@ typ:
 | INTEGER {Ast.TInteger}
 | BOOLEAN {Ast.TBoolean}
 | VOID {Ast.TVoid}
+| TIMES t = typ {Ast.TPointer t}
 
 decl:
 | FUNCTION i = IDENT LPAREN params = separated_list(COMMA, separated_pair(IDENT, COLON, typ))
@@ -52,11 +53,14 @@ statement:
 | IF e = expr THEN thn = statement {Ast.If (e, thn, Group [])}
 | IF e = expr THEN thn = statement ELSE els = statement {Ast.If (e, thn, els)}
 | WHILE e = expr DO body = statement {Ast.While (e, body)}
+| v = IDENT ASSIGN ALLOCA t = typ LPAREN i = INT RPAREN {Ast.Alloca (v, t, i)}
+| TIMES i = IDENT ASSIGN e = expr {Ast.Store (Ast.Var i, e)}
 | i = IDENT ASSIGN e = expr {Ast.Assign (i, e)}
 | f = IDENT LPAREN exprs = separated_list(COMMA, expr) RPAREN {Ast.Call (f, exprs)}
 
 expr:
 | LPAREN e = expr RPAREN {e}
+| TIMES e = expr {Ast.Load e}
 | NOT e = expr {Ast.Uop (Not, e)}
 | lhs = expr EQUALS rhs = expr {Ast.Bop (Eq, lhs, rhs)}
 | lhs = expr NEQUALS rhs = expr {Ast.Bop (Neq, lhs, rhs)}

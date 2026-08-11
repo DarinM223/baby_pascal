@@ -26,6 +26,7 @@ rule token = parse
 | '-' {MINUS}
 | '*' {TIMES}
 | '/' {DIV}
+| "alloca" {ALLOCA}
 | "var" {VAR}
 | "integer" {INTEGER}
 | "boolean" {BOOLEAN}

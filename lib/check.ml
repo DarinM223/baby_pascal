@@ -41,6 +41,11 @@ let rec check_expr venv fenv = function
         failwith @@ Format.asprintf "Couldn't find function %s" f
       end
     end
+  | Load expr ->
+    begin match check_expr venv fenv expr with
+    | TPointer ty -> ty
+    | _ -> failwith "Expected pointer type for load"
+    end
 
 let rec check_stmt venv fenv = function
   | Assign (x, e) -> M.add x (check_expr venv fenv e) venv
@@ -71,6 +76,15 @@ let rec check_stmt venv fenv = function
         failwith @@ Format.asprintf "Couldn't find function %s" f
       end
     end
+  | Alloca (x, t, _) -> M.add x (TPointer t) venv
+  | Store (lhs, rhs) ->
+    let lhs_typ = check_expr venv fenv lhs in
+    let rhs_typ = check_expr venv fenv rhs in
+    if lhs_typ <> TPointer rhs_typ then
+      failwith
+        (Format.asprintf "Right expression is different, expected %a" pp_typ
+           (TPointer rhs_typ));
+    venv
 
 let insert_header fenv = function
   | Procedure (f, xs, _) -> M.add f (List.map snd xs, None) fenv
