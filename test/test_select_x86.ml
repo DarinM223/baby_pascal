@@ -23,7 +23,8 @@ let test_print () =
   let v3 = new_reg { id = 3; reg_class = Float; reg_constr = OnReg; reg } in
   let instr =
     mov ~dest:(Reg v1)
-      ~src:(MemAddr { base = v2; index = v3; scale = 10; displacement = 15 })
+      ~src:
+        (MemAddr { base = Some v2; index = v3; scale = 10; displacement = 15 })
   in
   (check string) "mov" "movq %1fstack, 15(%2freg,%3freg,10)" (show_instr instr);
   let v1 = new_reg { id = 1; reg_class = Int; reg_constr = Any; reg } in

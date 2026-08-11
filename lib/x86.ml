@@ -64,7 +64,7 @@ module Target = struct
     | Imm of int
     | Reg of reg
     | MemAddr of {
-        base : reg;
+        base : reg option;
         index : reg;
         scale : int;
         displacement : int;
@@ -81,9 +81,18 @@ module Target = struct
   let rec pp_operand' pp_reg fmt = function
     | Imm i -> Format.fprintf fmt "$%d" i
     | Reg r -> Format.fprintf fmt "%%%a" pp_reg r
-    | MemAddr addr ->
-      Format.fprintf fmt "%d(%%%a,%%%a,%d)" addr.displacement pp_reg addr.base
-        pp_reg addr.index addr.scale
+    | MemAddr { displacement = 0; base = Some base; scale = 0; _ } ->
+      Format.fprintf fmt "(%%%a)" pp_reg base
+    | MemAddr { displacement; base = Some base; scale = 0; _ } ->
+      Format.fprintf fmt "%d(%%%a)" displacement pp_reg base
+    | MemAddr { displacement = 0; base; scale; index } ->
+      Format.fprintf fmt "(%%%a,%%%a,%d)"
+        (Format.pp_print_option pp_reg)
+        base pp_reg index scale
+    | MemAddr { displacement; base; index; scale } ->
+      Format.fprintf fmt "%d(%%%a,%%%a,%d)" displacement
+        (Format.pp_print_option pp_reg)
+        base pp_reg index scale
     | StackSlot { offset; _ } -> Format.fprintf fmt "%d(%%rsp)" offset
     | Label (l, []) -> Format.fprintf fmt "%s" (snd l)
     | Label (l, args) ->
@@ -104,8 +113,12 @@ module Target = struct
     | Reg r ->
       let acc, r = f acc r in
       (acc, Reg r)
-    | MemAddr ({ base : reg; index : reg; _ } as addr) ->
-      let acc, base = f acc base in
+    | MemAddr ({ base : reg option; index : reg; _ } as addr) ->
+      let acc, base =
+        Option.fold ~none:(acc, base)
+          ~some:(fun r -> CCPair.map_snd Option.some (f acc r))
+          base
+      in
       let acc, index = f acc index in
       (acc, MemAddr { addr with base; index })
     | Label (l, ops) ->
@@ -114,8 +127,9 @@ module Target = struct
     | (Imm _ | StackSlot _) as op -> (acc, op)
   let rec subst_reg_operand subst_reg = function
     | Reg r -> Reg (subst_reg r)
-    | MemAddr ({ base : reg; index : reg; _ } as addr) ->
-      MemAddr { addr with base = subst_reg base; index = subst_reg index }
+    | MemAddr ({ base : reg option; index : reg; _ } as addr) ->
+      MemAddr
+        { addr with base = Option.map subst_reg base; index = subst_reg index }
     | Label (l, ops) -> Label (l, List.map (subst_reg_operand subst_reg) ops)
     | (Imm _ | StackSlot _) as op -> op
   let to_colored =

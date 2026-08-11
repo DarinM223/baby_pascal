@@ -227,12 +227,12 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
     let open Target in
     let dest = assign_vreg Int dest in
     (* lea (use)slot, (def)reg *)
-    begin match state.frame_pointer with
-    | Some _ when state.curr_block <> X86.Cfg.entry_uid ->
+    if state.curr_block <> X86.Cfg.entry_uid then begin
+      state.frame_pointer <- Some (Physical Regs.rbp);
       let rsp_address =
         MemAddr
           {
-            base = Physical Regs.rsp;
+            base = Some (Physical Regs.rsp);
             index = Physical Regs.rsp;
             scale = 0;
             displacement = 0;
@@ -242,7 +242,8 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
       instr "subq" ~defs:[ Reg (Physical Regs.rsp) ] ~uses:[ Imm size ]
       @> instr "lea" ~defs:[ dest ] ~uses:[ rsp_address ]
       @> k dest
-    | _ ->
+    end
+    else begin
       (* alloca in entry block, so use it as a stack slot *)
       let slot = state.new_stack_slot size in
       instr "lea" ~defs:[ dest ] ~uses:[ slot ] @> k dest
@@ -250,11 +251,27 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
   | Undag.Target.Load (dest, src) ->
     let dest = assign_vreg Int dest in
     let* src = translate_operand src in
-    Target.mov ~dest ~src @> k dest
-  | Undag.Target.Store (ptr, value) ->
-    let* ptr = translate_operand ptr in
+    begin match src with
+    | Reg reg ->
+      let src =
+        Target.MemAddr
+          { base = Some reg; displacement = 0; scale = 0; index = reg }
+      in
+      Target.mov ~dest ~src @> k dest
+    | _ -> failwith "Select_X86: expected source of load to be a register"
+    end
+  | Undag.Target.Store (dest, value) ->
+    let* dest = translate_operand dest in
     let* value = translate_operand value in
-    Target.mov ~dest:ptr ~src:value @> k (Imm 0)
+    begin match dest with
+    | Reg reg ->
+      let dest =
+        Target.MemAddr
+          { base = Some reg; displacement = 0; scale = 0; index = reg }
+      in
+      Target.mov ~dest ~src:value @> k (Imm 0)
+    | _ -> failwith "Select_X86: expected destination of store to be a register"
+    end
 
 let codegen_block state ((first, tail) : Undag.Cfg.block) : Cfg.block =
   let first =

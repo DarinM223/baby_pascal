@@ -53,7 +53,7 @@ statement:
 | IF e = expr THEN thn = statement {Ast.If (e, thn, Group [])}
 | IF e = expr THEN thn = statement ELSE els = statement {Ast.If (e, thn, els)}
 | WHILE e = expr DO body = statement {Ast.While (e, body)}
-| v = IDENT ASSIGN ALLOCA t = typ LPAREN i = INT RPAREN {Ast.Alloca (v, t, i)}
+| v = IDENT ASSIGN ALLOCA t = typ i = INT {Ast.Alloca (v, t, i)}
 | TIMES i = IDENT ASSIGN e = expr {Ast.Store (Ast.Var i, e)}
 | i = IDENT ASSIGN e = expr {Ast.Assign (i, e)}
 | f = IDENT LPAREN exprs = separated_list(COMMA, expr) RPAREN {Ast.Call (f, exprs)}

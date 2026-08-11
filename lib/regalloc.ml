@@ -832,12 +832,6 @@ struct
             m "Setting existing colored register %a as %a\n" Target.pp_reg reg
               Target.pp_reg vreg.reg);
         remove_reuse_reg reg vreg.reg
-      | Target.Physical _ as reg ->
-        begin match state.reg_current_var.(find_reg_index state.regs reg) with
-        | Some vreg when dies state uid (Virtual vreg) instr_num ->
-          kill_vreg vreg
-        | (exception Not_found) | _ -> remove_reuse_reg reg reg
-        end
       | reg -> remove_reuse_reg reg reg
     in
     let instr = Target.map_reg_uses go_use instr in

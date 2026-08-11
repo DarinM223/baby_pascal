@@ -23,7 +23,7 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
     match X86.Target.to_colored op with
     | Reg reg -> if not (X86.Target.Reg.is_tombstone reg) then record_reg reg
     | MemAddr { base; index; _ } ->
-      record_reg base;
+      Option.iter record_reg base;
       record_reg index
     | Label (_, args) -> List.iter record_operand args
     | _ -> ()
@@ -33,14 +33,23 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
       align_stack_offset !called_function state.stack_offset
     in
     let tail =
-      if aligned_stack_offset > 0 then
+      match state.frame_pointer with
+      | Some fp ->
         Cfg.Tail
           ( Instruction
-              (Target.instr "addq"
-                 ~defs:[ Reg (Physical Regs.rsp) ]
-                 ~uses:[ Imm aligned_stack_offset ]),
-            tail )
-      else tail
+              (Target.mov ~dest:(Reg (Physical Regs.rsp)) ~src:(Reg fp)),
+            Cfg.Tail
+              (Instruction (Target.instr "popq" ~defs:[] ~uses:[ Reg fp ]), tail)
+          )
+      | None ->
+        if aligned_stack_offset > 0 then
+          Cfg.Tail
+            ( Instruction
+                (Target.instr "addq"
+                   ~defs:[ Reg (Physical Regs.rsp) ]
+                   ~uses:[ Imm aligned_stack_offset ]),
+              tail )
+        else tail
     in
     RegHashtbl.fold
       (fun reg slot tail ->
@@ -50,6 +59,17 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
   let prelude head =
     let aligned_stack_offset =
       align_stack_offset !called_function state.stack_offset
+    in
+    let head =
+      match state.frame_pointer with
+      | Some fp ->
+        Cfg.Head
+          ( Cfg.Head
+              ( head,
+                Instruction (Target.instr "pushq" ~defs:[] ~uses:[ Reg fp ]) ),
+            Instruction
+              (Target.mov ~dest:(Reg fp) ~src:(Reg (Physical Regs.rsp))) )
+      | None -> head
     in
     let head =
       if aligned_stack_offset > 0 then
