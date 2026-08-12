@@ -168,9 +168,15 @@ module Target = struct
     instr : string;
     defs : operands;
     uses : operands;
+    hidden_uses : int;
+    hidden_defs : int;
+    clobber_regs : RegSet.t;
   }
   [@@deriving eq]
   let is_pcopy instr = instr.instr = "pcopy"
+  let clobber_regs instr = instr.clobber_regs
+  let with_clobber_regs regs instr = { instr with clobber_regs = regs }
+
   let pp_instr fmt i =
     if is_pcopy i then
       let pad_uses =
@@ -185,8 +191,14 @@ module Target = struct
       Format.fprintf fmt "%s %a" i.instr pp_operands (i.defs @ i.uses)
   let show_instr = Format.asprintf "%a" pp_instr
 
-  let prepend_use op i = { i with uses = op :: i.uses }
-  let prepend_def op i = { i with defs = op :: i.defs }
+  let modify_uses f i =
+    let uses, hidden_uses = f ~uses:i.uses ~num_hidden:i.hidden_uses in
+    { i with uses; hidden_uses }
+  let modify_defs f i =
+    let defs, hidden_defs = f ~defs:i.defs ~num_hidden:i.hidden_defs in
+    { i with defs; hidden_defs }
+  let num_hidden_uses i = i.hidden_uses
+  let num_hidden_defs i = i.hidden_defs
 
   let srcs i = i.uses
   let dests i = i.defs
@@ -244,7 +256,17 @@ module Target = struct
     match (op, dest) with
     | Reg reg, Reg dest -> Reg (reuse reg dest)
     | _ -> failwith "reuse_op: expected register"
-  let goto l ops = { instr = "jmp"; defs = []; uses = [ Label (l, ops) ] }
+
+  let instr instr ~defs ~uses =
+    {
+      instr;
+      defs;
+      uses;
+      hidden_defs = 0;
+      hidden_uses = 0;
+      clobber_regs = RegSet.empty;
+    }
+  let goto l ops = instr "jmp" ~defs:[] ~uses:[ Label (l, ops) ]
   let cond_mapping =
     Graph.Cond.
       [
@@ -253,13 +275,8 @@ module Target = struct
 
   let cbranch ~args cond l1 l1args l2 l2args =
     let jmp = snd @@ List.find (fun (c, _) -> cond = c) cond_mapping in
-    {
-      instr = jmp;
-      uses = Label (l1, l1args) :: Label (l2, l2args) :: args;
-      defs = [];
-    }
-  let return ~uses = { instr = "ret"; uses; defs = [] }
-  let instr instr ~defs ~uses = { instr; defs; uses }
+    instr jmp ~uses:(Label (l1, l1args) :: Label (l2, l2args) :: args) ~defs:[]
+  let return ~uses = instr "ret" ~uses ~defs:[]
   let mov ~dest ~src = instr "movq" ~defs:[ dest ] ~uses:[ src ]
   let pcopy ~dests ~srcs = instr "pcopy" ~defs:dests ~uses:srcs
   let is_side_effectful _ = true
@@ -382,7 +399,9 @@ module Writer = struct
       Format.pp_print_list ~pp_sep:Target.pp_sep (pp_operand state)
     in
     Format.fprintf fmt "%s %a" i.Target.instr pp_operands
-      (List.filter (fun op -> not (Target.is_tombstone op)) (i.uses @ i.defs))
+      (List.filter
+         (fun op -> not (Target.is_tombstone op))
+         (CCList.drop i.hidden_uses i.uses @ CCList.drop i.hidden_defs i.defs))
   let pp_label fmt (_, l) = Format.fprintf fmt "%s" l
   type first = Cfg.first =
     | Entry

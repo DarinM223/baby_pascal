@@ -45,8 +45,26 @@ module type Target = sig
   type pcopy = (operand * operand) list [@@deriving show, eq]
   val is_pcopy : instr -> bool
 
-  val prepend_use : operand -> instr -> instr
-  val prepend_def : operand -> instr -> instr
+  val clobber_regs : instr -> RegSet.t
+  (** Get the set of registers that are clobbered when the instruction
+      constrained by the pcopy finishes. *)
+
+  val with_clobber_regs : RegSet.t -> instr -> instr
+  (** Return the instruction with the given registers marked as registers that
+      clobber the constrained instruction *)
+
+  val modify_uses :
+    (uses:operands -> num_hidden:int -> operands * int) -> instr -> instr
+  val modify_defs :
+    (defs:operands -> num_hidden:int -> operands * int) -> instr -> instr
+
+  val num_hidden_uses : instr -> int
+  (** Number of hidden uses starting from index 0. All uses after this number
+      will be shown in the final assembly. *)
+
+  val num_hidden_defs : instr -> int
+  (** Number of hidden definitions starting from index 0. All definitions after
+      will be shown in the final assembly. *)
 
   val map_reg_uses : (reg -> reg) -> instr -> instr
   val fold_reg_uses : ('a -> reg -> 'a * reg) -> 'a -> instr -> 'a * instr

@@ -70,6 +70,13 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
     (instruction : Undag.Target.instr) (k : Target.operand -> Cfg.tail) :
     Cfg.tail =
   let assign_vreg clz reg = Target.Reg (State.assign_vreg state clz reg) in
+  let reuse_instr tmp dest instr =
+    instr
+    |> Target.modify_uses (fun ~uses ~num_hidden ->
+        (tmp :: uses, num_hidden + 1))
+    |> Target.modify_defs (fun ~defs ~num_hidden ->
+        (Target.reuse_op tmp dest :: defs, num_hidden))
+  in
   let rec translate_operand :
       Undag.Target.operand -> (Target.operand -> 'a) -> 'a = function
     | Undag.Target.Instr src -> select state src
@@ -111,7 +118,7 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
     let* src = translate_operand src in
     mov ~dest:tmp ~src:(Imm 0)
     @> instr "testq" ~defs:[] ~uses:[ src; src ]
-    @> instr "setz" ~defs:[ reuse_op tmp dest ] ~uses:[ tmp ]
+    @> reuse_instr tmp dest (instr "setz" ~defs:[] ~uses:[])
     @> k dest
   | Undag.Target.Bop (dest, bop, src1, src2) ->
     let open Target in
@@ -121,7 +128,7 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
     let reuse_bop i =
       let tmp = Reg (fresh_vreg Int) in
       mov ~dest:tmp ~src:src1
-      @> instr i ~defs:[ reuse_op tmp dest ] ~uses:[ tmp; src2 ]
+      @> reuse_instr tmp dest (instr i ~defs:[] ~uses:[ src2 ])
       @> k dest
     in
     let reuse_cond i =
@@ -130,8 +137,8 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
       let tmp3 = Reg (fresh_vreg Int) in
       mov ~dest:tmp1 ~src:src1
       @> mov ~dest:tmp2 ~src:(Imm 0)
-      @> instr "cmp" ~defs:[ reuse_op tmp1 tmp3 ] ~uses:[ tmp1; src2 ]
-      @> instr i ~defs:[ reuse_op tmp2 dest ] ~uses:[ tmp2 ]
+      @> reuse_instr tmp1 tmp3 (instr "cmp" ~defs:[] ~uses:[ src2 ])
+      @> reuse_instr tmp2 dest (instr i ~defs:[] ~uses:[])
       @> k dest
     in
     begin match bop with
@@ -161,13 +168,13 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
       let tmp = Reg (fresh_vreg Int) in
       mov ~dest:tmp ~src:src1
       @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
-      @> instr "cmovnz" ~defs:[ reuse_op tmp dest ] ~uses:[ tmp; src2 ]
+      @> reuse_instr tmp dest (instr "cmovnz" ~defs:[] ~uses:[ src2 ])
       @> k dest
     | Ast.Or ->
       let tmp = Reg (fresh_vreg Int) in
       mov ~dest:tmp ~src:src1
       @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
-      @> instr "cmovz" ~defs:[ reuse_op tmp dest ] ~uses:[ tmp; src2 ]
+      @> reuse_instr tmp dest (instr "cmovz" ~defs:[] ~uses:[ src2 ])
       @> k dest
     | Ast.Eq -> reuse_cond "setz"
     | Ast.Neq -> reuse_cond "setnz"

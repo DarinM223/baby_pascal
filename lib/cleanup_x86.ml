@@ -121,12 +121,13 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
          Target.instr = "movq";
          defs = [ ((MemAddr _ | StackSlot _) as dest) ];
          uses = [ ((MemAddr _ | StackSlot _) as src) ];
+         _;
         } ->
           Target.mov ~dest:(Reg (Physical tmp)) ~src
           @> Target.mov ~dest ~src:(Reg (Physical tmp))
           @> go_tail tail
         (* remove redundant moves *)
-        | { Target.instr = "movq"; defs = [ dest ]; uses = [ src ] }
+        | { Target.instr = "movq"; defs = [ dest ]; uses = [ src ]; _ }
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->
           go_tail tail
         | _ ->
@@ -137,7 +138,9 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
       (* lower cmp instructions into cmp + j* *)
       | Cfg.Last
           (CBranch
-             (({ instr; uses = _ :: _ :: first_use :: uses; defs } as i), l1, l2))
+             ( ({ instr; uses = _ :: _ :: first_use :: uses; defs; _ } as i),
+               l1,
+               l2 ))
         when List.exists (fun (_, i) -> i = instr) Target.cond_mapping ->
         List.iter record_operand (first_use :: uses);
         List.iter record_operand defs;

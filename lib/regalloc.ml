@@ -652,12 +652,18 @@ struct
       in
       let pcopy =
         List.fold_left
-          (fun pcopy src -> Target.prepend_use src pcopy)
+          (fun pcopy src ->
+            Target.modify_uses
+              (fun ~uses ~num_hidden -> (src :: uses, num_hidden))
+              pcopy)
           pcopy !extra_srcs
       in
       let pcopy =
         List.fold_left
-          (fun pcopy dest -> Target.prepend_def dest pcopy)
+          (fun pcopy dest ->
+            Target.modify_defs
+              (fun ~defs ~num_hidden -> (dest :: defs, num_hidden))
+              pcopy)
           pcopy !extra_dests
       in
       Logs.debug (fun m ->
@@ -787,28 +793,10 @@ struct
         enforce_constraints state uid instr_num instr head
       else (head, instr)
     in
-    (* Gather reuse operands *)
-    let reuse_operands, _ =
-      Target.fold_reg_defs
-        (fun acc -> function
-          | Target.Virtual { reg_constr = ReuseOperand reg; _ } as r ->
-            (RegMap.add (Target.Virtual reg) r acc, r)
-          | r -> (acc, r))
-        RegMap.empty instr
-    in
     (* Make sure that killed use registers aren't used for optimistic moves,
      because the move would be inserted before the register is killed *)
     let don't_use_for_optimistic_moves =
       CCBV.create ~size:(Array.length state.regs) false
-    in
-    let remove_reuse_reg reg reg' =
-      if RegMap.mem reg reuse_operands then begin
-        Logs.debug (fun m ->
-            m "Reused virtual register %a with physical register %a"
-              Target.pp_reg reg Target.pp_reg reg');
-        Target.Tombstone
-      end
-      else reg'
     in
     let kill_vreg vreg =
       Logs.debug (fun m ->
@@ -819,7 +807,7 @@ struct
       state.reg_current_var.(reg) <- None;
       state.reg_current_pref.(reg) <- 0.;
       CCBV.reset state.occupied reg;
-      remove_reuse_reg (Virtual vreg) vreg.reg
+      vreg.reg
     in
     (* Update instruction uses, replacing virtual registers with physical registers,
        removing dead uses from the currently occupied registers,
@@ -831,8 +819,8 @@ struct
         Logs.debug (fun m ->
             m "Setting existing colored register %a as %a\n" Target.pp_reg reg
               Target.pp_reg vreg.reg);
-        remove_reuse_reg reg vreg.reg
-      | reg -> remove_reuse_reg reg reg
+        vreg.reg
+      | reg -> reg
     in
     let instr = Target.map_reg_uses go_use instr in
     (* Assign registers for definitions *)
@@ -854,18 +842,6 @@ struct
       | r -> (head, r)
     in
     let head, instr = Target.fold_reg_defs go_def head instr in
-    (* Check reuse operands assigned registers match *)
-    RegMap.iter
-      (fun use def ->
-        match (use, def) with
-        | Target.Virtual use, Target.Virtual def
-          when Target.equal_reg use.reg def.reg ->
-          ()
-        | _ ->
-          failwith
-          @@ Format.asprintf "Invalid matching: %a with %a" Target.pp_reg use
-               Target.pp_reg def)
-      reuse_operands;
     (head, instr)
 
   let color_block state ((first, tail) as block : G.block) : G.block =
@@ -1450,10 +1426,10 @@ let%expect_test "Nested loops register allocation" =
       jl label5, label2(%rsi), %r13, $100
     label5(local=false)():
       movq %r15, %rsi
-      addq %r15, %, $1
+      addq %r15, %r15, $1
       movq %r15, %r15
       movq %r14, %r13
-      addq %r14, %, $1
+      addq %r14, %r14, $1
       movq %r14, %r14
       pcopy [(%rsi, %r15); (%r15, %rsi)]
       pcopy [(%r13, %r14); (%r14, %r13)]
@@ -1574,18 +1550,18 @@ let%expect_test "Fibonacci register allocation" =
       jmp label1(%rax)
     label3(local=false)():
       movq %rax, %rbx
-      subq %rax, %, $1
+      subq %rax, %rax, $1
       pcopy [(%r15, %rdi); (%rdi, %r15)]
       pcopy [(%rdi, %rax)]
       call fibonacci
       movq %r13, %rax
       movq %rdi, %rbx
-      subq %rdi, %, $2
+      subq %rdi, %rdi, $2
       pcopy []
       call fibonacci
       movq %rax, %rax
       movq %rsi, %r13
-      addq %rsi, %, %rax
+      addq %rsi, %rsi, %rax
       movq %rax, %rsi
       jmp label1(%rax)
     |}]
