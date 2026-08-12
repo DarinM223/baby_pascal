@@ -66,11 +66,17 @@ let compile program =
     let extra = X86.Cfg.precalculate_edges cfg in
     let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
     let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-    let cfg = Spill.X86.spill_helper ~args (module Loop) state cfg in
+    (* 16 registers - r10 register - rsp register - (rbp register if frame pointer is enabled) *)
+    let k = 16 - 2 - if Option.is_some state.frame_pointer then 1 else 0 in
+    let cfg = Spill.X86.spill_helper ~k ~args (module Loop) state cfg in
     let regs =
       X86.Regs.int_regs
       |> List.filter_map (fun ((_, _, reg) as r) ->
-          if reg <> "r10" && reg <> "rsp" then Some (X86.Target.Physical r)
+          if
+            Option.equal X86.Target.equal_reg state.frame_pointer
+              (Some (Physical r))
+          then None
+          else if reg <> "r10" && reg <> "rsp" then Some (X86.Target.Physical r)
           else None)
       |> Array.of_list
     in

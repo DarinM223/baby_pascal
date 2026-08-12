@@ -443,7 +443,7 @@ end
 module SeqpcopyRequirements :
   Seqpcopy.Requirements with module Target = Target = struct
   module Target = Target
-  let temp = Target.Reg (Target.Physical Regs.r8)
+  let temp = Target.Reg (Target.Physical Regs.r10)
   let is_pcopy = Target.is_pcopy
   let mov = Target.mov
   let uses instr = List.map Target.to_colored instr.Target.uses

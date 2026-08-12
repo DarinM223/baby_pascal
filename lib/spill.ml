@@ -684,7 +684,7 @@ module X86 = struct
   module Liveness = Liveness.Make (X86.Target) (X86.Cfg) (X86.Flow)
   module Make = Make (X86.Target) (X86.Cfg) (Select_x86.State) (Liveness)
 
-  let spill_helper ?(args = [])
+  let spill_helper ?(reg_class = X86.Target.Int) ?(k = 16) ?(args = [])
       (module Loop : Loopnesting.S
         with type Dom.label = X86.Cfg.label
          and type Dom.position = int
@@ -695,8 +695,8 @@ module X86 = struct
     let module Spill' =
       Make (Loop) (NextUseDistances)
         (struct
-          let reg_class = X86.Target.Int
-          let k = 16
+          let reg_class = reg_class
+          let k = k
           let next_use_distances = next_use_distances
           let liveness = liveness
         end) in
