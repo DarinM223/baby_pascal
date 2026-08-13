@@ -92,18 +92,11 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
       Utils.IntHashtbl.replace live_through (X86.Target.index vreg) true;
     vreg
   in
-  let clobbered = Utils.IntHashtbl.create num_vregs in
   let srcs = CCVector.create () in
   let dests = CCVector.create () in
   List.iter (fun t -> ignore (setup_occupied t)) extra_curr_live;
   List.iter (fun t -> CCVector.push srcs (setup_occupied t)) uses;
   List.iter (fun t -> CCVector.push dests (setup_constrained t)) defs;
-  List.iter
-    (fun t ->
-      let vreg = setup_constrained t in
-      Utils.IntHashtbl.replace clobbered (X86.Target.index vreg) true;
-      CCVector.push dests vreg)
-    extra_clobbered_regs;
   let old_vregs =
     Array.init (Array.length vregs) (fun i -> (get_vreg vregs.(i)).reg)
   in
@@ -111,7 +104,13 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
     List.map (fun r -> X86.Target.Reg r) (CCVector.to_list l)
   in
   let srcs, dests = (to_operands srcs, to_operands dests) in
-  let instr = X86.Target.pcopy ~dests ~srcs in
+  let instr =
+    X86.Target.with_clobber_regs
+      (extra_clobbered_regs
+      |> List.map (fun (r, _) -> X86.Target.Physical r)
+      |> X86.Target.RegSet.of_list)
+      (X86.Target.pcopy ~dests ~srcs)
+  in
   let head, instr =
     Regalloc.color_instruction state uid instr_num (X86.Cfg.First Entry) instr
   in
