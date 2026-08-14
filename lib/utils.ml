@@ -9,3 +9,13 @@ end
 module IntHashtbl = CCHashtbl.Make (CCInt)
 
 let hashtbl_size = 100
+
+let pp_array pp_elem fmt arr =
+  let open Format in
+  pp_open_box fmt 0;
+  pp_print_string fmt "[";
+  pp_print_list
+    ~pp_sep:(fun fmt () -> pp_print_string fmt ", ")
+    pp_elem fmt (Array.to_list arr);
+  pp_print_string fmt "]";
+  pp_close_box fmt ()

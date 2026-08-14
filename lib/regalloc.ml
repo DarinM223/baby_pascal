@@ -460,7 +460,25 @@ struct
       instr =
     let num_regs = Array.length state.regs in
     let open State in
-    let cost = Array.make (num_regs * num_regs) 0 in
+    let seen = CCBV.create ~size:num_regs false in
+    let duplicate_mapping =
+      let duplicate_mapping = CCVector.create () in
+      let remove_constrained_use_edges = function
+        | ( Target.Virtual { reg; _ },
+            Target.Virtual { reg_constr = UsePhysical _; _ } ) ->
+          let reg = find_reg_index state.regs reg in
+          if CCBV.get seen reg then CCVector.push duplicate_mapping reg;
+          CCBV.set seen reg
+        | _ -> ()
+      in
+      iter_use_defs ~k_pair_both_regs:remove_constrained_use_edges instr;
+      CCVector.to_array duplicate_mapping
+    in
+    Format.printf "Duplicate mapping: %a\n"
+      (Utils.pp_array Format.pp_print_int)
+      duplicate_mapping;
+    let all_regs = num_regs + Array.length duplicate_mapping in
+    let cost = Array.make (all_regs * all_regs) 0 in
     for l = 0 to num_regs - 1 do
       for r = 0 to num_regs - 1 do
         if
@@ -485,9 +503,11 @@ struct
           Logs.debug (fun m ->
               m "No edge from %a to %a because it will be clobbered"
                 Target.pp_reg state.regs.(r) Target.pp_reg state.regs.(l))
-        else cost.((l * num_regs) + r) <- (if l = r then 8 else 7)
+        else cost.((l * all_regs) + r) <- (if l = r then 8 else 7)
       done
     done;
+    CCBV.clear seen;
+    let duplicate_index = ref num_regs in
     (* Remove edges from constrained use virtual registers to non-constrained registers
        In other words, you can only move a constrained use to the register in the constraint,
        not to any other register *)
@@ -497,26 +517,64 @@ struct
         let curr_reg = find_reg_index state.regs reg in
         let constraint_reg = find_reg_index state.regs (Physical phys) in
         dest_mapping.(constraint_reg) <- vreg;
-        for r = 0 to num_regs - 1 do
-          if r <> constraint_reg then cost.((r * num_regs) + curr_reg) <- 0
-          else cost.((r * num_regs) + curr_reg) <- 9
-        done
+        if CCBV.get seen curr_reg then begin
+          let curr_reg = !duplicate_index in
+          incr duplicate_index;
+          Format.printf "Duplicate, %a setting %a to %a\n" Target.pp_reg
+            state.regs.(find_reg_index state.regs reg)
+            Target.pp_reg
+            state.regs.(constraint_reg)
+            Target.pp_reg
+            state.regs.(duplicate_mapping.(curr_reg - num_regs));
+          for r = 0 to all_regs - 1 do
+            if r <> constraint_reg then cost.((r * all_regs) + curr_reg) <- 0
+            else cost.((r * all_regs) + curr_reg) <- 9
+          done
+        end
+        else
+          for r = 0 to all_regs - 1 do
+            if r <> constraint_reg then cost.((r * all_regs) + curr_reg) <- 0
+            else cost.((r * all_regs) + curr_reg) <- 9
+          done;
+        CCBV.set seen curr_reg
       | _ -> ()
     in
     iter_use_defs ~k_pair_both_regs:remove_constrained_use_edges instr;
+    for i = num_regs to all_regs - 1 do
+      cost.((i * all_regs) + i) <- 1
+    done;
     Hungarian.min_to_max_cost ~max_cost:9 cost;
-    Logs.debug (fun m ->
-        m "Cost matrix: \n%a\n"
-          (pp_cost ~assignment:None ~regs:state.regs ~num_rows:num_regs
-             ~num_cols:num_regs)
-          cost);
-    let permutation =
-      Hungarian.solve ~cost ~num_rows:num_regs ~num_cols:num_regs
+    let regs_extended =
+      Array.append state.regs
+        (Array.map (fun i -> state.regs.(i)) duplicate_mapping)
     in
     Logs.debug (fun m ->
-        m "Assignment: %a\n" (pp_assignment ~regs:state.regs) permutation);
+        m "Initial Cost matrix: \n%a\n"
+          (pp_cost ~assignment:None ~regs:regs_extended ~num_rows:all_regs
+             ~num_cols:all_regs)
+          cost);
+    let permutation =
+      Hungarian.solve ~cost ~num_rows:all_regs ~num_cols:all_regs
+    in
     Logs.debug (fun m ->
-        m "Cost matrix: \n%a\n"
+        m "Assignment with duplicates: %a\n"
+          (pp_assignment ~regs:regs_extended)
+          permutation);
+    Logs.debug (fun m ->
+        m "Cost matrix with duplicates: \n%a\n"
+          (pp_cost ~assignment:(Some permutation) ~regs:regs_extended
+             ~num_rows:all_regs ~num_cols:all_regs)
+          cost);
+    for i = 0 to num_regs - 1 do
+      let src = permutation.(i) in
+      if src >= num_regs then
+        permutation.(i) <- duplicate_mapping.(src - num_regs)
+    done;
+    let permutation = Array.init num_regs (fun i -> permutation.(i)) in
+    Logs.debug (fun m ->
+        m "Final Assignment: %a\n" (pp_assignment ~regs:state.regs) permutation);
+    Logs.debug (fun m ->
+        m "Final Cost matrix: \n%a\n"
           (pp_cost ~assignment:(Some permutation) ~regs:state.regs
              ~num_rows:num_regs ~num_cols:num_regs)
           cost);
