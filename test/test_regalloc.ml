@@ -291,11 +291,15 @@ let regs =
   |> List.map (fun phys -> X86.Target.Physical phys)
   |> Array.of_list
 
-let pick ?(regs = regs) =
-  let regs = Array.copy regs in
-  fun num ->
-    CCArray.shuffle regs;
-    Array.to_list regs |> CCList.take num
+let pick ?(regs = regs) ?(duplicates = false) =
+  if duplicates then fun num ->
+    if Array.length regs = 0 then []
+    else List.init num (fun _ -> regs.(Random.int (Array.length regs)))
+  else
+    let regs = Array.copy regs in
+    fun num ->
+      CCArray.shuffle regs;
+      Array.to_list regs |> CCList.take num
 
 (* Invariants:
 
@@ -305,6 +309,7 @@ let pick ?(regs = regs) =
    length(extra_curr_live) <= total_live_through
    length(extra_curr_live) + count(is_live_through, uses) = total_live_through
    def can't be live through if it is in extra_clobbered_regs
+   uses can have duplicates
 *)
 let rec randomized_register_shuffle_test () =
   let get_random () = CCRandom.(run (int_range 1 (Array.length regs))) in
@@ -317,7 +322,7 @@ let rec randomized_register_shuffle_test () =
            X86.Target.RegSet.(
              to_list
                (diff (of_list (Array.to_list regs)) (of_list extra_curr_live))))
-      (get_random ())
+      ~duplicates:true (get_random ())
   in
   let defs = pick (List.length uses) in
   let extra_clobbered_regs_set =
