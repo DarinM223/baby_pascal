@@ -88,6 +88,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   let setup_constrained (reg, is_live_through) =
     let vreg = vregs.(next_vreg ()) in
     ignore @@ X86.Target.constrained reg vreg;
+    state.preferences.((get_vreg vreg).id).(idx reg) <- 100.;
     if is_live_through then
       Utils.IntHashtbl.replace live_through (X86.Target.index vreg) true;
     vreg
@@ -570,6 +571,38 @@ let test_register_shuffle6 () =
   check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs
     ~old_vregs ~vregs ~init_state ~result_state
 
+(* Test: live !r11,!r9,!r13,!r12,!r8,!rsi,!r15 uses rdi,rbx,r10,rdi,rdi,r10,!rax defs rsp,!r12,!rbx,rax,r13,r8,rsi clob !r8,r13,!rdx,rsi *)
+let test_register_shuffle7 () =
+  let extra_curr_live =
+    List.map (fun r -> (r, true)) X86.Regs.[ r11; r9; r13; r12; r8; rsi; r15 ]
+  in
+  let uses =
+    List.map (fun r -> (r, false)) X86.Regs.[ rdi; rbx; r10; rdi; rdi; r10 ]
+    @ [ (X86.Regs.rax, true) ]
+  in
+  let defs =
+    X86.Regs.
+      [
+        (rsp, false);
+        (r12, true);
+        (rbx, true);
+        (rax, false);
+        (r13, false);
+        (r8, false);
+        (rsi, false);
+      ]
+  in
+  let extra_clobbered_regs =
+    X86.Regs.[ (r8, true); (r13, false); (rdx, true); (rsi, false) ]
+  in
+  let old_vregs, vregs, head =
+    setup_register_shuffle ~regs ~extra_curr_live ~uses ~defs
+      ~extra_clobbered_regs
+  in
+  let init_state, result_state = test_pcopy_instr ~regs head in
+  check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs
+    ~old_vregs ~vregs ~init_state ~result_state
+
 let _ =
   let _ = Random.set_state (Random.get_state ()) in
   Logs.set_reporter (Logs_fmt.reporter ());
@@ -592,5 +625,7 @@ let _ =
              test_register_shuffle5
         :: test_case "non-reassignment move to constrained live through 2"
              `Quick test_register_shuffle6
+        :: test_case "multiple uses with same register" `Quick
+             test_register_shuffle7
         :: randomized );
     ]

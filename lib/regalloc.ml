@@ -477,6 +477,10 @@ struct
     Format.printf "Duplicate mapping: %a\n"
       (Utils.pp_array Format.pp_print_int)
       duplicate_mapping;
+    (* Because bipartite matching doesn't allow a mapping where multiple destinations
+       have the same source, when multiple parameters have the same register new pseudo-registers
+       are created for each duplicate register. Then they are replaced with the original registers
+       after the assignment is created. *)
     let all_regs = num_regs + Array.length duplicate_mapping in
     let cost = Array.make (all_regs * all_regs) 0 in
     for l = 0 to num_regs - 1 do
@@ -540,6 +544,7 @@ struct
       | _ -> ()
     in
     iter_use_defs ~k_pair_both_regs:remove_constrained_use_edges instr;
+    (* Bias extended duplicate registers to prefer themselves so they don't take a real register *)
     for i = num_regs to all_regs - 1 do
       cost.((i * all_regs) + i) <- 1
     done;
@@ -568,8 +573,14 @@ struct
     for i = 0 to num_regs - 1 do
       let src = permutation.(i) in
       if src >= num_regs then
+        (* Substitute extended duplicate register sources with the real register *)
         permutation.(i) <- duplicate_mapping.(src - num_regs)
+      else if CCBV.get live_through_regs src || CCBV.get live_through_regs i
+      then
+        (* If register source is live through, don't set its destination *)
+        permutation.(i) <- i
     done;
+    (* Remove the extended duplicate registers *)
     let permutation = Array.init num_regs (fun i -> permutation.(i)) in
     Logs.debug (fun m ->
         m "Final Assignment: %a\n" (pp_assignment ~regs:state.regs) permutation);
@@ -679,7 +690,7 @@ struct
       CCBV.(inter State.live_through_regs State.constrained_def_regs)
     in
     if not State.need_reassignment then begin
-      let orig_pcopy = pcopy in
+      (* let orig_pcopy = pcopy in
       let assignment = Array.init (Array.length state.regs) (fun r -> r) in
       let extra_srcs = ref [] in
       let extra_dests = ref [] in
@@ -729,7 +740,8 @@ struct
       in
       Logs.debug (fun m ->
           m "Regular PCopy %a created from %a\n" Target.pp_instr pcopy
-            Target.pp_instr orig_pcopy);
+            Target.pp_instr orig_pcopy); *)
+      Logs.debug (fun m -> m "Regular PCopy %a\n" Target.pp_instr pcopy);
       (head, pcopy)
     end
     else if not (CCBV.is_empty need_swap) then begin
@@ -764,14 +776,17 @@ struct
       let assignment =
         enforce_constraints_assignment (module State) state pcopy
       in
-      let pcopy =
+      (* let pcopy =
         enforce_constraints_pcopy (module State) state uid instr_num assignment
-      in
+      in *)
+      let head = permute_values state assignment head in
       (head, pcopy)
     end
     else
       let assignment = enforce_constraints_assignment s state pcopy in
-      let pcopy = enforce_constraints_pcopy s state uid instr_num assignment in
+      (* todo: use permute_values and return the existing pcopy *)
+      let head = permute_values state assignment head in
+      (* let pcopy = enforce_constraints_pcopy s state uid instr_num assignment in *)
       (head, pcopy)
 
   (* Insert parallel copy instruction in src block to move arguments
@@ -859,23 +874,19 @@ struct
     let don't_use_for_optimistic_moves =
       CCBV.create ~size:(Array.length state.regs) false
     in
-    let kill_vreg vreg =
-      Logs.debug (fun m ->
-          m "Killing dead register %a for %a\n" Target.pp_reg vreg.Target.reg
-            Target.pp_reg (Virtual vreg));
-      let reg = find_reg_index state.regs vreg.reg in
-      CCBV.set don't_use_for_optimistic_moves reg;
-      state.reg_current_var.(reg) <- None;
-      state.reg_current_pref.(reg) <- 0.;
-      CCBV.reset state.occupied reg;
-      vreg.reg
-    in
     (* Update instruction uses, replacing virtual registers with physical registers,
-       removing dead uses from the currently occupied registers,
-       and removing reuse operand uses *)
+       and removing dead uses from the currently occupied registers *)
     let go_use = function
       | Target.Virtual vreg when dies state uid (Virtual vreg) instr_num ->
-        kill_vreg vreg
+        Logs.debug (fun m ->
+            m "Killing dead register %a for %a\n" Target.pp_reg vreg.Target.reg
+              Target.pp_reg (Virtual vreg));
+        let reg = find_reg_index state.regs vreg.reg in
+        CCBV.set don't_use_for_optimistic_moves reg;
+        state.reg_current_var.(reg) <- None;
+        state.reg_current_pref.(reg) <- 0.;
+        CCBV.reset state.occupied reg;
+        vreg.reg
       | Target.Virtual vreg as reg ->
         Logs.debug (fun m ->
             m "Setting existing colored register %a as %a\n" Target.pp_reg reg
