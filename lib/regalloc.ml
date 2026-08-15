@@ -256,8 +256,9 @@ struct
     state.reg_current_pref.(src) <- state.reg_current_pref.(dest);
     state.reg_current_pref.(dest) <- tmp
 
-  let permute_values ?(permute_dead_regs = false) state
-      (permutation : int array) (head : G.head) =
+  let permute_values ?(permute_dead_regs = false)
+      ?(is_live_through = fun _ -> false) state (permutation : int array)
+      (head : G.head) =
     Logs.debug (fun m ->
         m "Permute values permutation %s occupied: %a\n"
           ([%show: int array] permutation)
@@ -283,7 +284,8 @@ struct
       if old_reg = !r || num_used.(!r) > 0 then incr r
       else begin
         begin match state.reg_current_var.(old_reg) with
-        | Some vreg -> vreg.reg <- state.regs.(!r)
+        | Some vreg when not (is_live_through old_reg) ->
+          vreg.reg <- state.regs.(!r)
         | _ -> ()
         end;
         (* copy source to destination (copy not move) *)
@@ -295,7 +297,7 @@ struct
         permutation.(!r) <- !r;
         num_used.(old_reg) <- num_used.(old_reg) - 1;
         (* if source register no longer used, remove it from occupied *)
-        if num_used.(old_reg) = 0 then begin
+        if num_used.(old_reg) = 0 && not (is_live_through old_reg) then begin
           CCBV.reset state.occupied old_reg;
           state.reg_current_var.(old_reg) <- None;
           state.reg_current_pref.(old_reg) <- 0.
@@ -336,6 +338,12 @@ struct
         permutation.(!r) <- r'
       end
     done;
+    Logs.debug (fun m ->
+        m "After Permute values occupied: %a\n"
+          (Format.pp_print_list
+             ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
+             Target.pp_reg)
+          (List.map (fun r -> state.regs.(r)) (CCBV.to_list state.occupied)));
     !head
 
   module type EnforceConstraints = sig
@@ -575,10 +583,6 @@ struct
       if src >= num_regs then
         (* Substitute extended duplicate register sources with the real register *)
         permutation.(i) <- duplicate_mapping.(src - num_regs)
-      else if CCBV.get live_through_regs src || CCBV.get live_through_regs i
-      then
-        (* If register source is live through, don't set its destination *)
-        permutation.(i) <- i
     done;
     (* Remove the extended duplicate registers *)
     let permutation = Array.init num_regs (fun i -> permutation.(i)) in
@@ -684,6 +688,19 @@ struct
     Target.pcopy ~dests:!dests ~srcs:!srcs
 
   let enforce_constraints state uid instr_num pcopy head =
+    (* After permutation, unset constrained defs so color_instruction
+       can color the register constraints definitions properly. *)
+    let unset_constrained_defs () =
+      let go = function
+        | _, Target.Virtual { reg_constr = UsePhysical phys; _ } ->
+          let reg = find_reg_index state.regs (Physical phys) in
+          CCBV.reset state.occupied reg;
+          state.reg_current_var.(reg) <- None;
+          state.reg_current_pref.(reg) <- 0.
+        | _ -> ()
+      in
+      iter_use_defs ~k_pair_both_regs:go pcopy
+    in
     let s = enforce_constraints_state state uid instr_num pcopy in
     let module State = (val s) in
     let need_swap =
@@ -776,17 +793,22 @@ struct
       let assignment =
         enforce_constraints_assignment (module State) state pcopy
       in
-      (* let pcopy =
-        enforce_constraints_pcopy (module State) state uid instr_num assignment
-      in *)
-      let head = permute_values state assignment head in
+      let head =
+        permute_values
+          ~is_live_through:(CCBV.get State.live_through_regs)
+          state assignment head
+      in
+      unset_constrained_defs ();
       (head, pcopy)
     end
     else
       let assignment = enforce_constraints_assignment s state pcopy in
-      (* todo: use permute_values and return the existing pcopy *)
-      let head = permute_values state assignment head in
-      (* let pcopy = enforce_constraints_pcopy s state uid instr_num assignment in *)
+      let head =
+        permute_values
+          ~is_live_through:(CCBV.get State.live_through_regs)
+          state assignment head
+      in
+      unset_constrained_defs ();
       (head, pcopy)
 
   (* Insert parallel copy instruction in src block to move arguments
@@ -1608,10 +1630,12 @@ let%expect_test "Fibonacci register allocation" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
+    Duplicate mapping: []
+
       pcopy [(%rbx, %rdi)]
       jle label2, label3, %rbx, $1
     label1(local=false)(rax):
-      pcopy []
+      pcopy [(%rax, %rax)]
       ret %rax
     label2(local=false)():
       movq %rax, %rbx
@@ -1621,11 +1645,12 @@ let%expect_test "Fibonacci register allocation" =
       subq %rax, %rax, $1
       pcopy [(%r15, %rdi); (%rdi, %r15)]
       pcopy [(%rdi, %rax)]
+      pcopy [(%rdi, %rdi)]
       call %rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %rdi, fibonacci
       movq %r13, %rax
       movq %rdi, %rbx
       subq %rdi, %rdi, $2
-      pcopy []
+      pcopy [(%rdi, %rdi)]
       call %rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %rdi, fibonacci
       movq %rax, %rax
       movq %rsi, %r13

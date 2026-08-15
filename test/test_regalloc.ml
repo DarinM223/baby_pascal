@@ -135,6 +135,20 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
       Utils.IntHashtbl.mem live_through (id clobbered)
     with Not_found -> false
   in
+  let live_through_dest vreg =
+    try
+      let get_reg_constr = function
+        | X86.Target.Reg (Virtual { reg_constr = UsePhysical phys; _ }) ->
+          Some (X86.Target.Physical phys)
+        | _ -> None
+      in
+      let dest =
+        List.find (fun op -> get_reg_constr op = Some (reg vreg)) dests
+      in
+      let reg = Option.get (X86.Target.destruct_reg dest) in
+      if Utils.IntHashtbl.mem live_through (id reg) then Some reg else None
+    with Not_found -> None
+  in
   (* check that reg_current_var, reg_current_pref, and occupied are set correctly *)
   let rec check_vregs = function
     | X86.Target.Reg src :: srcs, X86.Target.Reg dest :: dests ->
@@ -146,7 +160,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
       in
       check bool (mk_check "occupied" src)
         (Utils.IntHashtbl.mem live_through (id src)
-        || Utils.IntHashtbl.mem live_through (id dest)
+        || Option.is_some (live_through_dest src)
         || live_through_clobbered src)
         (CCBV.get state.occupied (idx (get_physical (reg src))));
       check bool (mk_check "occupied" dest)
@@ -159,7 +173,8 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
         (if live_through_clobbered src then
            Some (X86.Target.RegMap.find (reg src) clobbered)
          else if Utils.IntHashtbl.mem live_through (id src) then Some src
-         else if Utils.IntHashtbl.mem live_through (id dest) then Some dest
+         else if Option.is_some (live_through_dest src) then
+           live_through_dest src
          else None)
         (Option.map
            (fun vreg -> X86.Target.Virtual vreg)
@@ -176,11 +191,10 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
            state.reg_current_var.(idx (get_physical (reg dest))));
       check (float 0.01)
         (mk_check "current preference" src)
-        (if
-           Utils.IntHashtbl.mem live_through (id src)
-           || Utils.IntHashtbl.mem live_through (id dest)
-         then float_of_int (get_vreg src).id
+        (if Utils.IntHashtbl.mem live_through (id src) then
+           float_of_int (get_vreg src).id
          else if live_through_clobbered src then float_of_int (get_vreg src).id
+         else if Option.is_some (live_through_dest src) then 100.
          else 0.)
         state.reg_current_pref.(idx (get_physical (reg src)));
       check_vregs (srcs, dests)
