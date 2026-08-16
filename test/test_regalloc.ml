@@ -76,14 +76,26 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
       !c
   in
   let setup_occupied (reg, is_live_through) =
-    let vreg = vregs.(next_vreg ()) in
-    CCBV.set state.occupied (idx reg);
-    state.reg_current_var.(idx reg) <- Some (get_vreg vreg);
-    state.reg_current_pref.(idx reg) <- float_of_int (get_vreg vreg).id;
-    set_reg (idx reg) vreg;
-    if is_live_through then
-      Utils.IntHashtbl.replace live_through (X86.Target.index vreg) true;
-    vreg
+    let i = next_vreg () in
+    if CCBV.get state.occupied (idx reg) then begin
+      let vreg =
+        X86.Target.Virtual (Option.get state.reg_current_var.(idx reg))
+      in
+      if is_live_through then
+        Utils.IntHashtbl.replace live_through (X86.Target.index vreg) true;
+      vregs.(i) <- vreg;
+      vreg
+    end
+    else begin
+      let vreg = vregs.(i) in
+      CCBV.set state.occupied (idx reg);
+      state.reg_current_var.(idx reg) <- Some (get_vreg vreg);
+      state.reg_current_pref.(idx reg) <- float_of_int (get_vreg vreg).id;
+      set_reg (idx reg) vreg;
+      if is_live_through then
+        Utils.IntHashtbl.replace live_through (X86.Target.index vreg) true;
+      vreg
+    end
   in
   let setup_constrained (reg, is_live_through) =
     let vreg = vregs.(next_vreg ()) in

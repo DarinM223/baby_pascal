@@ -10,17 +10,17 @@ else
   exit 1
 fi
 
-# dune exec compile examples/funswap.pas &> /dev/null
-# ./build.sh funswap.pas
-# ./funswap.pas > funswap.pas.test
-# if cmp --silent funswap.pas.test examples/funswap.pas.expected; then
-#   echo "funswap test succeeded"
-# else
-#   echo "funswap test failed"
-#   echo "Diff:"
-#   diff funswap.pas.test examples/funswap.pas.expected
-#   exit 1
-# fi
+dune exec compile examples/funswap.pas &> /dev/null
+./build.sh funswap.pas
+./funswap.pas > funswap.pas.test
+if cmp --silent funswap.pas.test examples/funswap.pas.expected; then
+  echo "funswap test succeeded"
+else
+  echo "funswap test failed"
+  echo "Diff:"
+  diff funswap.pas.test examples/funswap.pas.expected
+  exit 1
+fi
 
 dune exec compile examples/gcd.pas &> /dev/null
 ./build.sh gcd.pas
