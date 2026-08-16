@@ -455,7 +455,7 @@ struct
     let seen = CCBV.create ~size:num_regs false in
     let duplicate_mapping =
       let duplicate_mapping = CCVector.create () in
-      let remove_constrained_use_edges = function
+      let find_duplicates = function
         | ( Target.Virtual { reg; _ },
             Target.Virtual { reg_constr = UsePhysical _; _ } ) ->
           let reg = find_reg_index state.regs reg in
@@ -463,12 +463,13 @@ struct
           CCBV.set seen reg
         | _ -> ()
       in
-      iter_use_defs ~k_pair_both_regs:remove_constrained_use_edges instr;
+      iter_use_defs ~k_pair_both_regs:find_duplicates instr;
       CCVector.to_array duplicate_mapping
     in
-    Format.printf "Duplicate mapping: %a\n"
-      (Utils.pp_array Format.pp_print_int)
-      duplicate_mapping;
+    Logs.debug (fun m ->
+        m "Duplicate mapping: %a\n"
+          (Utils.pp_array Format.pp_print_int)
+          duplicate_mapping);
     (* Because bipartite matching doesn't allow a mapping where multiple destinations
        have the same source, when multiple parameters have the same register new pseudo-registers
        are created for each duplicate register. Then they are replaced with the original registers
@@ -512,25 +513,25 @@ struct
           Target.Virtual { reg_constr = UsePhysical phys; _ } ) ->
         let curr_reg = find_reg_index state.regs reg in
         let constraint_reg = find_reg_index state.regs (Physical phys) in
-        if CCBV.get seen curr_reg then begin
-          let curr_reg = !duplicate_index in
-          incr duplicate_index;
-          Format.printf "Duplicate, %a setting %a to %a\n" Target.pp_reg
-            state.regs.(find_reg_index state.regs reg)
-            Target.pp_reg
-            state.regs.(constraint_reg)
-            Target.pp_reg
-            state.regs.(duplicate_mapping.(curr_reg - num_regs));
-          for r = 0 to all_regs - 1 do
-            if r <> constraint_reg then cost.((r * all_regs) + curr_reg) <- 0
-            else cost.((r * all_regs) + curr_reg) <- 9
-          done
-        end
-        else
-          for r = 0 to all_regs - 1 do
-            if r <> constraint_reg then cost.((r * all_regs) + curr_reg) <- 0
-            else cost.((r * all_regs) + curr_reg) <- 9
-          done;
+        let curr_reg =
+          if CCBV.get seen curr_reg then begin
+            let curr_reg = !duplicate_index in
+            incr duplicate_index;
+            Logs.debug (fun m ->
+                m "Duplicate, %a setting %a to %a\n" Target.pp_reg
+                  state.regs.(find_reg_index state.regs reg)
+                  Target.pp_reg
+                  state.regs.(constraint_reg)
+                  Target.pp_reg
+                  state.regs.(duplicate_mapping.(curr_reg - num_regs)));
+            curr_reg
+          end
+          else curr_reg
+        in
+        for r = 0 to all_regs - 1 do
+          if r <> constraint_reg then cost.((r * all_regs) + curr_reg) <- 0
+          else cost.((r * all_regs) + curr_reg) <- 9
+        done;
         CCBV.set seen curr_reg
       | _ -> ()
     in
@@ -599,7 +600,7 @@ struct
     in
     if not State.need_reassignment then begin
       Logs.debug (fun m -> m "Regular PCopy %a\n" Target.pp_instr pcopy);
-      (head, pcopy)
+      head
     end
     else if not (CCBV.is_empty need_swap) then begin
       Logs.debug (fun m ->
@@ -639,7 +640,7 @@ struct
           state assignment head
       in
       unset_constrained_defs ();
-      (head, pcopy)
+      head
     end
     else
       let assignment = enforce_constraints_assignment s state pcopy in
@@ -649,7 +650,7 @@ struct
           state assignment head
       in
       unset_constrained_defs ();
-      (head, pcopy)
+      head
 
   (* Insert parallel copy instruction in src block to move arguments
      to assigned registers in dest block. *)
@@ -726,10 +727,10 @@ struct
     G.unfocus ((head, Last last), cfg)
 
   let color_instruction state uid instr_num head instr =
-    let head, instr =
+    let head =
       if Target.is_pcopy instr then
         enforce_constraints state uid instr_num instr head
-      else (head, instr)
+      else head
     in
     (* Make sure that killed use registers aren't used for optimistic moves,
      because the move would be inserted before the register is killed *)
@@ -1470,8 +1471,6 @@ let%expect_test "Fibonacci register allocation" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-    Duplicate mapping: []
-
       pcopy [(%rbx, %rdi)]
       jle label2, label3, %rbx, $1
     label1(local=false)(rax):
