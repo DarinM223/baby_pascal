@@ -256,9 +256,8 @@ struct
     state.reg_current_pref.(src) <- state.reg_current_pref.(dest);
     state.reg_current_pref.(dest) <- tmp
 
-  let permute_values ?(permute_dead_regs = false)
-      ?(is_live_through = fun _ -> false) state (permutation : int array)
-      (head : G.head) =
+  let permute_values ?(permute_dead_regs = false) state
+      (permutation : int array) (head : G.head) =
     Logs.debug (fun m ->
         m "Permute values permutation %s occupied: %a\n"
           ([%show: int array] permutation)
@@ -284,8 +283,7 @@ struct
       if old_reg = !r || num_used.(!r) > 0 then incr r
       else begin
         begin match state.reg_current_var.(old_reg) with
-        | Some vreg when not (is_live_through old_reg) ->
-          vreg.reg <- state.regs.(!r)
+        | Some vreg -> vreg.reg <- state.regs.(!r)
         | _ -> ()
         end;
         (* copy source to destination (copy not move) *)
@@ -297,7 +295,7 @@ struct
         permutation.(!r) <- !r;
         num_used.(old_reg) <- num_used.(old_reg) - 1;
         (* if source register no longer used, remove it from occupied *)
-        if num_used.(old_reg) = 0 && not (is_live_through old_reg) then begin
+        if num_used.(old_reg) = 0 then begin
           CCBV.reset state.occupied old_reg;
           state.reg_current_var.(old_reg) <- None;
           state.reg_current_pref.(old_reg) <- 0.
@@ -480,7 +478,7 @@ struct
         else cost.((l * num_regs) + r) <- (if l = r then 8 else 7)
       done
     done;
-    (* Remove edges from constrained use virtual registers to non-constrained registers
+    (* Remove edges from non-live-through constrained use virtual registers to non-constrained registers
        In other words, you can only move a constrained use to the register in the constraint,
        not to any other register *)
     let remove_constrained_use_edges = function
@@ -488,10 +486,11 @@ struct
           Target.Virtual { reg_constr = UsePhysical phys; _ } ) ->
         let curr_reg = find_reg_index state.regs reg in
         let constraint_reg = find_reg_index state.regs (Physical phys) in
-        for r = 0 to num_regs - 1 do
-          if r <> constraint_reg then cost.((r * num_regs) + curr_reg) <- 0
-          else cost.((r * num_regs) + curr_reg) <- 9
-        done
+        if not (CCBV.get live_through_regs curr_reg) then
+          for r = 0 to num_regs - 1 do
+            if r <> constraint_reg then cost.((r * num_regs) + curr_reg) <- 0
+            else cost.((r * num_regs) + curr_reg) <- 9
+          done
       | _ -> ()
     in
     iter_use_defs ~k_pair_both_regs:remove_constrained_use_edges instr;
@@ -514,77 +513,20 @@ struct
     permutation
 
   let enforce_constraints state uid instr_num pcopy head =
-    (* After permutation, unset constrained defs so color_instruction
-       can color the register constraints definitions properly. *)
-    let unset_constrained_defs () =
-      let go = function
-        | _, Target.Virtual { reg_constr = UsePhysical phys; _ } ->
-          let reg = find_reg_index state.regs (Physical phys) in
-          CCBV.reset state.occupied reg;
-          state.reg_current_var.(reg) <- None;
-          state.reg_current_pref.(reg) <- 0.
-        | _ -> ()
-      in
-      iter_use_defs ~k_pair_both_regs:go pcopy
-    in
     let s = enforce_constraints_state state uid instr_num pcopy in
     let module State = (val s) in
-    let need_swap =
-      CCBV.(inter State.live_through_regs State.constrained_def_regs)
-    in
-    if not State.need_reassignment then begin
-      Logs.debug (fun m -> m "Regular PCopy %a\n" Target.pp_instr pcopy);
-      head
-    end
-    else if not (CCBV.is_empty need_swap) then begin
-      Logs.debug (fun m ->
-          m "Need swap: %s\n"
-            ([%show: Target.reg list]
-               (List.map (fun r -> state.regs.(r)) (CCBV.to_list need_swap))));
-      (* swap with not constrained def - live throughs *)
-      let free_non_constrained =
-        CCBV.(diff (negate State.constrained_def_regs) State.live_through_regs)
-      in
-      let rec go srcs dests = function
-        | src :: need_swap, dest :: free_non_constrained ->
-          CCBV.reset State.live_through_regs src;
-          CCBV.set State.live_through_regs dest;
-          swap_regs state src dest;
-          go
-            (Target.reg state.regs.(src) :: Target.reg state.regs.(dest) :: srcs)
-            (Target.reg state.regs.(dest)
-            :: Target.reg state.regs.(src)
-            :: dests)
-            (need_swap, free_non_constrained)
-        | _ -> (srcs, dests)
-      in
-      let srcs, dests =
-        go [] [] (CCBV.to_list need_swap, CCBV.to_list free_non_constrained)
-      in
-      let pcopy' = Target.pcopy ~dests ~srcs in
-      Logs.debug (fun m ->
-          m "Emitting swap parallel copy: %a\n" Target.pp_instr pcopy');
-      let head = G.Head (head, Instruction pcopy') in
-      let assignment =
-        enforce_constraints_assignment (module State) state pcopy
-      in
-      let head =
-        permute_values
-          ~is_live_through:(CCBV.get State.live_through_regs)
-          state assignment head
-      in
-      unset_constrained_defs ();
-      head
-    end
+    if not State.need_reassignment then head
     else
       let assignment = enforce_constraints_assignment s state pcopy in
-      let head =
-        permute_values
-          ~is_live_through:(CCBV.get State.live_through_regs)
-          state assignment head
-      in
-      unset_constrained_defs ();
-      head
+      (* Don't move live through values that aren't in clobbered registers *)
+      for dest = 0 to Array.length state.regs - 1 do
+        let src = assignment.(dest) in
+        if
+          CCBV.get State.live_through_regs src
+          && not (CCBV.get State.constrained_def_regs src)
+        then assignment.(dest) <- dest
+      done;
+      permute_values state assignment head
 
   (* Insert parallel copy instruction in src block to move arguments
      to assigned registers in dest block. *)
@@ -1416,8 +1358,7 @@ let%expect_test "Fibonacci register allocation" =
     label3(local=false)():
       movq %rax, %rbx
       subq %rax, %rax, $1
-      pcopy [(%r15, %rdi); (%rdi, %r15)]
-      pcopy [(%rdi, %rax)]
+      pcopy [(%rsp, %rdi); (%rdi, %rax)]
       pcopy [(%rdi, %rdi)]
       call %rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %rdi, fibonacci
       movq %r13, %rax
