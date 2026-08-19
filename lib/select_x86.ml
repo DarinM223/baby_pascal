@@ -149,21 +149,47 @@ let rec select ({ State.fresh_vreg; mapping; _ } as state)
       let tmp2 = Reg (fresh_vreg Int) in
       let tmp3 = Reg (constrained Regs.rdx (fresh_vreg Int)) in
       let tmp4 = Reg (constrained Regs.rax (fresh_vreg Int)) in
-      pcopy ~dests:[ tmp1; tmp4; tmp3 ] ~srcs:[ src1 ]
-      @> mov ~dest:tmp2 ~src:src2
-      @> instr "imulq" ~defs:[] ~uses:[ tmp2 ]
-      @> mov ~dest ~src:tmp4 @> k dest
+      (* rax -> rdx:rax *)
+      let mul =
+        instr "imulq" ~defs:[] ~uses:[ tmp2 ]
+        |> Target.modify_uses (fun ~uses ~num_hidden ->
+            (tmp1 :: uses, num_hidden + 1))
+        |> Target.modify_defs (fun ~defs ~num_hidden ->
+            (tmp3 :: tmp4 :: defs, num_hidden + 2))
+      in
+      mov ~dest:tmp2 ~src:src2
+      @> with_clobber_regs
+           (RegSet.of_list Regs.[ Physical rax; Physical rdx ])
+           (pcopy ~dests:[ tmp1 ] ~srcs:[ src1 ])
+      @> mul @> mov ~dest ~src:tmp4 @> k dest
     | Ast.Div ->
       let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int)) in
       let tmp2 = Reg (fresh_vreg Int) in
       let tmp3 = Reg (constrained Regs.rdx (fresh_vreg Int)) in
       let tmp4 = Reg (constrained Regs.rax (fresh_vreg Int)) in
+      let tmp5 = Reg (constrained Regs.rax (fresh_vreg Int)) in
+      (* rax -> rdx:rax *)
+      let cqto =
+        instr "cqto" ~defs:[] ~uses:[]
+        |> Target.modify_uses (fun ~uses ~num_hidden ->
+            (tmp1 :: uses, num_hidden + 1))
+        |> Target.modify_defs (fun ~defs ~num_hidden ->
+            (tmp3 :: tmp4 :: defs, num_hidden + 2))
+      in
+      (* rdx:rax -> rax *)
+      let div =
+        instr "idivq" ~defs:[] ~uses:[ tmp2 ]
+        |> Target.modify_uses (fun ~uses ~num_hidden ->
+            (tmp3 :: tmp4 :: uses, num_hidden + 2))
+        |> Target.modify_defs (fun ~defs ~num_hidden ->
+            (tmp5 :: defs, num_hidden + 1))
+      in
       (* Clobbers rax and rdx because of the cqto instruction *)
-      pcopy ~dests:[ tmp1; tmp4; tmp3 ] ~srcs:[ src1 ]
-      @> mov ~dest:tmp2 ~src:src2
-      @> instr "cqto" ~defs:[] ~uses:[]
-      @> instr "idivq" ~defs:[] ~uses:[ tmp2 ]
-      @> mov ~dest ~src:tmp4 @> k dest
+      mov ~dest:tmp2 ~src:src2
+      @> with_clobber_regs
+           (RegSet.of_list Regs.[ Physical rax; Physical rdx ])
+           (pcopy ~dests:[ tmp1 ] ~srcs:[ src1 ])
+      @> cqto @> div @> mov ~dest ~src:tmp5 @> k dest
     | Ast.And ->
       let tmp = Reg (fresh_vreg Int) in
       mov ~dest:tmp ~src:src1

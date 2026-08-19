@@ -57,17 +57,8 @@ struct
     | [ lt; le; eq ] -> (lt, le, eq)
     | _ -> failwith "Could not find instructions for lt, le, and eq"
 
-  let pp_array pp_elem fmt arr =
-    let open Format in
-    pp_open_box fmt 0;
-    pp_print_string fmt "[";
-    pp_print_list
-      ~pp_sep:(fun fmt () -> pp_print_string fmt ", ")
-      pp_elem fmt (Array.to_list arr);
-    pp_print_string fmt "]";
-    pp_close_box fmt ()
-  let pp_prob = pp_array (pp_array Format.pp_print_float)
-  let pp_bfreq = pp_array Format.pp_print_float
+  let pp_prob = Utils.(pp_array (pp_array Format.pp_print_float))
+  let pp_bfreq = Utils.pp_array Format.pp_print_float
 
   let header n =
     Loop.(if PositionSet.mem n loop_headers then n else loop_header n)
