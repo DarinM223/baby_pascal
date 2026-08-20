@@ -3,10 +3,10 @@ _build/
 *.s
 *.o
 *.pas.test
-collatz.pas
-isprime.pas
-factorial.pas
-fibonacci.pas
-funswap.pas
-gcd.pas
-callconv.pas
+/collatz.pas
+/isprime.pas
+/factorial.pas
+/fibonacci.pas
+/funswap.pas
+/gcd.pas
+/callconv.pas
