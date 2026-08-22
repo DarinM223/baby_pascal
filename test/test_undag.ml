@@ -66,6 +66,49 @@ let test_use_in_jump () =
   (check Undag.Cfg.(testable pp_block equal_block))
     "Produces proper graph" expected block
 
+let test_example_1_treeify () =
+  let cfg =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
+    @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
+    @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
+    @@ instruction (bop Mul ~dest:(reg "d") ~src1:(reg "c") ~src2:(reg "c"))
+    @@ instruction (call ~dest:(reg "e") (Label ((100, "f"), [])) [])
+    @@ focus_entry empty
+  in
+  let block = Normalize.Cfg.(zip (fst (focus_entry cfg))) in
+  let block = Undag.treeify block in
+  let expected =
+    let open Undag.Target in
+    let open Undag.Cfg in
+    unfocus
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
+    @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
+    @@ instruction
+         (bop Add ~dest:(reg "c")
+            ~src1:(Instr (assign ~src:(Const 1) ~dest:(reg "a")))
+            ~src2:(Instr (assign ~src:(Const 2) ~dest:(reg "b"))))
+    @@ instruction
+         (bop Mul ~dest:(reg "d")
+            ~src1:
+              (Instr
+                 (bop Add ~dest:(reg "c")
+                    ~src1:(Instr (assign ~src:(Const 1) ~dest:(reg "a")))
+                    ~src2:(Instr (assign ~src:(Const 2) ~dest:(reg "b")))))
+            ~src2:
+              (Instr
+                 (bop Add ~dest:(reg "c")
+                    ~src1:(Instr (assign ~src:(Const 1) ~dest:(reg "a")))
+                    ~src2:(Instr (assign ~src:(Const 2) ~dest:(reg "b"))))))
+    @@ instruction (call ~dest:(reg "e") (Label ((100, "f"), [])) [])
+    @@ focus_entry empty
+  in
+  let expected = Undag.Cfg.(zip (fst (focus_entry expected))) in
+  (check Undag.Cfg.(testable pp_block equal_block))
+    "Produces proper graph" expected block
+
 let _ =
   run "Test undag to list of trees"
     [
@@ -73,5 +116,7 @@ let _ =
         [
           test_case "example 1" `Quick test_example_1;
           test_case "second use in jump" `Quick test_use_in_jump;
+          test_case "example 1 but treeify (don't remove defs with single uses)"
+            `Quick test_example_1_treeify;
         ] );
     ]

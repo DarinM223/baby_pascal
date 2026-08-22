@@ -33,38 +33,76 @@ module Converter =
   Instruction.Convert (Normalize.Target.Operand) (Target.Operand)
 module Convert = Converter.Make (Normalize.Target) (Target)
 
-let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
-  let uses instr =
-    let rec handle_operand = function
-      | Normalize.Target.Reg r -> [ r ]
-      | Normalize.Target.Label (_, args) -> List.concat_map handle_operand args
-      | _ -> []
-    in
-    List.concat_map handle_operand (Normalize.Target.srcs instr)
+open struct
+  let increment = Option.fold ~none:(Some 1) ~some:(fun c -> Some (c + 1))
+  let fold_uses f = Normalize.Target.fold_uses (fun acc use -> (f acc use, use))
+  let clean_regs = List.filter (fun n -> not (Normalize.Name.is_tombstone n))
+end
+
+let treeify ((first, tail) : Normalize.Cfg.block) : Cfg.block =
+  let first =
+    match first with
+    | Normalize.Cfg.Entry -> Cfg.Entry
+    | Normalize.Cfg.Label (l, info) ->
+      Cfg.(Label (l, { local = info.local; args = clean_regs info.args }))
   in
-  let add_uses uses acc =
-    List.fold_left
-      (fun acc use ->
-        NameMap.update use
-          (function
-            | None -> Some 1
-            | Some c -> Some (c + 1))
-          acc)
-      acc uses
+  let rewrite_instruction acc instr =
+    let rec convert_operand = function
+      | Normalize.Target.Const i -> Target.Const i
+      | Normalize.Target.Reg reg ->
+        begin match NameMap.find_opt reg acc with
+        | Some instr -> Target.Instr instr
+        | None -> Target.Reg reg
+        end
+      | Normalize.Target.Label (l, ops) ->
+        Target.Label
+          ( l,
+            List.filter_map
+              (fun op ->
+                if Normalize.Target.is_tombstone op then None
+                else Some (convert_operand op))
+              ops )
+    in
+    Convert.convert convert_operand instr
+  in
+  let rec rewrite_tail acc = function
+    | Normalize.Cfg.Last Exit -> Cfg.Last Cfg.Exit
+    | Last (Branch (i, l)) ->
+      let i = rewrite_instruction acc i in
+      Cfg.(Last (Branch (i, l)))
+    | Last (CBranch (i, l1, l2)) ->
+      let i = rewrite_instruction acc i in
+      Cfg.(Last (CBranch (i, l1, l2)))
+    | Last (Normalize.Cfg.Return i) ->
+      let i = rewrite_instruction acc i in
+      Cfg.(Last (Return i))
+    | Tail (Instruction i, rest) ->
+      let rewritten = rewrite_instruction acc i in
+      let acc =
+        NameSet.fold
+          (fun def acc -> NameMap.add def rewritten acc)
+          (Normalize.Target.defs i) acc
+      in
+      Cfg.Tail (Instruction rewritten, rewrite_tail acc rest)
+  in
+  let tail = rewrite_tail NameMap.empty tail in
+  (first, tail)
+
+let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
+  let add_uses instr acc =
+    let rec fold_operand acc = function
+      | Normalize.Target.Reg r -> NameMap.update r increment acc
+      | Label (_, args) -> List.fold_left fold_operand acc args
+      | _ -> acc
+    in
+    fst (fold_uses fold_operand acc instr)
   in
   let rec count_uses acc = function
-    | Normalize.Cfg.Last l ->
-      begin match l with
-      | Normalize.Cfg.Exit -> acc
-      | Normalize.Cfg.Branch (i, _) -> add_uses (uses i) acc
-      | Normalize.Cfg.CBranch (i, _, _) -> add_uses (uses i) acc
-      | Normalize.Cfg.Return i -> add_uses (uses i) acc
-      end
-    | Normalize.Cfg.Tail (Instruction i, rest) ->
-      count_uses (add_uses (uses i) acc) rest
+    | Normalize.Cfg.Last Exit -> acc
+    | Last (Branch (i, _) | CBranch (i, _, _) | Return i) -> add_uses i acc
+    | Tail (Instruction i, rest) -> count_uses (add_uses i acc) rest
   in
   let count = count_uses NameMap.empty tail in
-  let clean_regs = List.filter (fun n -> not (Normalize.Name.is_tombstone n)) in
   let first =
     match first with
     | Normalize.Cfg.Entry -> Cfg.Entry
@@ -98,20 +136,17 @@ let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
     NameMap.fold (fun _ instr tail -> Cfg.Tail (Instruction instr, tail))
   in
   let rec rewrite_tail acc = function
-    | Normalize.Cfg.Last l ->
-      begin match l with
-      | Normalize.Cfg.Exit -> Cfg.Last Cfg.Exit
-      | Normalize.Cfg.Branch (i, l) ->
-        let i, acc = rewrite_instruction acc i in
-        dump_mappings acc Cfg.(Last (Branch (i, l)))
-      | Normalize.Cfg.CBranch (i, l1, l2) ->
-        let i, acc = rewrite_instruction acc i in
-        dump_mappings acc Cfg.(Last (CBranch (i, l1, l2)))
-      | Normalize.Cfg.Return i ->
-        let i, acc = rewrite_instruction acc i in
-        dump_mappings acc Cfg.(Last (Return i))
-      end
-    | Normalize.Cfg.Tail (Instruction i, rest) ->
+    | Normalize.Cfg.Last Exit -> Cfg.Last Cfg.Exit
+    | Last (Branch (i, l)) ->
+      let i, acc = rewrite_instruction acc i in
+      dump_mappings acc Cfg.(Last (Branch (i, l)))
+    | Last (CBranch (i, l1, l2)) ->
+      let i, acc = rewrite_instruction acc i in
+      dump_mappings acc Cfg.(Last (CBranch (i, l1, l2)))
+    | Last (Normalize.Cfg.Return i) ->
+      let i, acc = rewrite_instruction acc i in
+      dump_mappings acc Cfg.(Last (Return i))
+    | Tail (Instruction i, rest) ->
       let rewritten, acc = rewrite_instruction acc i in
       let num_uses =
         NameSet.fold
