@@ -39,54 +39,64 @@ open struct
   let clean_regs = List.filter (fun n -> not (Normalize.Name.is_tombstone n))
 end
 
-let treeify ((first, tail) : Normalize.Cfg.block) : Cfg.block =
-  let first =
-    match first with
-    | Normalize.Cfg.Entry -> Cfg.Entry
-    | Normalize.Cfg.Label (l, info) ->
-      Cfg.(Label (l, { local = info.local; args = clean_regs info.args }))
-  in
-  let rewrite_instruction acc instr =
-    let rec convert_operand = function
-      | Normalize.Target.Const i -> Target.Const i
-      | Normalize.Target.Reg reg ->
-        begin match NameMap.find_opt reg acc with
-        | Some instr -> Target.Instr instr
-        | None -> Target.Reg reg
-        end
-      | Normalize.Target.Label (l, ops) ->
-        Target.Label
-          ( l,
-            List.filter_map
-              (fun op ->
-                if Normalize.Target.is_tombstone op then None
-                else Some (convert_operand op))
-              ops )
+let treeify (graph : Normalize.Cfg.graph) : Cfg.graph =
+  let treeify_block map (first, tail) =
+    let first =
+      match first with
+      | Normalize.Cfg.Entry -> Cfg.Entry
+      | Normalize.Cfg.Label (l, info) ->
+        Cfg.(Label (l, { local = info.local; args = clean_regs info.args }))
     in
-    Convert.convert convert_operand instr
-  in
-  let rec rewrite_tail acc = function
-    | Normalize.Cfg.Last Exit -> Cfg.Last Cfg.Exit
-    | Last (Branch (i, l)) ->
-      let i = rewrite_instruction acc i in
-      Cfg.(Last (Branch (i, l)))
-    | Last (CBranch (i, l1, l2)) ->
-      let i = rewrite_instruction acc i in
-      Cfg.(Last (CBranch (i, l1, l2)))
-    | Last (Normalize.Cfg.Return i) ->
-      let i = rewrite_instruction acc i in
-      Cfg.(Last (Return i))
-    | Tail (Instruction i, rest) ->
-      let rewritten = rewrite_instruction acc i in
-      let acc =
-        NameSet.fold
-          (fun def acc -> NameMap.add def rewritten acc)
-          (Normalize.Target.defs i) acc
+    let rewrite_instruction acc instr =
+      let rec convert_operand = function
+        | Normalize.Target.Const i -> Target.Const i
+        | Normalize.Target.Reg reg ->
+          begin match NameMap.find_opt reg acc with
+          | Some instr -> Target.Instr instr
+          | None -> Target.Reg reg
+          end
+        | Normalize.Target.Label (l, ops) ->
+          Target.Label
+            ( l,
+              List.filter_map
+                (fun op ->
+                  if Normalize.Target.is_tombstone op then None
+                  else Some (convert_operand op))
+                ops )
       in
-      Cfg.Tail (Instruction rewritten, rewrite_tail acc rest)
+      Convert.convert convert_operand instr
+    in
+    let rec rewrite_tail acc = function
+      | Normalize.Cfg.Last Exit -> (acc, Cfg.Last Cfg.Exit)
+      | Last (Branch (i, l)) ->
+        let i = rewrite_instruction acc i in
+        (acc, Cfg.(Last (Branch (i, l))))
+      | Last (CBranch (i, l1, l2)) ->
+        let i = rewrite_instruction acc i in
+        (acc, Cfg.(Last (CBranch (i, l1, l2))))
+      | Last (Normalize.Cfg.Return i) ->
+        let i = rewrite_instruction acc i in
+        (acc, Cfg.(Last (Return i)))
+      | Tail (Instruction i, rest) ->
+        let rewritten = rewrite_instruction acc i in
+        let acc =
+          NameSet.fold
+            (fun def acc -> NameMap.add def rewritten acc)
+            (Normalize.Target.defs i) acc
+        in
+        let acc, rest = rewrite_tail acc rest in
+        (acc, Cfg.Tail (Instruction rewritten, rest))
+    in
+    let map, tail = rewrite_tail map tail in
+    (map, (first, tail))
   in
-  let tail = rewrite_tail NameMap.empty tail in
-  (first, tail)
+  let rpo = Normalize.Cfg.reverse_postorder_dfs graph in
+  let go_block (acc, graph) block =
+    let zblock = Normalize.Cfg.(goto_start (unzip block)) in
+    let acc, (f, t) = treeify_block acc zblock in
+    (acc, Cfg.(Blocks.insert (zip (First f, t)) graph))
+  in
+  snd (List.fold_left go_block (NameMap.empty, Cfg.empty) rpo)
 
 let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
   let add_uses instr acc =
