@@ -78,7 +78,7 @@ let test_example_1_treeify () =
     @@ instruction (call ~dest:(reg "e") (Label ((100, "f"), [])) [])
     @@ focus_entry empty
   in
-  let cfg = Undag.treeify cfg in
+  let cfg = Undag.treeify_graph cfg in
   let expected =
     let open Undag.Target in
     let open Undag.Cfg in
@@ -107,7 +107,50 @@ let test_example_1_treeify () =
   (check Undag.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" expected cfg
 
-(* todo: test treeify example with cross block references *)
+let test_graph_treeify () =
+  let cfg =
+    let open Normalize.Target in
+    let open Normalize.Cfg in
+    unfocus
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
+    @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
+    @@ label (1, "label1")
+    @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
+    @@ label (2, "label2")
+    @@ instruction (bop Mul ~dest:(reg "d") ~src1:(reg "c") ~src2:(reg "c"))
+    @@ instruction (call ~dest:(reg "e") (Label ((100, "f"), [])) [])
+    @@ focus_entry empty
+  in
+  let cfg = Undag.treeify_graph cfg in
+  let expected =
+    let open Undag.Target in
+    let open Undag.Cfg in
+    unfocus
+    @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
+    @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
+    @@ label (1, "label1")
+    @@ instruction
+         (bop Add ~dest:(reg "c")
+            ~src1:(Instr (assign ~src:(Const 1) ~dest:(reg "a")))
+            ~src2:(Instr (assign ~src:(Const 2) ~dest:(reg "b"))))
+    @@ label (2, "label2")
+    @@ instruction
+         (bop Mul ~dest:(reg "d")
+            ~src1:
+              (Instr
+                 (bop Add ~dest:(reg "c")
+                    ~src1:(Instr (assign ~src:(Const 1) ~dest:(reg "a")))
+                    ~src2:(Instr (assign ~src:(Const 2) ~dest:(reg "b")))))
+            ~src2:
+              (Instr
+                 (bop Add ~dest:(reg "c")
+                    ~src1:(Instr (assign ~src:(Const 1) ~dest:(reg "a")))
+                    ~src2:(Instr (assign ~src:(Const 2) ~dest:(reg "b"))))))
+    @@ instruction (call ~dest:(reg "e") (Label ((100, "f"), [])) [])
+    @@ focus_entry empty
+  in
+  (check Undag.Cfg.(testable pp_graph equal_graph))
+    "Produces proper graph" expected cfg
 
 let _ =
   run "Test undag to list of trees"
@@ -118,5 +161,7 @@ let _ =
           test_case "second use in jump" `Quick test_use_in_jump;
           test_case "example 1 but treeify (don't remove defs with single uses)"
             `Quick test_example_1_treeify;
+          test_case "treeify with references across blocks in the graph" `Quick
+            test_graph_treeify;
         ] );
     ]
