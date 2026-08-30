@@ -39,11 +39,11 @@ open struct
   let clean_regs = List.filter (fun n -> not (Normalize.Name.is_tombstone n))
 end
 
-let treeify_instruction acc instr =
+let treeify_instruction lookup instr =
   let rec convert_operand = function
     | Normalize.Target.Const i -> Target.Const i
     | Normalize.Target.Reg reg ->
-      begin match NameMap.find_opt reg acc with
+      begin match lookup reg with
       | Some instr -> Target.Instr instr
       | None -> Target.Reg reg
       end
@@ -58,7 +58,9 @@ let treeify_instruction acc instr =
   in
   Convert.convert convert_operand instr
 
-let treeify_block ?(rewrite = treeify_instruction) map (first, tail) =
+let treeify_block
+    ?(rewrite = fun acc -> treeify_instruction (Fun.flip NameMap.find_opt acc))
+    map (first, tail) =
   let first =
     match first with
     | Normalize.Cfg.Entry -> Cfg.Entry
