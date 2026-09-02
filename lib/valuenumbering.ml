@@ -4,6 +4,14 @@ module InstrHashtbl = Hashtbl.Make (struct
   let hash = Hashtbl.hash
 end)
 
+module OperandSet = struct
+  include CCSet.Make (struct
+    type t = Normalize.Target.operand
+    let compare = compare
+  end)
+  let pp = pp Normalize.Target.pp_operand
+end
+
 module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
   type value_num = Normalize.Name.t
   module NameHashtbl = Hashtbl.Make (struct
@@ -79,14 +87,60 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
                    (Normalize.Cfg.goto_end zblock :: zippers, graph))
                  ([], graph)
           in
-          let rewrite_arg (zippers, args) arg =
-            (* todo: if all zipper's jump arg at that position is the same,
-               remove them from all zippers, and set vn for arg to it *)
-            add_vn arg arg;
-            (zippers, arg :: args)
+          let arg_at idx instr =
+            let open Normalize.Target in
+            let exception Found of Normalize.Target.operand in
+            try
+              let go_src = function
+                | Label (l', args) when Normalize.Cfg.equal_label l l' ->
+                  raise (Found (List.nth args idx))
+                | _ -> ()
+              in
+              List.iter go_src (Normalize.Target.srcs instr);
+              failwith
+              @@ Format.asprintf "No argument at index %d with srcs: %a" idx
+                   (Format.pp_print_list Normalize.Target.pp_operand)
+                   (Normalize.Target.srcs instr)
+            with Found op -> op
           in
-          let zippers, args =
-            List.fold_left rewrite_arg (zippers, []) info.args
+          let remove_arg_at idx =
+            Normalize.Target.map_uses (function
+              | Label (l', args) when Normalize.Cfg.equal_label l l' ->
+                Label (l', CCList.set_at_idx idx Normalize.Target.tombstone args)
+              | op -> op)
+          in
+          let rewrite_arg (idx, zippers, args) arg =
+            (* If all zipper's jump arg at that position is the same,
+               remove them from all zippers, and set vn for arg to it *)
+            let preds_args =
+              List.fold_left
+                (fun acc (_, last) ->
+                  match last with
+                  | Normalize.Cfg.Exit | Return _ -> acc
+                  | Branch (instr, _) | CBranch (instr, _, _) ->
+                    OperandSet.add (arg_at idx instr) acc)
+                OperandSet.empty zippers
+            in
+            match
+              CCOption.flat_map Normalize.Target.Reg.of_operand
+                (OperandSet.min_elt_opt preds_args)
+            with
+            | Some vn when OperandSet.cardinal preds_args = 1 ->
+              add_vn arg vn;
+              let remove_jump_arg = function
+                | (Normalize.Cfg.Exit | Return _) as op -> op
+                | Branch (instr, l) -> Branch (remove_arg_at idx instr, l)
+                | CBranch (instr, l1, l2) ->
+                  CBranch (remove_arg_at idx instr, l1, l2)
+              in
+              let zippers = List.map (CCPair.map_snd remove_jump_arg) zippers in
+              (idx + 1, zippers, args)
+            | _ ->
+              add_vn arg arg;
+              (idx + 1, zippers, arg :: args)
+          in
+          let _, zippers, args =
+            List.fold_left rewrite_arg (0, zippers, []) info.args
           in
           let graph =
             List.fold_left
