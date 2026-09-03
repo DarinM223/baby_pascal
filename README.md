@@ -18,7 +18,7 @@ A compiler for a minimal dialect of Pascal. It is similar to [this project](http
 - [x] SSA construction
 - [x] Dead code elimination
 - [x] Constant propagation
-- [ ] Global value numbering
+- [x] Global value numbering
 - [ ] Strength reduction
 - [x] Critical edge splitting
 - [ ] E-graph based optimizations

@@ -21,7 +21,14 @@ let compile program =
       let block_args = Constprop.block_args cfg in
       Constprop.constprop block_args args cfg
     in
-    if changed || changed' then round args cfg else cfg
+    (* todo: avoid recalculating dominators unless the previous passes changed it *)
+    let extra = Normalize.Cfg.precalculate_edges cfg in
+    let module Extra = (val extra) in
+    let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
+    let module Valuenumbering = Valuenumbering.Make (Dom) in
+    let state = Valuenumbering.init_state () in
+    let cfg = Valuenumbering.dvnt state (Lazy.force Dom.dominator_tree) cfg in
+    if changed || changed' || state.changed then round args cfg else cfg
   in
   let lower_cfg f args cfg =
     let extra = Normalize.Cfg.precalculate_edges cfg in

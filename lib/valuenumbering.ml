@@ -25,6 +25,8 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
     vn : value_num NameHashtbl.t;  (** Value number of variable *)
     vn_of_expr : value_num InstrHashtbl.t;
         (** Hashtable for getting value number from hashed instruction *)
+    mutable changed : bool;
+        (** True if the pass changed anything in the control flow graph*)
   }
 
   let init_state () =
@@ -32,6 +34,7 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
       instr_of_vn = NameHashtbl.create Utils.hashtbl_size;
       vn = NameHashtbl.create Utils.hashtbl_size;
       vn_of_expr = InstrHashtbl.create Utils.hashtbl_size;
+      changed = false;
     }
 
   open struct
@@ -126,6 +129,7 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
                 (OperandSet.min_elt_opt preds_args)
             with
             | Some vn when OperandSet.cardinal preds_args = 1 ->
+              state.changed <- true;
               add_vn arg vn;
               let remove_jump_arg = function
                 | (Normalize.Cfg.Exit | Return _) as op -> op
@@ -172,6 +176,8 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
       Logs.debug (fun m ->
           m "%a simplified into %a\n" Normalize.Target.pp_instr instr
             Normalize.Target.pp_instr instr');
+      if not (Normalize.Target.equal_instr instr instr') then
+        state.changed <- true;
       begin match lookup_expr instr' with
       | Some vn ->
         iter_defs
@@ -181,7 +187,11 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
                   Normalize.Target.pp_reg vn);
             add_vn def vn)
           instr';
-        if Normalize.Target.is_side_effectful instr' then Some instr' else None
+        if Normalize.Target.is_side_effectful instr' then Some instr'
+        else begin
+          state.changed <- true;
+          None
+        end
       | None ->
         iter_defs
           (fun def ->
