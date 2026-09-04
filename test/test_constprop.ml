@@ -112,7 +112,7 @@ let test_const_prop_branch () =
   (check bool) "Graph changed" true changed;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" expected cfg;
-  let cfg = Constprop.remove_empty_blocks cfg in
+  let cfg, changed = Constprop.remove_empty_blocks cfg in
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in
@@ -121,6 +121,7 @@ let test_const_prop_branch () =
     @@ label (3, "")
     @@ return ~uses:[ Const 1 ] @@ focus_entry empty
   in
+  check bool "Empty blocks were removed" true changed;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Removes empty blocks" expected cfg
 

@@ -15,20 +15,31 @@ let compile program =
       decls = List.map normalize_decl program.decls;
     }
   in
-  let rec round args cfg =
+  let rec round (module Dom : Dominator.S with type label = Normalize.Cfg.label)
+      args cfg =
     let cfg, changed = Deadcode.M.deadcode cfg in
     let cfg, changed' =
       let block_args = Constprop.block_args cfg in
       Constprop.constprop block_args args cfg
     in
-    (* todo: avoid recalculating dominators unless the previous passes changed it *)
-    let extra = Normalize.Cfg.precalculate_edges cfg in
-    let module Extra = (val extra) in
-    let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
+    let cfg, recalculate_dominators = Constprop.remove_empty_blocks cfg in
+    (* Avoid recalculating dominators unless the previous passes changed it
+       Dominators are currently used only at the block level, so only deleting
+       blocks will require a recalculation. *)
+    let dom =
+      if recalculate_dominators then
+        let extra = Normalize.Cfg.precalculate_edges cfg in
+        let module Extra = (val extra) in
+        let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
+        (module Dom : Dominator.S with type label = Normalize.Cfg.label)
+      else (module Dom)
+    in
+    let module Dom = (val dom) in
     let module Valuenumbering = Valuenumbering.Make (Dom) in
     let state = Valuenumbering.init_state () in
     let cfg = Valuenumbering.dvnt state (Lazy.force Dom.dominator_tree) cfg in
-    if changed || changed' || state.changed then round args cfg else cfg
+    if changed || changed' || state.changed then round (module Dom) args cfg
+    else cfg
   in
   let lower_cfg f args cfg =
     let extra = Normalize.Cfg.precalculate_edges cfg in
@@ -43,7 +54,7 @@ let compile program =
     Format.printf "%s's initial cfg:\n" f;
     Format.printf "===================================\n";
     Format.printf "%a\n" Normalize.Cfg.pp_graph cfg;
-    let cfg = round args cfg in
+    let cfg = round (module Dom) args cfg in
     Format.printf "===================================\n";
     Format.printf "%s's cfg after optimization passes:\n" f;
     Format.printf "===================================\n";

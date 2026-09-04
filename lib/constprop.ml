@@ -439,4 +439,6 @@ let remove_empty_blocks graph =
       in
       Cfg.(Blocks.insert (zip (h, Last l)) acc)
   in
-  Cfg.Blocks.fold rewrite_block graph Cfg.empty
+  let changed = not (IntMap.is_empty empty_blocks) in
+  ( (if changed then Cfg.Blocks.fold rewrite_block graph Cfg.empty else graph),
+    changed )
