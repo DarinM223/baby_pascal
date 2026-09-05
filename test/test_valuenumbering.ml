@@ -20,7 +20,7 @@ let test_simple () =
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
-    @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
+    @@ instruction (bop Add ~dest:(reg "c") ~src1:(Const 1) ~src2:(Const 2))
     @@ instruction (bop Mul ~dest:(reg "e") ~src1:(reg "c") ~src2:(reg "c"))
     @@ instruction (call ~dest:(reg "f") (Label ((100, "f"), [])) [])
     @@ focus_entry empty
@@ -65,10 +65,9 @@ let test_phis () =
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
-    @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
-    @@ cbranch
-         ~args:[ reg "a"; Const 0 ]
-         EQ ~ifso:(1, "label1") ~ifnot:(2, "label2")
+    @@ instruction (bop Add ~dest:(reg "c") ~src1:(Const 1) ~src2:(Const 2))
+    @@ cbranch ~args:[ Const 1; Const 0 ] EQ ~ifso:(1, "label1")
+         ~ifnot:(2, "label2")
     @@ label (1, "label1")
     @@ branch (3, "label3")
     @@ label (2, "label2")
@@ -114,10 +113,9 @@ let test_phis_reverse_postorder () =
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
-    @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
-    @@ cbranch
-         ~args:[ reg "a"; Const 0 ]
-         EQ ~ifso:(2, "label2") ~ifnot:(1, "label1")
+    @@ instruction (bop Add ~dest:(reg "c") ~src1:(Const 1) ~src2:(Const 2))
+    @@ cbranch ~args:[ Const 1; Const 0 ] EQ ~ifso:(2, "label2")
+         ~ifnot:(1, "label1")
     @@ label (1, "label1")
     @@ label (2, "label2")
     @@ instruction (bop Mul ~dest:(reg "e") ~src1:(reg "c") ~src2:(reg "c"))
@@ -159,7 +157,7 @@ let test_loop_backedge () =
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
-    @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
+    @@ instruction (bop Add ~dest:(reg "c") ~src1:(Const 1) ~src2:(Const 2))
     @@ branch ~args:[ reg "c" ] (1, "label1")
     @@ label ~args:[ name "z" ] (1, "label1")
     @@ cbranch

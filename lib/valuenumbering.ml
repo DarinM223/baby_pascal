@@ -62,6 +62,13 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
     let lookup_expr expr =
       InstrHashtbl.find_opt state.vn_of_expr (blank_out expr)
     in
+    let rec rewrite_with_value_number = function
+      | Normalize.Target.Const i -> Normalize.Target.Const i
+      | Reg r ->
+        begin try Reg (NameHashtbl.find state.vn r) with Not_found -> Reg r
+        end
+      | Label (lab, args) -> Label (lab, List.map rewrite_with_value_number args)
+    in
     let zgraph, graph =
       Normalize.Cfg.(focus (idd (Dom.tree_label tree)) graph)
     in
@@ -155,14 +162,6 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
           (Label (l, { info with args = List.rev args }), graph)
     in
     let go_instruction instr =
-      let rec rewrite_with_value_number = function
-        | Normalize.Target.Const i -> Normalize.Target.Const i
-        | Reg r ->
-          begin try Reg (NameHashtbl.find state.vn r) with Not_found -> Reg r
-          end
-        | Label (lab, args) ->
-          Label (lab, List.map rewrite_with_value_number args)
-      in
       let instr' =
         instr
         |> Normalize.Target.map_uses rewrite_with_value_number
@@ -172,7 +171,7 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
       iter_defs
         (fun def -> NameHashtbl.replace state.instr_of_vn def instr')
         instr;
-      let instr' = Simplify.convert_instruction instr' in
+      let instr' = Simplify.(convert_instruction (remove_use_assigns instr')) in
       Logs.debug (fun m ->
           m "%a simplified into %a\n" Normalize.Target.pp_instr instr
             Normalize.Target.pp_instr instr');
@@ -193,17 +192,17 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
           None
         end
       | None ->
-        iter_defs
-          (fun def ->
-            Logs.debug (fun m ->
-                m "Adding value number %a <- %a\n" Normalize.Target.pp_reg def
-                  Normalize.Target.pp_reg def);
-            add_vn def def;
-            Logs.debug (fun m ->
-                m "Adding expression %a <- %a\n" Normalize.Target.pp_instr
-                  instr' Normalize.Target.pp_reg def);
-            add_expr instr' def)
-          instr';
+        let map_to_instr def vn =
+          Logs.debug (fun m ->
+              m "Adding value number %a <- %a\n" Normalize.Target.pp_reg def
+                Normalize.Target.pp_reg vn);
+          add_vn def vn;
+          Logs.debug (fun m ->
+              m "Adding expression %a <- %a\n" Normalize.Target.pp_instr instr'
+                Normalize.Target.pp_reg def);
+          add_expr instr' def
+        in
+        iter_defs (fun def -> map_to_instr def def) instr';
         Some instr'
       end
     in
@@ -223,7 +222,9 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
           let instr = Option.value ~default:instr (go_instruction instr) in
           Last (CBranch (instr, l1, l2))
         | Return instr ->
-          let instr = Option.value ~default:instr (go_instruction instr) in
+          let instr =
+            Normalize.Target.map_uses rewrite_with_value_number instr
+          in
           Last (Return instr)
         end
     in
