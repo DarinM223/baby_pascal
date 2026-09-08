@@ -3,7 +3,8 @@ module Converter =
 module Convert = Converter.Make (Undag.Target) (Normalize.Target)
 
 let rec remove_assigns = function
-  | Undag.Target.Instr (Undag.Target.Assign (_, op)) -> remove_assigns op
+  | Undag.Target.(Instr (Assign (_, op))) -> remove_assigns op
+  | Undag.Target.Instr i -> Undag.Target.(Instr (map_uses remove_assigns i))
   | op -> op
 
 let remove_use_assigns = Undag.Target.map_uses remove_assigns

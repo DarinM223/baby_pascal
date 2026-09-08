@@ -166,12 +166,12 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
         instr
         |> Normalize.Target.map_uses rewrite_with_value_number
         |> Undag.treeify_instruction (NameHashtbl.find_opt state.instr_of_vn)
-        |> Simplify.simplify_instruction
+        |> Simplify.remove_use_assigns |> Simplify.simplify_instruction
       in
       iter_defs
         (fun def -> NameHashtbl.replace state.instr_of_vn def instr')
         instr;
-      let instr' = Simplify.(convert_instruction (remove_use_assigns instr')) in
+      let instr' = Simplify.convert_instruction instr' in
       Logs.debug (fun m ->
           m "%a simplified into %a\n" Normalize.Target.pp_instr instr
             Normalize.Target.pp_instr instr');
