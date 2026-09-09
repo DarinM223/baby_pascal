@@ -64,22 +64,36 @@ module Target = struct
     | Imm of int
     | Reg of reg
     | MemAddr of {
-        base : reg;
+        base : reg option;
         index : reg;
         scale : int;
         displacement : int;
       }
-    | StackSlot of int
+    | StackSlot of {
+        relative_to_base : bool;
+            (** if true, then offset is added to base pointer (the original
+                stack pointer) instead of the current stack pointer *)
+        offset : int;
+      }
     | Label of label * operand list
   [@@deriving eq]
   let pp_sep fmt () = Format.fprintf fmt ", "
   let rec pp_operand' pp_reg fmt = function
-    | Imm i -> Format.fprintf fmt "#%d" i
-    | Reg r -> Format.fprintf fmt "%a" pp_reg r
-    | MemAddr addr ->
-      Format.fprintf fmt "%d(%%%a,%%%a,%d)" addr.displacement pp_reg addr.base
-        pp_reg addr.index addr.scale
-    | StackSlot offset -> Format.fprintf fmt "[sp, %d]" offset
+    | Imm i -> Format.fprintf fmt "$%d" i
+    | Reg r -> Format.fprintf fmt "%%%a" pp_reg r
+    | MemAddr { displacement = 0; base = Some base; scale = 0; _ } ->
+      Format.fprintf fmt "(%%%a)" pp_reg base
+    | MemAddr { displacement; base = Some base; scale = 0; _ } ->
+      Format.fprintf fmt "%d(%%%a)" displacement pp_reg base
+    | MemAddr { displacement = 0; base; scale; index } ->
+      Format.fprintf fmt "(%%%a,%%%a,%d)"
+        (Format.pp_print_option pp_reg)
+        base pp_reg index scale
+    | MemAddr { displacement; base; index; scale } ->
+      Format.fprintf fmt "%d(%%%a,%%%a,%d)" displacement
+        (Format.pp_print_option pp_reg)
+        base pp_reg index scale
+    | StackSlot { offset; _ } -> Format.fprintf fmt "[sp, %d]" offset
     | Label (l, []) -> Format.fprintf fmt "%s" (snd l)
     | Label (l, args) ->
       Format.fprintf fmt "%s(%a)" (snd l)
@@ -99,8 +113,12 @@ module Target = struct
     | Reg r ->
       let acc, r = f acc r in
       (acc, Reg r)
-    | MemAddr ({ base : reg; index : reg; _ } as addr) ->
-      let acc, base = f acc base in
+    | MemAddr ({ base : reg option; index : reg; _ } as addr) ->
+      let acc, base =
+        Option.fold ~none:(acc, base)
+          ~some:(fun r -> CCPair.map_snd Option.some (f acc r))
+          base
+      in
       let acc, index = f acc index in
       (acc, MemAddr { addr with base; index })
     | Label (l, ops) ->
@@ -109,8 +127,9 @@ module Target = struct
     | (Imm _ | StackSlot _) as op -> (acc, op)
   let rec subst_reg_operand subst_reg = function
     | Reg r -> Reg (subst_reg r)
-    | MemAddr ({ base : reg; index : reg; _ } as addr) ->
-      MemAddr { addr with base = subst_reg base; index = subst_reg index }
+    | MemAddr ({ base : reg option; index : reg; _ } as addr) ->
+      MemAddr
+        { addr with base = Option.map subst_reg base; index = subst_reg index }
     | Label (l, ops) -> Label (l, List.map (subst_reg_operand subst_reg) ops)
     | (Imm _ | StackSlot _) as op -> op
   let to_colored =
@@ -149,9 +168,15 @@ module Target = struct
     instr : string;
     defs : operands;
     uses : operands;
+    hidden_uses : int;
+    hidden_defs : int;
+    clobber_regs : RegSet.t;
   }
   [@@deriving eq]
   let is_pcopy instr = instr.instr = "pcopy"
+  let clobber_regs instr = instr.clobber_regs
+  let with_clobber_regs regs instr = { instr with clobber_regs = regs }
+
   let pp_instr fmt i =
     if is_pcopy i then
       let pad_uses =
@@ -166,8 +191,14 @@ module Target = struct
       Format.fprintf fmt "%s %a" i.instr pp_operands (i.defs @ i.uses)
   let show_instr = Format.asprintf "%a" pp_instr
 
-  let prepend_use op i = { i with uses = op :: i.uses }
-  let prepend_def op i = { i with defs = op :: i.defs }
+  let modify_uses f i =
+    let uses, hidden_uses = f ~uses:i.uses ~num_hidden:i.hidden_uses in
+    { i with uses; hidden_uses }
+  let modify_defs f i =
+    let defs, hidden_defs = f ~defs:i.defs ~num_hidden:i.hidden_defs in
+    { i with defs; hidden_defs }
+  let num_hidden_uses i = i.hidden_uses
+  let num_hidden_defs i = i.hidden_defs
 
   let srcs i = i.uses
   let dests i = i.defs
@@ -225,7 +256,17 @@ module Target = struct
     match (op, dest) with
     | Reg reg, Reg dest -> Reg (reuse reg dest)
     | _ -> failwith "reuse_op: expected register"
-  let goto l ops = { instr = "b"; defs = []; uses = [ Label (l, ops) ] }
+
+  let instr instr ~defs ~uses =
+    {
+      instr;
+      defs;
+      uses;
+      hidden_defs = 0;
+      hidden_uses = 0;
+      clobber_regs = RegSet.empty;
+    }
+  let goto l ops = instr "b" ~defs:[] ~uses:[ Label (l, ops) ]
   let cond_mapping =
     Graph.Cond.
       [
@@ -239,13 +280,8 @@ module Target = struct
 
   let cbranch ~args cond l1 l1args l2 l2args =
     let jmp = snd @@ List.find (fun (c, _) -> cond = c) cond_mapping in
-    {
-      instr = jmp;
-      uses = Label (l1, l1args) :: Label (l2, l2args) :: args;
-      defs = [];
-    }
-  let return ~uses = { instr = "ret"; uses; defs = [] }
-  let instr instr ~defs ~uses = { instr; defs; uses }
+    instr jmp ~uses:(Label (l1, l1args) :: Label (l2, l2args) :: args) ~defs:[]
+  let return ~uses = instr "ret" ~uses ~defs:[]
   let mov ~dest ~src = instr "mov" ~defs:[ dest ] ~uses:[ src ]
   let pcopy ~dests ~srcs = instr "pcopy" ~defs:dests ~uses:srcs
   let is_side_effectful _ = true
@@ -389,13 +425,25 @@ module Writer = struct
              Target.pp_reg_class v.reg_class Target.pp_reg_constr v.reg_constr
       end
     | Tombstone -> ()
-  let pp_operand fmt = function
-    | Target.Label (l, _) -> Format.fprintf fmt "%s" (snd l)
+  let pp_operand (stack_offset, frame_pointer) fmt = function
+    | Target.StackSlot { relative_to_base = true; offset } ->
+      begin match frame_pointer with
+      | Some reg -> Format.fprintf fmt "%d(%%%a)" offset Target.pp_reg reg
+      | None ->
+        Target.pp_operand' pp_reg fmt
+          (Target.StackSlot
+             { relative_to_base = false; offset = offset + stack_offset })
+      end
+    | Label (l, _) -> Format.fprintf fmt "%s" (snd l)
     | op -> Target.pp_operand' pp_reg fmt op
-  let pp_instr fmt i =
-    let pp_operands = Format.pp_print_list ~pp_sep:Target.pp_sep pp_operand in
+  let pp_instr state fmt i =
+    let pp_operands =
+      Format.pp_print_list ~pp_sep:Target.pp_sep (pp_operand state)
+    in
     Format.fprintf fmt "%s %a" i.Target.instr pp_operands
-      (List.filter (fun op -> not (Target.is_tombstone op)) (i.defs @ i.uses))
+      (List.filter
+         (fun op -> not (Target.is_tombstone op))
+         (CCList.drop i.hidden_uses i.uses @ CCList.drop i.hidden_defs i.defs))
   let pp_label fmt (_, l) = Format.fprintf fmt "%s" l
   type first = Cfg.first =
     | Entry
@@ -410,27 +458,33 @@ module Writer = struct
   let pp_first fmt = function
     | Entry -> ()
     | Label (l, _info) -> Format.fprintf fmt "%a:" pp_label l
-  let pp_middle fmt (Instruction instr) = Format.fprintf fmt "%a" pp_instr instr
-  let pp_last fmt = function
+  let pp_middle state fmt (Instruction instr) =
+    Format.fprintf fmt "%a" (pp_instr state) instr
+  let pp_last state fmt = function
     | Exit | Return _ -> Format.fprintf fmt "ret"
-    | Branch (i, _) | CBranch (i, _, _) -> Format.fprintf fmt "%a" pp_instr i
+    | Branch (i, _) | CBranch (i, _, _) ->
+      Format.fprintf fmt "%a" (pp_instr state) i
 
   type head = Cfg.head =
     | First of first
     | Head of head * middle
-  let rec pp_head fmt = function
+  let rec pp_head state fmt = function
     | First f -> Format.fprintf fmt "%a@\n" pp_first f
-    | Head (h, m) -> Format.fprintf fmt "%a  %a@\n" pp_head h pp_middle m
+    | Head (h, m) ->
+      Format.fprintf fmt "%a  %a@\n" (pp_head state) h (pp_middle state) m
   type tail = Cfg.tail =
     | Last of last
     | Tail of middle * tail
-  let rec pp_tail fmt = function
-    | Last l -> Format.fprintf fmt "%a@\n" pp_last l
-    | Tail (m, t) -> Format.fprintf fmt "%a@\n  %a" pp_middle m pp_tail t
+  let rec pp_tail state fmt = function
+    | Last l -> Format.fprintf fmt "%a@\n" (pp_last state) l
+    | Tail (m, t) ->
+      Format.fprintf fmt "%a@\n  %a" (pp_middle state) m (pp_tail state) t
   type block = first * tail
-  let pp_block fmt (f, t) = Format.fprintf fmt "%a@\n  %a" pp_first f pp_tail t
-  let pp_graph fmt =
-    Cfg.Blocks.iter (fun _ block -> Format.fprintf fmt "%a" pp_block block)
+  let pp_block state fmt (f, t) =
+    Format.fprintf fmt "%a@\n  %a" pp_first f (pp_tail state) t
+  let pp_graph state fmt =
+    Cfg.Blocks.iter (fun _ block ->
+        Format.fprintf fmt "%a" (pp_block state) block)
 end
 
 module Deadcode = Deadcode.Make (Target) (Cfg) (Flow)
@@ -450,7 +504,7 @@ end
 module SeqpcopyRequirements :
   Seqpcopy.Requirements with module Target = Target = struct
   module Target = Target
-  let temp = Target.Reg (Target.Physical Regs.x8)
+  let temp = Target.Reg (Target.Physical Regs.x10)
   let is_pcopy = Target.is_pcopy
   let mov = Target.mov
   let uses instr = List.map Target.to_colored instr.Target.uses

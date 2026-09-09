@@ -95,3 +95,98 @@ module type State = sig
   val init : unit -> t
   val assign_vreg : t -> Target.reg_class -> 'a Undag.Target.t -> Target.reg
 end
+
+module type Select = sig
+  module Graph : Graph.S
+  module State : State
+  val select :
+    State.t ->
+    Undag.Target.instr ->
+    (Graph.Target.operand -> Graph.tail) ->
+    Graph.tail
+  val reg_class_of_operand : Undag.Target.operand -> State.Target.reg_class
+  val call_conv :
+    caller:bool ->
+    State.t ->
+    State.Target.reg_class ->
+    int ->
+    Graph.Target.operand
+end
+
+module Codegen
+    (Target : Target)
+    (Cfg :
+      Graph.S
+        with type Target.reg = Target.reg
+         and type Target.instr = Target.instr
+         and type Target.operand = Target.operand
+         and type Target.operands = Target.operands)
+    (Select : Select with module Graph = Cfg and module State.Target = Target) =
+struct
+  let codegen_block (state : Select.State.t) ((first, tail) : Undag.Cfg.block) :
+      Cfg.block =
+    let first =
+      match first with
+      | Undag.Cfg.Entry -> Cfg.Entry
+      | Undag.Cfg.Label (l, i) ->
+        let map_vreg n =
+          Select.(
+            State.assign_vreg state (reg_class_of_operand (Reg n)) (Reg n))
+        in
+        Cfg.Label (l, { local = i.local; args = List.map map_vreg i.args })
+    in
+    let endd = Cfg.Last Cfg.Exit in
+    let rec go_tail (tail : Undag.Cfg.tail) : Cfg.tail =
+      match tail with
+      | Undag.Cfg.Last last ->
+        begin match last with
+        | Undag.Cfg.Exit -> endd
+        | Undag.Cfg.Branch (i, _) -> Select.select state i (Fun.const endd)
+        | Undag.Cfg.CBranch (i, _, _) -> Select.select state i (Fun.const endd)
+        | Undag.Cfg.Return i -> Select.select state i (Fun.const endd)
+        end
+      | Undag.Cfg.Tail (Instruction i, rest) ->
+        Select.select state i (fun _ -> go_tail rest)
+    in
+    let tail = go_tail tail in
+    (first, tail)
+
+  let codegen_function ?(args = []) (state : Select.State.t)
+      (graph : Undag.Cfg.graph) : Target.reg list * Cfg.graph =
+    let srcs =
+      List.mapi
+        (fun i arg ->
+          Select.call_conv ~caller:false state
+            (Select.reg_class_of_operand (Reg arg))
+            i)
+        args
+    in
+    let reg_ops =
+      List.filter_map (fun op ->
+          match Target.destruct_reg op with
+          | Some r -> Some r
+          | _ -> None)
+    in
+    let dests =
+      List.map
+        (fun arg ->
+          Target.reg
+            Select.(
+              State.assign_vreg state (reg_class_of_operand (Reg arg)) (Reg arg)))
+        args
+    in
+    let pcopy = Cfg.Instruction (Target.pcopy ~dests ~srcs) in
+    let blocks = Undag.Cfg.reverse_postorder_dfs graph in
+    let graph =
+      List.fold_left
+        (fun acc block ->
+          state.curr_block <- Undag.Cfg.id block;
+          Cfg.Blocks.insert (codegen_block state block) acc)
+        Cfg.empty blocks
+    in
+    let zblock, graph = Cfg.focus_entry graph in
+    match zblock with
+    | First Entry, tail when List.length args > 0 ->
+      (reg_ops srcs, Cfg.unfocus ((First Entry, Tail (pcopy, tail)), graph))
+    | _ -> (reg_ops srcs, Cfg.unfocus (zblock, graph))
+end
