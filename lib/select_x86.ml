@@ -205,12 +205,14 @@ module Select = struct
              (pcopy ~dests:[ tmp1 ] ~srcs:[ src1 ])
         @> cqto @> div @> mov ~dest ~src:tmp5 @> k dest
       | Ast.And ->
+        (* todo: change to use bitwise and since we use that in value numbering *)
         let tmp = Reg (fresh_vreg Int) in
         mov ~dest:tmp ~src:src1
         @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
         @> reuse_instr tmp dest (instr "cmovnz" ~defs:[] ~uses:[ src2 ])
         @> k dest
       | Ast.Or ->
+        (* todo: change to use bitwise or since we use that in value numbering *)
         let tmp = Reg (fresh_vreg Int) in
         mov ~dest:tmp ~src:src1
         @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]

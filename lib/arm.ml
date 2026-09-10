@@ -60,9 +60,18 @@ module Target = struct
     | _ -> false
 
   type regs = reg list [@@deriving show, eq]
+  type cond_code =
+    | Eq
+    | Ne
+    | Gt
+    | Ge
+    | Lt
+    | Le
+  [@@deriving show, eq]
   type operand =
     | Imm of int
     | Reg of reg
+    | ConditionCode of cond_code
     | MemAddr of {
         base : reg option;
         index : reg;
@@ -80,6 +89,7 @@ module Target = struct
   let pp_sep fmt () = Format.fprintf fmt ", "
   let rec pp_operand' pp_reg fmt = function
     | Imm i -> Format.fprintf fmt "$%d" i
+    | ConditionCode code -> Format.fprintf fmt "%a" pp_cond_code code
     | Reg r -> Format.fprintf fmt "%%%a" pp_reg r
     | MemAddr { displacement = 0; base = Some base; scale = 0; _ } ->
       Format.fprintf fmt "(%%%a)" pp_reg base
@@ -113,6 +123,7 @@ module Target = struct
     | Reg r ->
       let acc, r = f acc r in
       (acc, Reg r)
+    | ConditionCode code -> (acc, ConditionCode code)
     | MemAddr ({ base : reg option; index : reg; _ } as addr) ->
       let acc, base =
         Option.fold ~none:(acc, base)
@@ -127,6 +138,7 @@ module Target = struct
     | (Imm _ | StackSlot _) as op -> (acc, op)
   let rec subst_reg_operand subst_reg = function
     | Reg r -> Reg (subst_reg r)
+    | ConditionCode code -> ConditionCode code
     | MemAddr ({ base : reg option; index : reg; _ } as addr) ->
       MemAddr
         { addr with base = Option.map subst_reg base; index = subst_reg index }
@@ -428,7 +440,7 @@ module Writer = struct
   let pp_operand (stack_offset, frame_pointer) fmt = function
     | Target.StackSlot { relative_to_base = true; offset } ->
       begin match frame_pointer with
-      | Some reg -> Format.fprintf fmt "%d(%%%a)" offset Target.pp_reg reg
+      | Some reg -> Format.fprintf fmt "[%a, %d]" Target.pp_reg reg offset
       | None ->
         Target.pp_operand' pp_reg fmt
           (Target.StackSlot
