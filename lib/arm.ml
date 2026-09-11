@@ -67,13 +67,22 @@ module Target = struct
     | Ge
     | Lt
     | Le
-  [@@deriving show, eq]
+  [@@deriving eq]
+  let pp_cond_code fmt = function
+    | Eq -> Format.fprintf fmt "eq"
+    | Ne -> Format.fprintf fmt "ne"
+    | Gt -> Format.fprintf fmt "gt"
+    | Ge -> Format.fprintf fmt "ge"
+    | Lt -> Format.fprintf fmt "lt"
+    | Le -> Format.fprintf fmt "le"
+  let show_cond_code = Format.asprintf "%a" pp_cond_code
+
   type operand =
     | Imm of int
     | Reg of reg
     | ConditionCode of cond_code
     | MemAddr of {
-        base : reg option;
+        base : reg;
         index : reg;
         scale : int;
         displacement : int;
@@ -88,21 +97,20 @@ module Target = struct
   [@@deriving eq]
   let pp_sep fmt () = Format.fprintf fmt ", "
   let rec pp_operand' pp_reg fmt = function
-    | Imm i -> Format.fprintf fmt "$%d" i
+    | Imm i -> Format.fprintf fmt "#%d" i
     | ConditionCode code -> Format.fprintf fmt "%a" pp_cond_code code
-    | Reg r -> Format.fprintf fmt "%%%a" pp_reg r
-    | MemAddr { displacement = 0; base = Some base; scale = 0; _ } ->
-      Format.fprintf fmt "(%%%a)" pp_reg base
-    | MemAddr { displacement; base = Some base; scale = 0; _ } ->
-      Format.fprintf fmt "%d(%%%a)" displacement pp_reg base
+    | Reg r -> Format.fprintf fmt "%a" pp_reg r
+    | MemAddr { displacement = 0; base; scale = 0; _ } ->
+      Format.fprintf fmt "[%a]" pp_reg base
+    | MemAddr { displacement; base; scale = 0; _ } ->
+      Format.fprintf fmt "[%a, %d]" pp_reg base displacement
     | MemAddr { displacement = 0; base; scale; index } ->
-      Format.fprintf fmt "(%%%a,%%%a,%d)"
-        (Format.pp_print_option pp_reg)
-        base pp_reg index scale
-    | MemAddr { displacement; base; index; scale } ->
-      Format.fprintf fmt "%d(%%%a,%%%a,%d)" displacement
-        (Format.pp_print_option pp_reg)
-        base pp_reg index scale
+      Format.fprintf fmt "[%a, %a, lsl %d]" pp_reg base pp_reg index
+        (int_of_float (log (float_of_int scale) /. log 2.))
+    | MemAddr _ ->
+      failwith
+        "Memory address with nonzero displacement and scale not allowed in \
+         AARCH64"
     | StackSlot { offset; _ } -> Format.fprintf fmt "[sp, %d]" offset
     | Label (l, []) -> Format.fprintf fmt "%s" (snd l)
     | Label (l, args) ->
@@ -124,12 +132,8 @@ module Target = struct
       let acc, r = f acc r in
       (acc, Reg r)
     | ConditionCode code -> (acc, ConditionCode code)
-    | MemAddr ({ base : reg option; index : reg; _ } as addr) ->
-      let acc, base =
-        Option.fold ~none:(acc, base)
-          ~some:(fun r -> CCPair.map_snd Option.some (f acc r))
-          base
-      in
+    | MemAddr ({ base : reg; index : reg; _ } as addr) ->
+      let acc, base = f acc base in
       let acc, index = f acc index in
       (acc, MemAddr { addr with base; index })
     | Label (l, ops) ->
@@ -139,9 +143,8 @@ module Target = struct
   let rec subst_reg_operand subst_reg = function
     | Reg r -> Reg (subst_reg r)
     | ConditionCode code -> ConditionCode code
-    | MemAddr ({ base : reg option; index : reg; _ } as addr) ->
-      MemAddr
-        { addr with base = Option.map subst_reg base; index = subst_reg index }
+    | MemAddr ({ base : reg; index : reg; _ } as addr) ->
+      MemAddr { addr with base = subst_reg base; index = subst_reg index }
     | Label (l, ops) -> Label (l, List.map (subst_reg_operand subst_reg) ops)
     | (Imm _ | StackSlot _) as op -> op
   let to_colored =

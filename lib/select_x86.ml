@@ -237,7 +237,7 @@ module Select = struct
       end
     | Undag.Target.Call (dest, f, args) ->
       let open Target in
-      let dest = assign_vreg Int dest in
+      let dest = assign_vreg (reg_class_of_operand dest) dest in
       let* f = translate_operand f in
       let f =
         match f with
@@ -310,7 +310,7 @@ module Select = struct
         instr "lea" ~defs:[ dest ] ~uses:[ slot ] @> k dest
       end
     | Undag.Target.Load (dest, src) ->
-      let dest = assign_vreg Int dest in
+      let dest = assign_vreg (reg_class_of_operand dest) dest in
       let* src = translate_operand src in
       begin match src with
       | Reg reg ->

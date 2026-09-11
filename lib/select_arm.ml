@@ -184,7 +184,44 @@ module Select = struct
         @> Cfg.Last (Cfg.Return (Target.return ~uses:[ x0; x1 ]))
       | _ -> failwith "can only return two things currently"
       end
-    | Undag.Target.Call _ -> failwith "todo"
+    | Undag.Target.Call (dest, f, args) ->
+      let open Target in
+      let dest = assign_vreg (reg_class_of_operand dest) dest in
+      let* f = translate_operand f in
+      let f =
+        match f with
+        | Label (l, []) -> l
+        | _ -> failwith "call: expected function to be label"
+      in
+      let* args = translate_operands args in
+      let dests =
+        List.(init (length args) (call_conv ~caller:true state Target.Int))
+      in
+      let clobbered =
+        List.map
+          (fun r -> Reg (constrained r (fresh_vreg Int)))
+          Regs.caller_save
+      in
+      let x0 =
+        List.find
+          (function
+            | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = Regs.x0
+              ->
+              true
+            | _ -> false)
+          clobbered
+      in
+      let call =
+        instr "call" ~defs:[] ~uses:[ Label (f, []) ]
+        |> Target.modify_uses (fun ~uses ~num_hidden ->
+            (dests @ uses, num_hidden + List.length dests))
+        |> Target.modify_defs (fun ~defs ~num_hidden ->
+            (clobbered @ defs, num_hidden + List.length clobbered))
+      in
+      with_clobber_regs
+        (Regs.caller_save |> List.map (fun r -> Physical r) |> RegSet.of_list)
+        (pcopy ~dests ~srcs:args)
+      @> call @> mov ~dest ~src:x0 @> k dest
     | Undag.Target.Goto (l, args) ->
       let* args = translate_operands args in
       Cfg.Last (Cfg.Branch (Target.goto l args, l))
@@ -197,6 +234,29 @@ module Select = struct
         (Cfg.CBranch
            (Target.cbranch ~args:[ src1; src2 ] cond l1 l1args l2 l2args, l1, l2))
     | Undag.Target.Alloca _ -> failwith "todo"
-    | Undag.Target.Load _ -> failwith "todo"
-    | Undag.Target.Store _ -> failwith "todo"
+    | Undag.Target.Load (dest, src) ->
+      let dest = assign_vreg (reg_class_of_operand dest) dest in
+      let* src = translate_operand src in
+      begin match src with
+      | Reg reg ->
+        let src =
+          Target.MemAddr
+            { base = reg; displacement = 0; scale = 0; index = reg }
+        in
+        Target.mov ~dest ~src @> k dest
+      | _ -> failwith "Select_Arm: expected source of load to be a register"
+      end
+    | Undag.Target.Store (dest, value) ->
+      let* dest = translate_operand dest in
+      let* value = translate_operand value in
+      begin match dest with
+      | Reg reg ->
+        let dest =
+          Target.MemAddr
+            { base = reg; displacement = 0; scale = 0; index = reg }
+        in
+        Target.mov ~dest ~src:value @> k (Imm 0)
+      | _ ->
+        failwith "Select_Arm: expected destination of store to be a register"
+      end
 end
