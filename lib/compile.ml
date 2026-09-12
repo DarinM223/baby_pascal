@@ -1,4 +1,4 @@
-let compile program =
+let compile_shared lower_isa program =
   Check.check_program program;
   let module F = Normalize.Fresh () in
   let program =
@@ -75,41 +75,7 @@ let compile program =
         (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
         cfg Undag.Cfg.empty
     in
-    let state = Select_x86.State.init () in
-    let args, cfg = Select_x86.codegen_function ~args state cfg in
-    Format.printf "===================================\n";
-    Format.printf "%s's cfg after codegen:\n" f;
-    Format.printf "===================================\n";
-    Format.printf "%a\n" X86.Cfg.pp_graph cfg;
-    let extra = X86.Cfg.precalculate_edges cfg in
-    let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
-    let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-    (* 16 registers - r10 register - rsp register - (rbp register if frame pointer is enabled) *)
-    let k = 16 - 2 - if Option.is_some state.frame_pointer then 1 else 0 in
-    let cfg = Spill.X86.spill_helper ~k ~args (module Loop) state cfg in
-    let regs =
-      X86.Regs.int_regs
-      |> List.filter_map (fun ((_, _, reg) as r) ->
-          if
-            Option.equal X86.Target.equal_reg state.frame_pointer
-              (Some (Physical r))
-          then None
-          else if reg <> "r10" && reg <> "rsp" then Some (X86.Target.Physical r)
-          else None)
-      |> Array.of_list
-    in
-    let module Helper = Regalloc.X86Helper (Loop) in
-    let cfg =
-      Helper.regalloc ~args:(X86.Target.RegSet.of_list args) ~regs state cfg
-        (fun _ -> ())
-    in
-    Format.printf "===================================\n";
-    Format.printf "%s after register allocation:\n" f;
-    Format.printf "===================================\n";
-    Format.printf "%a\n" X86.Printer.pp_graph cfg;
-    let cfg = X86.Sequentialize.sequentialize cfg in
-    let cfg = Cleanup_x86.cleanup state X86.Regs.r10 cfg in
-    ((state.stack_offset, state.frame_pointer), cfg)
+    lower_isa ~f ~args ~cfg
   in
   let lower_decl = function
     | Ast.Function (f, args, ret, body) ->
@@ -121,15 +87,58 @@ let compile program =
   let main = lower_cfg "main" [] program.main in
   { program with decls; main }
 
-let write_file out program =
-  let out = Format.formatter_of_out_channel out in
-  Format.fprintf out ".global main\n.text\n";
-  let write_decl = function
-    | Ast.Function (f, _args, _ret, (state, body)) ->
-      Format.fprintf out "%s: %a\n" f (X86.Writer.pp_graph state) body
-    | Ast.Procedure (f, _args, (state, body)) ->
-      Format.fprintf out "%s: %a\n" f (X86.Writer.pp_graph state) body
-  in
-  List.iter write_decl program.Ast.decls;
-  let state, main = program.main in
-  Format.fprintf out "main: %a\n" (X86.Writer.pp_graph state) main
+module X86 = struct
+  let compile program =
+    let lower_isa ~f ~args ~cfg =
+      let state = Select_x86.State.init () in
+      let args, cfg = Select_x86.codegen_function ~args state cfg in
+      Format.printf "===================================\n";
+      Format.printf "%s's cfg after codegen:\n" f;
+      Format.printf "===================================\n";
+      Format.printf "%a\n" X86.Cfg.pp_graph cfg;
+      let extra = X86.Cfg.precalculate_edges cfg in
+      let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
+      let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
+      (* 16 registers - r10 register - rsp register - (rbp register if frame pointer is enabled) *)
+      let k = 16 - 2 - if Option.is_some state.frame_pointer then 1 else 0 in
+      let cfg = Spill.X86.spill_helper ~k ~args (module Loop) state cfg in
+      let regs =
+        X86.Regs.int_regs
+        |> List.filter_map (fun ((_, _, reg) as r) ->
+            if
+              Option.equal X86.Target.equal_reg state.frame_pointer
+                (Some (Physical r))
+            then None
+            else if reg <> "r10" && reg <> "rsp" then
+              Some (X86.Target.Physical r)
+            else None)
+        |> Array.of_list
+      in
+      let module Helper = Regalloc.X86Helper (Loop) in
+      let cfg =
+        Helper.regalloc ~args:(X86.Target.RegSet.of_list args) ~regs state cfg
+          (fun _ -> ())
+      in
+      Format.printf "===================================\n";
+      Format.printf "%s after register allocation:\n" f;
+      Format.printf "===================================\n";
+      Format.printf "%a\n" X86.Printer.pp_graph cfg;
+      let cfg = X86.Sequentialize.sequentialize cfg in
+      let cfg = Cleanup_x86.cleanup state X86.Regs.r10 cfg in
+      ((state.stack_offset, state.frame_pointer), cfg)
+    in
+    compile_shared lower_isa program
+
+  let write_file out program =
+    let out = Format.formatter_of_out_channel out in
+    Format.fprintf out ".global main\n.text\n";
+    let write_decl = function
+      | Ast.Function (f, _args, _ret, (state, body)) ->
+        Format.fprintf out "%s: %a\n" f (X86.Writer.pp_graph state) body
+      | Ast.Procedure (f, _args, (state, body)) ->
+        Format.fprintf out "%s: %a\n" f (X86.Writer.pp_graph state) body
+    in
+    List.iter write_decl program.Ast.decls;
+    let state, main = program.main in
+    Format.fprintf out "main: %a\n" (X86.Writer.pp_graph state) main
+end

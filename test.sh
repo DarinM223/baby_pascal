@@ -1,4 +1,8 @@
-dune exec compile examples/fibonacci.pas &> /dev/null
+dune exec compile -- -x86_64 examples/fibonacci.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "fibonacci compilation failed"
+    exit 1
+fi
 ./build.sh fibonacci.pas
 ./fibonacci.pas > fibonacci.pas.test
 if cmp --silent fibonacci.pas.test examples/fibonacci.pas.expected; then
@@ -10,7 +14,11 @@ else
   exit 1
 fi
 
-dune exec compile examples/funswap.pas &> /dev/null
+dune exec compile -- -x86_64 examples/funswap.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "funswap compilation failed"
+    exit 1
+fi
 ./build.sh funswap.pas
 ./funswap.pas > funswap.pas.test
 if cmp --silent funswap.pas.test examples/funswap.pas.expected; then
@@ -22,7 +30,11 @@ else
   exit 1
 fi
 
-dune exec compile examples/gcd.pas &> /dev/null
+dune exec compile -- -x86_64 examples/gcd.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "gcd compilation failed"
+    exit 1
+fi
 ./build.sh gcd.pas
 ./gcd.pas > gcd.pas.test
 if cmp --silent gcd.pas.test examples/gcd.pas.expected; then
@@ -34,7 +46,11 @@ else
   exit 1
 fi
 
-dune exec compile examples/factorial.pas &> /dev/null
+dune exec compile -- -x86_64 examples/factorial.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "factorial compilation failed"
+    exit 1
+fi
 ./build.sh factorial.pas
 ./factorial.pas > factorial.pas.test
 if cmp --silent factorial.pas.test examples/factorial.pas.expected; then
@@ -46,7 +62,11 @@ else
   exit 1
 fi
 
-dune exec compile examples/collatz.pas &> /dev/null
+dune exec compile -- -x86_64 examples/collatz.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "collatz compilation failed"
+    exit 1
+fi
 ./build.sh collatz.pas
 ./collatz.pas > collatz.pas.test
 if cmp --silent collatz.pas.test examples/collatz.pas.expected; then
@@ -58,7 +78,11 @@ else
   exit 1
 fi
 
-dune exec compile examples/isprime.pas &> /dev/null
+dune exec compile -- -x86_64 examples/isprime.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "isprime compilation failed"
+    exit 1
+fi
 ./build.sh isprime.pas
 ./isprime.pas > isprime.pas.test
 if cmp --silent isprime.pas.test examples/isprime.pas.expected; then
@@ -70,7 +94,11 @@ else
   exit 1
 fi
 
-dune exec compile examples/callconv.pas &> /dev/null
+dune exec compile -- -x86_64 examples/callconv.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "callconv compilation failed"
+    exit 1
+fi
 ./build.sh callconv.pas
 ./callconv.pas > callconv.pas.test
 if cmp --silent callconv.pas.test examples/callconv.pas.expected; then

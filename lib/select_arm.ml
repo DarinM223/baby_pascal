@@ -260,3 +260,60 @@ module Select = struct
         failwith "Select_Arm: expected destination of store to be a register"
       end
 end
+
+include Isa.Codegen (Target) (Arm.Cfg) (Select)
+
+let%expect_test "Fibonacci code generation" =
+  let cfg = Examples.fibonacci in
+  let _, cfg = codegen_test_helper ~args:[ "v" ] (State.init ()) cfg in
+  Format.printf "%a" Arm.Printer.pp_graph cfg;
+  [%expect
+    {|
+      pcopy [(1any, 0(%x0))]
+      ble label2, label3, 1any, #1
+    label1(local=false)(51any):
+      pcopy [(52(%x0), 51any)]
+      ret 52(%x0)
+    label2(local=false)():
+      mov 2any, 1any
+      b label1(2any)
+    label3(local=false)():
+      sub 4any, 1any, #1
+      pcopy [(5(%x0), 4any)]
+      call 6(%x0), 7(%x1), 8(%x2), 9(%x3), 10(%x4), 11(%x5), 12(%x6), 13(%x7), 14(%x8), 15(%x9), 16(%x10), 17(%x11), 18(%x12), 19(%x13), 20(%x14), 21(%x15), 22(%x16), 23(%x17), 24(%x18), 25(%x30), 5(%x0), fibonacci
+      mov 3any, 6(%x0)
+      sub 27any, 1any, #2
+      pcopy [(28(%x0), 27any)]
+      call 29(%x0), 30(%x1), 31(%x2), 32(%x3), 33(%x4), 34(%x5), 35(%x6), 36(%x7), 37(%x8), 38(%x9), 39(%x10), 40(%x11), 41(%x12), 42(%x13), 43(%x14), 44(%x15), 45(%x16), 46(%x17), 47(%x18), 48(%x30), 28(%x0), fibonacci
+      mov 26any, 29(%x0)
+      add 50any, 3any, 26any
+      mov 49any, 50any
+      b label1(49any)
+    |}]
+
+let%expect_test "Nested loops code generation" =
+  let cfg = Examples.nested_loops in
+  let _, cfg = codegen_test_helper (State.init ()) cfg in
+  Format.printf "%a" Arm.Printer.pp_graph cfg;
+  [%expect
+    {|
+      mov 0any, #0
+      b label6
+    label1(local=false)():
+      exit
+    label2(local=false)(1any):
+      blt label3, label1, 1any, #100
+    label3(local=false)():
+      mov 2any, 1any
+      b label4(1any, 2any)
+    label4(local=false)(3any, 4any):
+      blt label5, label2(3any), 4any, #100
+    label5(local=false)():
+      add 6any, 3any, #1
+      mov 5any, 6any
+      add 8any, 4any, #1
+      mov 7any, 8any
+      b label4(5any, 7any)
+    label6(local=false)():
+      b label2(0any)
+    |}]

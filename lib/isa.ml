@@ -189,4 +189,19 @@ struct
     | First Entry, tail when List.length args > 0 ->
       (reg_ops srcs, Cfg.unfocus ((First Entry, Tail (pcopy, tail)), graph))
     | _ -> (reg_ops srcs, Cfg.unfocus (zblock, graph))
+
+  let codegen_test_helper ?(args = []) state cfg =
+    let extra = Normalize.Cfg.precalculate_edges cfg in
+    let module Extra = (val extra) in
+    let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
+    let a_orig = Construct.calc_a_orig cfg in
+    let live = Construct.calc_live cfg in
+    let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
+    let cfg = Construct.rename_variables (module Dom) cfg in
+    let cfg =
+      Normalize.Cfg.Blocks.fold
+        (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
+        cfg Undag.Cfg.empty
+    in
+    codegen_function ~args:(List.map (fun arg -> (arg, 0)) args) state cfg
 end
