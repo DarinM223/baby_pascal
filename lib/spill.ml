@@ -300,7 +300,12 @@ module Liveness = struct
       let analysis = (fact, analysis) in
       let _ = Flow.BackwardAnalysis.run analysis graph in
       {
-        live_in = (fun uid -> (fact.get uid).mapping);
+        live_in =
+          (fun uid ->
+            try (fact.get uid).mapping
+            with Not_found ->
+              failwith
+              @@ Format.sprintf "Live in block for uid %d not found" uid);
         live_out =
           (fun uid ->
             (calc_live_out G.(last @@ fst @@ focus uid graph)).mapping);

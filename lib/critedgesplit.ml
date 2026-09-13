@@ -34,8 +34,7 @@ struct
       let head, last = G.(goto_end (unzip block)) in
       let last, cfg =
         match last with
-        | G.Exit | G.Branch _ | G.Return _ -> (last, cfg)
-        | G.CBranch (instr, l1, l2) ->
+        | G.CBranch (instr, l1, l2) when not (G.equal_label l1 l2) ->
           let subst = LabelTbl.create Utils.hashtbl_size in
           let cfg, instr =
             Requirements.fold_uses
@@ -70,6 +69,7 @@ struct
                 LabelTbl.get_or subst l2 ~default:l2 )
           in
           (last, cfg)
+        | G.Exit | G.Branch _ | G.Return _ | G.CBranch _ -> (last, cfg)
       in
       G.unfocus ((head, Last last), cfg)
     in

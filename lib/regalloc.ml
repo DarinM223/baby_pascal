@@ -1088,7 +1088,9 @@ struct
 
       (* for each live in, check if it is the same across predecessors
        if not, create a phi node *)
-      let live_in = state.liveness.live_in pos in
+      let live_in =
+        state.liveness.live_in (G.idd (Dom.label_of_position pos))
+      in
       let set_live_in v cfg =
         try
           Logs.debug (fun m -> m "Live in: %a\n" Target.pp_reg v);

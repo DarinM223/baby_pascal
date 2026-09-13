@@ -281,9 +281,20 @@ module Select = struct
       let* src2 = translate_operand src2 in
       let* l1args = translate_operands l1args in
       let* l2args = translate_operands l2args in
-      Cfg.Last
-        (Cfg.CBranch
-           (Target.cbranch ~args:[ src1; src2 ] cond l1 l1args l2 l2args, l1, l2))
+      (* todo: handle cbranches with the same label but different arguments *)
+      if
+        Cfg.equal_label l1 l2
+        && not (List.equal Target.equal_operand l1args l2args)
+      then
+        failwith
+          "todo: codegen for two same label with different args not \
+           implemented yet"
+      else
+        Cfg.Last
+          (Cfg.CBranch
+             ( Target.cbranch ~args:[ src1; src2 ] cond l1 l1args l2 l2args,
+               l1,
+               l2 ))
     | Undag.Target.Alloca (dest, size) ->
       let open Target in
       let dest = assign_vreg Int dest in
