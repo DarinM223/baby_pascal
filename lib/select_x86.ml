@@ -56,7 +56,7 @@ module State = struct
 end
 
 module Select = struct
-  module Graph = X86.Cfg
+  module G = X86.Cfg
   module State = State
 
   (* todo: move types into IR so that we can select register class from that *)
@@ -78,17 +78,36 @@ module Select = struct
       end
     | Target.Float -> failwith "Float calling convention not supported yet"
 
+  let reuse_instr tmp dest instr =
+    instr
+    |> Target.modify_uses (fun ~uses ~num_hidden ->
+        (tmp :: uses, num_hidden + 1))
+    |> Target.modify_defs (fun ~defs ~num_hidden ->
+        (Target.reuse_op tmp dest :: defs, num_hidden))
+  let ( @> ) i t = Cfg.Tail (Instruction i, t)
+
+  let reuse_cond ~hidden fresh src1 src2 init k i =
+    let open Target in
+    let tmp1 = Reg (fresh (reg_class_of_operand src1)) in
+    let tmp2 = Reg (fresh (reg_class_of_operand src1)) in
+    let args, inject = init () in
+    let setters =
+      List.fold_right
+        (fun (tmp, dest) f t ->
+          (if hidden then reuse_instr tmp dest (instr i ~defs:[] ~uses:[])
+           else instr i ~defs:[ dest ] ~uses:[ tmp ])
+          @> f t)
+        args
+        (fun t -> t)
+    in
+    mov ~dest:tmp1 ~src:src1 @> inject
+    @@ reuse_instr tmp1 tmp2 (instr "cmp" ~defs:[] ~uses:[ src2 ])
+    @> setters (k (List.map snd args))
+
   let rec select ({ State.fresh_vreg; mapping; _ } as state)
       (instruction : Undag.Target.instr) (k : Target.operand -> Cfg.tail) :
       Cfg.tail =
     let assign_vreg clz reg = Target.Reg (State.assign_vreg state clz reg) in
-    let reuse_instr tmp dest instr =
-      instr
-      |> Target.modify_uses (fun ~uses ~num_hidden ->
-          (tmp :: uses, num_hidden + 1))
-      |> Target.modify_defs (fun ~defs ~num_hidden ->
-          (Target.reuse_op tmp dest :: defs, num_hidden))
-    in
     let rec translate_operand :
         Undag.Target.operand -> (Target.operand -> 'a) -> 'a = function
       | Undag.Target.Instr src -> select state src
@@ -100,10 +119,11 @@ module Select = struct
             let pp_sep fmt () = Format.pp_print_string fmt "," in
             failwith
             @@ Format.asprintf
-                 "Select_X86: Register %a not found in mapping %a\n"
+                 "Select_X86: Register %a not found in mapping %a in \
+                  instruction %a\n"
                  Normalize.Name.pp r
                  (NameHashtbl.pp ~pp_sep Normalize.Name.pp Target.pp_operand)
-                 mapping
+                 mapping Undag.Target.pp_instr instruction
           end
       | Undag.Target.Label (l, args) ->
         fun k ->
@@ -118,7 +138,6 @@ module Select = struct
       in
       go [] l k
     in
-    let ( @> ) i t = Cfg.Tail (Instruction i, t) in
     match instruction with
     | Undag.Target.Assign (dest, src) ->
       let open Target in
@@ -145,15 +164,20 @@ module Select = struct
         @> reuse_instr tmp dest (instr i ~defs:[] ~uses:[ src2 ])
         @> k dest
       in
-      let reuse_cond i =
-        let tmp1 = Reg (fresh_vreg Int) in
-        let tmp2 = Reg (fresh_vreg Int) in
-        let tmp3 = Reg (fresh_vreg Int) in
-        mov ~dest:tmp1 ~src:src1
-        @> mov ~dest:tmp2 ~src:(Imm 0)
-        @> reuse_instr tmp1 tmp3 (instr "cmp" ~defs:[] ~uses:[ src2 ])
-        @> reuse_instr tmp2 dest (instr i ~defs:[] ~uses:[])
-        @> k dest
+      let reuse_cond =
+        reuse_cond ~hidden:true fresh_vreg src1 src2
+          (fun () ->
+            let tmp = Reg (fresh_vreg Int) in
+            let dest = Reg (fresh_vreg Int) in
+            ([ (tmp, dest) ], fun t -> mov ~dest:tmp ~src:(Imm 0) @> t))
+          (function
+            | [ dest ] -> k dest
+            | dests ->
+              failwith
+              @@ Format.asprintf
+                   "reuse_cond: expected single destination, got: %a"
+                   (Format.pp_print_list Target.pp_operand)
+                   dests)
       in
       begin match bop with
       | Ast.Add -> reuse_bop "addq"
@@ -286,9 +310,32 @@ module Select = struct
         Cfg.equal_label l1 l2
         && not (List.equal Target.equal_operand l1args l2args)
       then
-        failwith
-          "todo: codegen for two same label with different args not \
-           implemented yet"
+        let cmov =
+          match cond with
+          | Graph.Cond.LT -> "cmovl"
+          | LE -> "cmovle"
+          | GT -> "cmovg"
+          | GE -> "cmovge"
+          | EQ -> "cmove"
+          | NE -> "cmovne"
+        in
+        reuse_cond ~hidden:false fresh_vreg src1 src2
+          (fun () ->
+            let open Target in
+            let args =
+              List.map
+                (fun arg ->
+                  let dest = Reg (fresh_vreg Int) in
+                  (arg, dest))
+                l1args
+            in
+            ( args,
+              List.fold_right
+                (fun ((_, dest), v) f t -> mov ~dest ~src:v @> f t)
+                (List.combine args l2args)
+                (fun t -> t) ))
+          (fun dests -> Cfg.Last (Cfg.Branch (Target.goto l1 dests, l1)))
+          cmov
       else
         Cfg.Last
           (Cfg.CBranch
@@ -408,3 +455,33 @@ let%expect_test "Nested loops code generation" =
     label6(local=false)():
       jmp label2(%0any)
     |}]
+
+let%expect_test "CBranch with both labels the same with different arguments" =
+  let cfg = Examples.cbranch_same_label in
+  let cfg =
+    Normalize.Cfg.Blocks.fold
+      (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
+      cfg Undag.Cfg.empty
+  in
+  let _, cfg = codegen_function ~args:[] (State.init ()) cfg in
+  Format.printf "%a" X86.Printer.pp_graph cfg;
+  [%expect
+    {|
+      movq %0any, $3
+      movq %1any, $2
+      movq %2any, $1
+      movq %3any, $0
+      jmp label1
+    label1(local=false)():
+      movq %4any, %3any
+      movq %6any, %3any
+      movq %7any, $2
+      movq %8any, %0any
+      cmp %5(reuse=%4), %4any, %2any
+      cmove %6any, $1
+      cmove %7any, %2any
+      cmove %8any, %1any
+      jmp label2(%6any, %7any, %8any)
+    label2(local=false)(9any, 10any, 11any):
+      exit
+  |}]

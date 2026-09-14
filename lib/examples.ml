@@ -2,6 +2,7 @@ open Normalize
 
 open struct
   let name = Target.name
+  let reg = Target.reg
 end
 
 let nested_loops_ast =
@@ -104,6 +105,43 @@ let nested_loops =
       ( Cfg.Label ((6, "label6"), { Cfg.local = false; args = [] }),
         Cfg.Last (Cfg.Branch (Target.Goto ((2, "label2"), []), (2, "label2")))
       );
+    ]
+  in
+  List.fold_left (fun acc block -> Cfg.Blocks.insert block acc) Cfg.empty blocks
+
+let cbranch_same_label =
+  let blocks =
+    [
+      ( Cfg.Entry,
+        Cfg.Tail
+          ( Cfg.Instruction (Target.assign ~dest:(reg "a") ~src:(Const 0)),
+            Cfg.Tail
+              ( Cfg.Instruction (Target.assign ~dest:(reg "b") ~src:(Const 1)),
+                Cfg.Tail
+                  ( Cfg.Instruction
+                      (Target.assign ~dest:(reg "c") ~src:(Const 2)),
+                    Cfg.Tail
+                      ( Cfg.Instruction
+                          (Target.assign ~dest:(reg "d") ~src:(Const 3)),
+                        Cfg.Last
+                          (Cfg.Branch
+                             (Target.Goto ((1, "label1"), []), (1, "label1")))
+                      ) ) ) ) );
+      ( Cfg.Label ((1, "label1"), { Cfg.local = false; args = [] }),
+        Cfg.Last
+          (Cfg.CBranch
+             ( Target.cbranch
+                 ~args:[ reg "a"; reg "b" ]
+                 Graph.Cond.EQ (2, "label2")
+                 [ Const 1; reg "b"; reg "c" ]
+                 (2, "label2")
+                 [ reg "a"; Const 2; reg "d" ],
+               (2, "label2"),
+               (2, "label2") )) );
+      ( Cfg.Label
+          ( (2, "label2"),
+            { Cfg.local = false; args = [ name "e"; name "f"; name "g" ] } ),
+        Cfg.Last Cfg.Exit );
     ]
   in
   List.fold_left (fun acc block -> Cfg.Blocks.insert block acc) Cfg.empty blocks

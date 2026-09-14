@@ -116,6 +116,16 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
     let rec go_tail = function
       | Cfg.Tail (Instruction i, tail) ->
         begin match i with
+        (* lower conditional moves with immediate source operand *)
+        | {
+         Target.instr =
+           "cmove" | "cmovne" | "cmovge" | "cmovg" | "cmovle" | "cmovl";
+         uses = [ (Imm _ as src) ];
+         _;
+        } ->
+          Target.mov ~dest:(Reg (Physical tmp)) ~src
+          @> { i with uses = [ Reg (Physical tmp) ] }
+          @> go_tail tail
         (* lower moves with two memory operands *)
         | {
          Target.instr = "movq";

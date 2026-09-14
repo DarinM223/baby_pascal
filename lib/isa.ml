@@ -97,20 +97,13 @@ module type State = sig
 end
 
 module type Select = sig
-  module Graph : Graph.S
+  module G : Graph.S
   module State : State
   val select :
-    State.t ->
-    Undag.Target.instr ->
-    (Graph.Target.operand -> Graph.tail) ->
-    Graph.tail
+    State.t -> Undag.Target.instr -> (G.Target.operand -> G.tail) -> G.tail
   val reg_class_of_operand : Undag.Target.operand -> State.Target.reg_class
   val call_conv :
-    caller:bool ->
-    State.t ->
-    State.Target.reg_class ->
-    int ->
-    Graph.Target.operand
+    caller:bool -> State.t -> State.Target.reg_class -> int -> G.Target.operand
 end
 
 module Codegen
@@ -121,7 +114,7 @@ module Codegen
          and type Target.instr = Target.instr
          and type Target.operand = Target.operand
          and type Target.operands = Target.operands)
-    (Select : Select with module Graph = Cfg and module State.Target = Target) =
+    (Select : Select with module G = Cfg and module State.Target = Target) =
 struct
   let codegen_block (state : Select.State.t) ((first, tail) : Undag.Cfg.block) :
       Cfg.block =

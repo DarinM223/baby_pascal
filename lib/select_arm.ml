@@ -56,7 +56,7 @@ module State = struct
 end
 
 module Select = struct
-  module Graph = Arm.Cfg
+  module G = Arm.Cfg
   module State = State
 
   let reg_class_of_operand _ = Target.Int
