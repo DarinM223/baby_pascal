@@ -661,11 +661,20 @@ struct
       match first with
       | G.Entry -> G.First first
       | Label (l, info) ->
+        (* Don't do optimistic moves when coloring phi nodes
+           since moves would be inserted after the phi nodes,
+           causing an invalid graph. *)
+        let don't_use_for_optimistic_moves =
+          CCBV.create ~size:(Array.length state.regs) true
+        in
         let head, args =
           List.fold_left_map
             (fun head -> function
               | Target.Virtual phi' as phi when Target.equal_reg phi'.reg phi ->
-                let reg, pref, head = get_register state uid phi head in
+                let reg, pref, head =
+                  get_register ~don't_use_for_optimistic_moves state uid phi
+                    head
+                in
                 Logs.debug (fun m ->
                     m "Setting register for %a to %a\n" Target.pp_reg
                       (Virtual phi') Target.pp_reg state.regs.(reg));
