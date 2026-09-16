@@ -86,23 +86,20 @@ module Select = struct
         (Target.reuse_op tmp dest :: defs, num_hidden))
   let ( @> ) i t = Cfg.Tail (Instruction i, t)
 
-  let reuse_cond ~hidden fresh src1 src2 init k i =
+  let reuse_cond fresh src1 src2 init k mk_instr =
     let open Target in
     let tmp1 = Reg (fresh (reg_class_of_operand src1)) in
     let tmp2 = Reg (fresh (reg_class_of_operand src1)) in
     let args, inject = init () in
     let setters =
       List.fold_right
-        (fun (tmp, dest) f t ->
-          (if hidden then reuse_instr tmp dest (instr i ~defs:[] ~uses:[])
-           else instr i ~defs:[ dest ] ~uses:[ tmp ])
-          @> f t)
+        (fun (arg, tmp, dest) f t -> mk_instr arg tmp dest @> f t)
         args
         (fun t -> t)
     in
     mov ~dest:tmp1 ~src:src1 @> inject
     @@ reuse_instr tmp1 tmp2 (instr "cmp" ~defs:[] ~uses:[ src2 ])
-    @> setters (k (List.map snd args))
+    @> setters (k (List.map (fun (_, _, dest) -> dest) args))
 
   let rec select ({ State.fresh_vreg; mapping; _ } as state)
       (instruction : Undag.Target.instr) (k : Target.operand -> Cfg.tail) :
@@ -164,12 +161,15 @@ module Select = struct
         @> reuse_instr tmp dest (instr i ~defs:[] ~uses:[ src2 ])
         @> k dest
       in
+      let instr_of_cond i _arg tmp dest =
+        reuse_instr tmp dest (instr i ~defs:[] ~uses:[])
+      in
       let reuse_cond =
-        reuse_cond ~hidden:true fresh_vreg src1 src2
+        reuse_cond fresh_vreg src1 src2
           (fun () ->
             let tmp = Reg (fresh_vreg Int) in
             let dest = Reg (fresh_vreg Int) in
-            ([ (tmp, dest) ], fun t -> mov ~dest:tmp ~src:(Imm 0) @> t))
+            ([ (Imm 0, tmp, dest) ], fun t -> mov ~dest:tmp ~src:(Imm 0) @> t))
           (function
             | [ dest ] -> k dest
             | dests ->
@@ -242,12 +242,12 @@ module Select = struct
         @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
         @> reuse_instr tmp dest (instr "cmovz" ~defs:[] ~uses:[ src2 ])
         @> k dest
-      | Ast.Eq -> reuse_cond "setz"
-      | Ast.Neq -> reuse_cond "setnz"
-      | Ast.Lt -> reuse_cond "setl"
-      | Ast.Le -> reuse_cond "setle"
-      | Ast.Gt -> reuse_cond "setg"
-      | Ast.Ge -> reuse_cond "setge"
+      | Ast.Eq -> reuse_cond (instr_of_cond "setz")
+      | Ast.Neq -> reuse_cond (instr_of_cond "setnz")
+      | Ast.Lt -> reuse_cond (instr_of_cond "setl")
+      | Ast.Le -> reuse_cond (instr_of_cond "setle")
+      | Ast.Gt -> reuse_cond (instr_of_cond "setg")
+      | Ast.Ge -> reuse_cond (instr_of_cond "setge")
       end
     | Undag.Target.Return ops ->
       let* ops = translate_operands ops in
@@ -305,34 +305,35 @@ module Select = struct
       let* src2 = translate_operand src2 in
       let* l1args = translate_operands l1args in
       let* l2args = translate_operands l2args in
-      (* todo: handle cbranches with the same label but different arguments *)
+      (* handle cbranches with the same label but different arguments *)
       if
         Cfg.equal_label l1 l2
         && not (List.equal Target.equal_operand l1args l2args)
       then
-        let cmov =
-          match cond with
-          | Graph.Cond.LT -> "cmovl"
-          | LE -> "cmovle"
-          | GT -> "cmovg"
-          | GE -> "cmovge"
-          | EQ -> "cmove"
-          | NE -> "cmovne"
+        let cmov arg1 _arg2 dest =
+          Target.instr ~defs:[ dest ] ~uses:[ arg1 ]
+            (match cond with
+            | Graph.Cond.LT -> "cmovl"
+            | LE -> "cmovle"
+            | GT -> "cmovg"
+            | GE -> "cmovge"
+            | EQ -> "cmove"
+            | NE -> "cmovne")
         in
-        reuse_cond ~hidden:false fresh_vreg src1 src2
+        reuse_cond fresh_vreg src1 src2
           (fun () ->
             let open Target in
             let args =
               List.map
-                (fun arg ->
+                (fun (arg1, arg2) ->
                   let dest = Reg (fresh_vreg Int) in
-                  (arg, dest))
-                l1args
+                  (arg1, arg2, dest))
+                (List.combine l1args l2args)
             in
             ( args,
               List.fold_right
-                (fun ((_, dest), v) f t -> mov ~dest ~src:v @> f t)
-                (List.combine args l2args)
+                (fun (_, arg2, dest) f t -> mov ~dest ~src:arg2 @> f t)
+                args
                 (fun t -> t) ))
           (fun dests -> Cfg.Last (Cfg.Branch (Target.goto l1 dests, l1)))
           cmov

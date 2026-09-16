@@ -726,3 +726,47 @@ module X86 = struct
     in
     Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
 end
+
+module Arm = struct
+  module NextUseDistances =
+    NextUseDistances.Make (Arm.Target) (Arm.Cfg) (Arm.Flow)
+  module Liveness = Liveness.Make (Arm.Target) (Arm.Cfg) (Arm.Flow)
+  module Make = Make (Arm.Target) (Arm.Cfg) (Select_arm.State) (Liveness)
+
+  let spill_helper ?(reg_class = Arm.Target.Int) ?(k = 16) ?(args = [])
+      (module Loop : Loopnesting.S
+        with type Dom.label = Arm.Cfg.label
+         and type Dom.position = int
+         and type Dom.uid = int) state cfg =
+    let module NextUseDistances = NextUseDistances (Loop) in
+    let next_use_distances = NextUseDistances.calc cfg in
+    let liveness = Liveness.calc cfg in
+    let module Spill' =
+      Make (Loop) (NextUseDistances)
+        (struct
+          let reg_class = reg_class
+          let k = k
+          let next_use_distances = next_use_distances
+          let liveness = liveness
+        end) in
+    let spill_state = Spill'.init state in
+    let cfg = Spill'.spill ~args spill_state cfg in
+    let module Reconstruct = Reconstruct.Make (Arm.Target) (Arm.Cfg) (Loop.Dom)
+    in
+    let reconstruct_copies reg _ graph =
+      let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
+      let def_blocks =
+        List.map
+          (fun r ->
+            Deadcode.IntHashtbl.find spill_state.select_state.vreg_block
+              (Arm.Target.index r))
+          (reg :: copies)
+      in
+      Reconstruct.reconstruct
+        (fun () -> spill_state.select_state.fresh_vreg Int)
+        (Spill'.RegSet.singleton reg)
+        (Spill'.RegSet.of_list copies)
+        def_blocks graph
+    in
+    Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
+end

@@ -142,3 +142,59 @@ module X86 = struct
     let state, main = program.main in
     Format.fprintf out "main: %a\n" (X86.Writer.pp_graph state) main
 end
+
+module Arm = struct
+  let compile program =
+    let lower_isa ~f ~args ~cfg =
+      let state = Select_arm.State.init () in
+      let args, cfg = Select_arm.codegen_function ~args state cfg in
+      Format.printf "===================================\n";
+      Format.printf "%s's cfg after codegen:\n" f;
+      Format.printf "===================================\n";
+      Format.printf "%a\n" Arm.Cfg.pp_graph cfg;
+      let extra = Arm.Cfg.precalculate_edges cfg in
+      let module Dom = Dominator.Make (Arm.Cfg) ((val extra)) in
+      let module Loop = Loopnesting.Make (Arm.Cfg) (Dom) in
+      (* 31 registers - x10 register - (x29 register if frame pointer is enabled) *)
+      let k = 31 - 2 - if Option.is_some state.frame_pointer then 1 else 0 in
+      let cfg = Spill.Arm.spill_helper ~k ~args (module Loop) state cfg in
+      let regs =
+        Arm.Regs.int_regs
+        |> List.filter_map (fun ((_, _, reg) as r) ->
+            if
+              Option.equal Arm.Target.equal_reg state.frame_pointer
+                (Some (Physical r))
+            then None
+            else if reg <> "x10" && reg <> "sp" then
+              Some (Arm.Target.Physical r)
+            else None)
+        |> Array.of_list
+      in
+      let module Helper = Regalloc.ArmHelper (Loop) in
+      let cfg =
+        Helper.regalloc ~args:(Arm.Target.RegSet.of_list args) ~regs state cfg
+          (fun _ -> ())
+      in
+      Format.printf "===================================\n";
+      Format.printf "%s after register allocation:\n" f;
+      Format.printf "===================================\n";
+      Format.printf "%a\n" Arm.Printer.pp_graph cfg;
+      let cfg = Arm.Sequentialize.sequentialize cfg in
+      (* let cfg = Cleanup_x86.cleanup state Arm.Regs.x10 cfg in *)
+      ((state.stack_offset, state.frame_pointer), cfg)
+    in
+    compile_shared lower_isa program
+
+  let write_file out program =
+    let out = Format.formatter_of_out_channel out in
+    Format.fprintf out ".global main\n.text\n";
+    let write_decl = function
+      | Ast.Function (f, _args, _ret, (state, body)) ->
+        Format.fprintf out "%s: %a\n" f (Arm.Writer.pp_graph state) body
+      | Ast.Procedure (f, _args, (state, body)) ->
+        Format.fprintf out "%s: %a\n" f (Arm.Writer.pp_graph state) body
+    in
+    List.iter write_decl program.Ast.decls;
+    let state, main = program.main in
+    Format.fprintf out "main: %a\n" (Arm.Writer.pp_graph state) main
+end

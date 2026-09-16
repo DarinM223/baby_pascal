@@ -79,17 +79,33 @@ module Select = struct
       end
     | Target.Float -> failwith "Float calling convention not supported yet"
 
+  let reuse_instr tmp dest instr =
+    instr
+    |> Target.modify_uses (fun ~uses ~num_hidden ->
+        (tmp :: uses, num_hidden + 1))
+    |> Target.modify_defs (fun ~defs ~num_hidden ->
+        (Target.reuse_op tmp dest :: defs, num_hidden))
+  let ( @> ) i t = Cfg.Tail (Instruction i, t)
+
+  let reuse_cond fresh src1 src2 init k mk_instr =
+    let open Target in
+    let tmp1 = Reg (fresh (reg_class_of_operand src1)) in
+    let tmp2 = Reg (fresh (reg_class_of_operand src1)) in
+    let args, inject = init () in
+    let setters =
+      List.fold_right
+        (fun (arg, tmp, dest) f t -> mk_instr arg tmp dest @> f t)
+        args
+        (fun t -> t)
+    in
+    mov ~dest:tmp1 ~src:src1 @> inject
+    @@ reuse_instr tmp1 tmp2 (instr "cmp" ~defs:[] ~uses:[ src2 ])
+    @> setters (k (List.map (fun (_, _, dest) -> dest) args))
+
   let rec select ({ State.fresh_vreg; mapping; _ } as state)
       (instruction : Undag.Target.instr) (k : Target.operand -> Cfg.tail) :
       Cfg.tail =
     let assign_vreg clz reg = Target.Reg (State.assign_vreg state clz reg) in
-    let reuse_instr tmp dest instr =
-      instr
-      |> Target.modify_uses (fun ~uses ~num_hidden ->
-          (tmp :: uses, num_hidden + 1))
-      |> Target.modify_defs (fun ~defs ~num_hidden ->
-          (Target.reuse_op tmp dest :: defs, num_hidden))
-    in
     let rec translate_operand :
         Undag.Target.operand -> (Target.operand -> 'a) -> 'a = function
       | Undag.Target.Instr src -> select state src
@@ -119,7 +135,6 @@ module Select = struct
       in
       go [] l k
     in
-    let ( @> ) i t = Cfg.Tail (Instruction i, t) in
     match instruction with
     | Undag.Target.Assign (dest, src) ->
       let open Target in
@@ -146,26 +161,36 @@ module Select = struct
       let* src1 = translate_operand src1 in
       let* src2 = translate_operand src2 in
       let mk_bop i = instr i ~defs:[ dest ] ~uses:[ src1; src2 ] @> k dest in
-      let reuse_cond code =
-        let tmp1 = Reg (fresh_vreg Int) in
-        let tmp2 = Reg (fresh_vreg Int) in
-        mov ~dest:tmp1 ~src:src1
-        @> reuse_instr tmp1 tmp2 (instr "cmp" ~defs:[] ~uses:[ src2 ])
-        @> reuse_instr tmp2 dest
-             (instr "cset" ~defs:[] ~uses:[ ConditionCode code ])
-        @> k dest
+      let instr_of_cond code _arg tmp dest =
+        reuse_instr tmp dest
+          (instr "cset" ~defs:[] ~uses:[ ConditionCode code ])
+      in
+      let reuse_cond =
+        reuse_cond fresh_vreg src1 src2
+          (fun () ->
+            let tmp = Reg (fresh_vreg Int) in
+            let dest = Reg (fresh_vreg Int) in
+            ([ (Imm 0, tmp, dest) ], fun t -> mov ~dest:tmp ~src:(Imm 0) @> t))
+          (function
+            | [ dest ] -> k dest
+            | dests ->
+              failwith
+              @@ Format.asprintf
+                   "reuse_cond: expected single destination, got: %a"
+                   (Format.pp_print_list Target.pp_operand)
+                   dests)
       in
       begin match bop with
       | Ast.Add -> mk_bop "add"
       | Ast.Sub -> mk_bop "sub"
       | Ast.Mul -> mk_bop "mul"
       | Ast.Div -> mk_bop "sdiv" (* signed because we used idiv in X86 *)
-      | Ast.Eq -> reuse_cond Eq
-      | Ast.Neq -> reuse_cond Ne
-      | Ast.Lt -> reuse_cond Lt
-      | Ast.Le -> reuse_cond Le
-      | Ast.Gt -> reuse_cond Gt
-      | Ast.Ge -> reuse_cond Ge
+      | Ast.Eq -> reuse_cond (instr_of_cond Eq)
+      | Ast.Neq -> reuse_cond (instr_of_cond Ne)
+      | Ast.Lt -> reuse_cond (instr_of_cond Lt)
+      | Ast.Le -> reuse_cond (instr_of_cond Le)
+      | Ast.Gt -> reuse_cond (instr_of_cond Gt)
+      | Ast.Ge -> reuse_cond (instr_of_cond Ge)
       | Ast.And -> mk_bop "and"
       | Ast.Or -> mk_bop "orr"
       end
@@ -212,7 +237,7 @@ module Select = struct
           clobbered
       in
       let call =
-        instr "call" ~defs:[] ~uses:[ Label (f, []) ]
+        instr "bl" ~defs:[] ~uses:[ Label (f, []) ]
         |> Target.modify_uses (fun ~uses ~num_hidden ->
             (dests @ uses, num_hidden + List.length dests))
         |> Target.modify_defs (fun ~defs ~num_hidden ->
@@ -230,14 +255,37 @@ module Select = struct
       let* src2 = translate_operand src2 in
       let* l1args = translate_operands l1args in
       let* l2args = translate_operands l2args in
-      (* todo: handle cbranches with the same label but different arguments *)
+      (* handle cbranches with the same label but different arguments *)
       if
         Cfg.equal_label l1 l2
         && not (List.equal Target.equal_operand l1args l2args)
       then
-        failwith
-          "todo: codegen for two same label with different args not \
-           implemented yet"
+        let code =
+          match cond with
+          | Graph.Cond.LT -> Target.Lt
+          | LE -> Le
+          | GT -> Gt
+          | GE -> Ge
+          | EQ -> Eq
+          | NE -> Ne
+        in
+        let instr_of_cond code arg tmp dest =
+          Target.instr "csel" ~defs:[ dest ]
+            ~uses:[ arg; tmp; Target.ConditionCode code ]
+        in
+        reuse_cond fresh_vreg src1 src2
+          (fun () ->
+            let open Target in
+            let args =
+              List.map
+                (fun (arg1, arg2) ->
+                  let dest = Reg (fresh_vreg Int) in
+                  (arg1, arg2, dest))
+                (List.combine l1args l2args)
+            in
+            (args, fun t -> t))
+          (fun dests -> Cfg.Last (Cfg.Branch (Target.goto l1 dests, l1)))
+          (instr_of_cond code)
       else
         Cfg.Last
           (Cfg.CBranch
@@ -291,11 +339,11 @@ let%expect_test "Fibonacci code generation" =
     label3(local=false)():
       sub 4any, 1any, #1
       pcopy [(5(%x0), 4any)]
-      call 6(%x0), 7(%x1), 8(%x2), 9(%x3), 10(%x4), 11(%x5), 12(%x6), 13(%x7), 14(%x8), 15(%x9), 16(%x10), 17(%x11), 18(%x12), 19(%x13), 20(%x14), 21(%x15), 22(%x16), 23(%x17), 24(%x18), 25(%x30), 5(%x0), fibonacci
+      bl 6(%x0), 7(%x1), 8(%x2), 9(%x3), 10(%x4), 11(%x5), 12(%x6), 13(%x7), 14(%x8), 15(%x9), 16(%x10), 17(%x11), 18(%x12), 19(%x13), 20(%x14), 21(%x15), 22(%x16), 23(%x17), 24(%x18), 25(%x30), 5(%x0), fibonacci
       mov 3any, 6(%x0)
       sub 27any, 1any, #2
       pcopy [(28(%x0), 27any)]
-      call 29(%x0), 30(%x1), 31(%x2), 32(%x3), 33(%x4), 34(%x5), 35(%x6), 36(%x7), 37(%x8), 38(%x9), 39(%x10), 40(%x11), 41(%x12), 42(%x13), 43(%x14), 44(%x15), 45(%x16), 46(%x17), 47(%x18), 48(%x30), 28(%x0), fibonacci
+      bl 29(%x0), 30(%x1), 31(%x2), 32(%x3), 33(%x4), 34(%x5), 35(%x6), 36(%x7), 37(%x8), 38(%x9), 39(%x10), 40(%x11), 41(%x12), 42(%x13), 43(%x14), 44(%x15), 45(%x16), 46(%x17), 47(%x18), 48(%x30), 28(%x0), fibonacci
       mov 26any, 29(%x0)
       add 50any, 3any, 26any
       mov 49any, 50any
@@ -327,4 +375,31 @@ let%expect_test "Nested loops code generation" =
       b label4(5any, 7any)
     label6(local=false)():
       b label2(0any)
+    |}]
+
+let%expect_test "CBranch with both labels the same with different arguments" =
+  let cfg = Examples.cbranch_same_label in
+  let cfg =
+    Normalize.Cfg.Blocks.fold
+      (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
+      cfg Undag.Cfg.empty
+  in
+  let _, cfg = codegen_function ~args:[] (State.init ()) cfg in
+  Format.printf "%a" Arm.Printer.pp_graph cfg;
+  [%expect
+    {|
+      mov 0any, #3
+      mov 1any, #2
+      mov 2any, #1
+      mov 3any, #0
+      b label1
+    label1(local=false)():
+      mov 4any, 3any
+      cmp 5(reuse=%4), 4any, 2any
+      csel 6any, #1, 3any, eq
+      csel 7any, 2any, #2, eq
+      csel 8any, 1any, 0any, eq
+      b label2(6any, 7any, 8any)
+    label2(local=false)(9any, 10any, 11any):
+      exit
     |}]

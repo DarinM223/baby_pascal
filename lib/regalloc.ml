@@ -1201,6 +1201,34 @@ struct
     in
     Regalloc.color_graph alloc_state args cfg k_prefs
 end
+module ArmHelper
+    (Loop :
+      Loopnesting.S
+        with type Dom.label = Arm.Cfg.label
+         and type Dom.position = int
+         and type Dom.uid = int
+         and type Dom.graph = Arm.Cfg.graph) =
+struct
+  module Regalloc =
+    Make (Arm.Target) (Arm.Cfg) (Select_arm.State) (Spill.Arm.Liveness)
+      (Loop.Dom)
+  let regalloc ?(args = Arm.Target.RegSet.empty)
+      ?(regs =
+        Arm.Regs.int_regs |> Array.of_list
+        |> Array.map (fun r -> Arm.Target.Physical r)) state cfg k_prefs =
+    (* have to recalculate because added spills may have modified the instruction numbers *)
+    let liveness = Spill.Arm.Liveness.calc cfg in
+    let module Freq = Execfreq.Make (Arm.Cfg) (Loop) (Arm.ExecfreqRequirements)
+    in
+    let block_execution_frequency uid =
+      Freq.bfreq.(Loop.Dom.position_of_uid uid)
+    in
+    let alloc_state =
+      Regalloc.init_state ~select_state:state ~block_execution_frequency
+        ~liveness ~regs
+    in
+    Regalloc.color_graph alloc_state args cfg k_prefs
+end
 
 let%expect_test "Nested loops register allocation" =
   let cfg = Examples.nested_loops in
