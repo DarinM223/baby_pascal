@@ -27,7 +27,12 @@ let process_file filename =
       Compile.X86.write_file out program;
       flush out;
       close_out out
-    | AARCH64 -> failwith "AARCH64 not supported yet"
+    | AARCH64 ->
+      let program = Compile.Arm.compile program in
+      let out = open_out (Format.sprintf "%s.s" (Filename.basename filename)) in
+      Compile.Arm.write_file out program;
+      flush out;
+      close_out out
     end
   | None -> Format.printf "Error parsing file\n"
 let () =

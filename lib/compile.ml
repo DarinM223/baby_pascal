@@ -165,8 +165,7 @@ module Arm = struct
               Option.equal Arm.Target.equal_reg state.frame_pointer
                 (Some (Physical r))
             then None
-            else if reg <> "x10" && reg <> "sp" then
-              Some (Arm.Target.Physical r)
+            else if reg <> "x10" then Some (Arm.Target.Physical r)
             else None)
         |> Array.of_list
       in
@@ -180,7 +179,7 @@ module Arm = struct
       Format.printf "===================================\n";
       Format.printf "%a\n" Arm.Printer.pp_graph cfg;
       let cfg = Arm.Sequentialize.sequentialize cfg in
-      (* let cfg = Cleanup_x86.cleanup state Arm.Regs.x10 cfg in *)
+      let cfg = Cleanup_arm.cleanup state Arm.Regs.x10 Arm.Regs.x11 cfg in
       ((state.stack_offset, state.frame_pointer), cfg)
     in
     compile_shared lower_isa program

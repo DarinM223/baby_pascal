@@ -86,6 +86,7 @@ module Target = struct
         index : reg;
         scale : int;
         displacement : int;
+        preindexed : bool;
       }
     | StackSlot of {
         relative_to_base : bool;
@@ -102,9 +103,11 @@ module Target = struct
     | Reg r -> Format.fprintf fmt "%a" pp_reg r
     | MemAddr { displacement = 0; base; scale = 0; _ } ->
       Format.fprintf fmt "[%a]" pp_reg base
-    | MemAddr { displacement; base; scale = 0; _ } ->
+    | MemAddr { displacement; base; scale = 0; preindexed = true; _ } ->
+      Format.fprintf fmt "[%a, %d]!" pp_reg base displacement
+    | MemAddr { displacement; base; scale = 0; preindexed = false; _ } ->
       Format.fprintf fmt "[%a, %d]" pp_reg base displacement
-    | MemAddr { displacement = 0; base; scale; index } ->
+    | MemAddr { displacement = 0; base; scale; index; _ } ->
       Format.fprintf fmt "[%a, %a, lsl %d]" pp_reg base pp_reg index
         (int_of_float (log (float_of_int scale) /. log 2.))
     | MemAddr _ ->
@@ -458,7 +461,7 @@ module Writer = struct
     Format.fprintf fmt "%s %a" i.Target.instr pp_operands
       (List.filter
          (fun op -> not (Target.is_tombstone op))
-         (CCList.drop i.hidden_uses i.uses @ CCList.drop i.hidden_defs i.defs))
+         (CCList.drop i.hidden_defs i.defs @ CCList.drop i.hidden_uses i.uses))
   let pp_label fmt (_, l) = Format.fprintf fmt "%s" l
   type first = Cfg.first =
     | Entry

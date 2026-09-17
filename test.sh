@@ -62,6 +62,24 @@ else
   exit 1
 fi
 
+if [ -v AARCH ]; then
+  dune exec compile -- -arm examples/factorial.pas &> /dev/null
+  if [ $? -ne 0 ]; then
+      echo "factorial compilation failed"
+      exit 1
+  fi
+  ./build-aarch.sh factorial.pas
+  ./run-aarch.sh factorial.pas > factorial.pas.test
+  if cmp --silent factorial.pas.test examples/factorial.pas.expected; then
+    echo "factorial test succeeded"
+  else
+    echo "factorial test failed"
+    echo "Diff:"
+    diff factorial.pas.test examples/factorial.pas.expected
+    exit 1
+  fi
+fi
+
 dune exec compile -- -x86_64 examples/collatz.pas &> /dev/null
 if [ $? -ne 0 ]; then
     echo "collatz compilation failed"

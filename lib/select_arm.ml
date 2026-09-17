@@ -300,7 +300,13 @@ module Select = struct
       | Reg reg ->
         let src =
           Target.MemAddr
-            { base = reg; displacement = 0; scale = 0; index = reg }
+            {
+              base = reg;
+              displacement = 0;
+              scale = 0;
+              index = reg;
+              preindexed = false;
+            }
         in
         Target.mov ~dest ~src @> k dest
       | _ -> failwith "Select_Arm: expected source of load to be a register"
@@ -312,7 +318,13 @@ module Select = struct
       | Reg reg ->
         let dest =
           Target.MemAddr
-            { base = reg; displacement = 0; scale = 0; index = reg }
+            {
+              base = reg;
+              displacement = 0;
+              scale = 0;
+              index = reg;
+              preindexed = false;
+            }
         in
         Target.mov ~dest ~src:value @> k (Imm 0)
       | _ ->
