@@ -149,6 +149,21 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
   let go_block cfg block =
     let head, tail = Cfg.unzip block in
     let ( @> ) i t = Cfg.Tail (Instruction i, t) in
+    let move_immediates_to_temps src1 src2 ~modify ~no_imms =
+      begin match (src1, src2) with
+      | (Target.Imm _ as src1), (Target.Imm _ as src2) ->
+        Target.mov ~dest:(Reg (Physical tmp1)) ~src:src1
+        @> Target.mov ~dest:(Reg (Physical tmp2)) ~src:src2
+        @> modify (Target.Reg (Physical tmp1)) (Target.Reg (Physical tmp2))
+      | (Imm _ as src1), src2 ->
+        Target.mov ~dest:(Reg (Physical tmp1)) ~src:src1
+        @> modify (Target.Reg (Physical tmp1)) src2
+      | src1, (Imm _ as src2) ->
+        Target.mov ~dest:(Reg (Physical tmp1)) ~src:src2
+        @> modify src1 (Target.Reg (Physical tmp1))
+      | _ -> no_imms src1 src2
+      end
+    in
     let rec go_tail = function
       | Cfg.Tail (Instruction i, tail) ->
         begin match i with
@@ -159,25 +174,22 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
            (Imm _ as src1) :: src2 :: rest | src1 :: (Imm _ as src2) :: rest;
          _;
         } ->
-          begin match (src1, src2) with
-          | (Imm _ as src1), (Imm _ as src2) ->
-            Target.mov ~dest:(Reg (Physical tmp1)) ~src:src1
-            @> Target.mov ~dest:(Reg (Physical tmp2)) ~src:src2
-            @> {
-                 i with
-                 uses = Reg (Physical tmp1) :: Reg (Physical tmp2) :: rest;
-               }
-            @> go_tail tail
-          | (Imm _ as src1), src2 ->
-            Target.mov ~dest:(Reg (Physical tmp1)) ~src:src1
-            @> { i with uses = Reg (Physical tmp1) :: src2 :: rest }
-            @> go_tail tail
-          | src1, (Imm _ as src2) ->
-            Target.mov ~dest:(Reg (Physical tmp1)) ~src:src2
-            @> { i with uses = src1 :: Reg (Physical tmp1) :: rest }
-            @> go_tail tail
-          | _, _ -> failwith "cleanup_arm: this shouldn't with csel"
-          end
+          move_immediates_to_temps src1 src2
+            ~modify:(fun src1 src2 ->
+              { i with uses = src1 :: src2 :: rest } @> go_tail tail)
+            ~no_imms:(fun _ _ ->
+              failwith "cleanup_arm: this shouldn't with csel")
+        (* lower mul and sdiv with immediate operands *)
+        | {
+         Target.instr = "mul" | "sdiv";
+         defs = _;
+         uses = src1 :: src2 :: rest;
+         _;
+        } ->
+          move_immediates_to_temps src1 src2
+            ~modify:(fun src1 src2 ->
+              { i with uses = src1 :: src2 :: rest } @> go_tail tail)
+            ~no_imms:(fun _ _ -> i @> go_tail tail)
         (* lower moves with two memory operands *)
         | {
          Target.instr = "mov";
