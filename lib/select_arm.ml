@@ -292,7 +292,22 @@ module Select = struct
              ( Target.cbranch ~args:[ src1; src2 ] cond l1 l1args l2 l2args,
                l1,
                l2 ))
-    | Undag.Target.Alloca _ -> failwith "todo"
+    | Undag.Target.Alloca (dest, size) ->
+      let open Target in
+      let dest = assign_vreg Int dest in
+      if state.curr_block <> X86.Cfg.entry_uid then begin
+        state.frame_pointer <- Some (Physical Regs.x29);
+        (* for dynamic allocas, you need to manually increase the stack *)
+        instr "sub" ~defs:[ Reg (Physical Regs.sp) ]
+          ~uses:[ Reg (Physical Regs.sp); Imm size ]
+        @> mov ~dest ~src:(Reg (Physical Regs.sp))
+        @> k dest
+      end
+      else begin
+        (* alloca in entry block, so use it as a stack slot *)
+        let slot = state.new_stack_slot size in
+        mov ~dest ~src:slot @> k dest
+      end
     | Undag.Target.Load (dest, src) ->
       let dest = assign_vreg (reg_class_of_operand dest) dest in
       let* src = translate_operand src in

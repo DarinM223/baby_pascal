@@ -8,6 +8,11 @@ module RegHashtbl = CCHashtbl.Make (Arm.Target.Reg)
 let align_stack_offset called_function offset =
   if called_function && offset mod 16 <> 0 then offset + 8 else offset
 
+let ( @> ) i t = Cfg.Tail (Instruction i, t)
+let rec append_tail head = function
+  | Cfg.Tail (i, tail) -> append_tail (Cfg.Head (head, i)) tail
+  | Cfg.Last _ -> head
+
 let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
     (tmp2 : Target.physical_reg) (cfg : Cfg.graph) : Cfg.graph =
   let callee_save =
@@ -27,6 +32,27 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
       record_reg index
     | Label (_, args) -> List.iter record_operand args
     | _ -> ()
+  in
+  (* loads and stores can't have sp as an operand so use temporaries in that case *)
+  let store ~dest ~src =
+    match src with
+    | Target.Reg (Physical phys) when Target.equal_physical_reg phys Arm.Regs.sp
+      ->
+      fun t ->
+        Target.mov ~dest:(Reg (Physical tmp1)) ~src
+        @> Target.instr "str" ~defs:[] ~uses:[ Reg (Physical tmp1); dest ]
+        @> t
+    | _ -> fun t -> Target.instr "str" ~defs:[] ~uses:[ src; dest ] @> t
+  in
+  let load ~dest ~src =
+    match dest with
+    | Target.Reg (Physical phys) when Target.equal_physical_reg phys Arm.Regs.sp
+      ->
+      fun t ->
+        Target.instr "ldr" ~defs:[ Reg (Physical tmp1) ] ~uses:[ src ]
+        @> Target.mov ~dest ~src:(Reg (Physical tmp1))
+        @> t
+    | _ -> fun t -> Target.instr "ldr" ~defs:[ dest ] ~uses:[ src ] @> t
   in
   let restore tail =
     let aligned_stack_offset =
@@ -67,10 +93,7 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
         else tail
     in
     RegHashtbl.fold
-      (fun reg slot tail ->
-        Cfg.Tail
-          ( Cfg.Instruction (Target.instr "ldr" ~defs:[ Reg reg ] ~uses:[ slot ]),
-            tail ))
+      (fun reg slot -> load ~dest:(Reg reg) ~src:slot)
       used_callee_saves tail
   in
   let prelude head =
@@ -116,10 +139,7 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
     in
     RegHashtbl.fold
       (fun reg slot head ->
-        Cfg.Head
-          ( head,
-            Cfg.Instruction
-              (Target.instr "str" ~defs:[] ~uses:[ Reg reg; slot ]) ))
+        append_tail head (store ~dest:slot ~src:(Reg reg) (Cfg.Last Cfg.Exit)))
       used_callee_saves head
   in
   let lower_immediate_jump f = function
@@ -148,7 +168,6 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
   in
   let go_block cfg block =
     let head, tail = Cfg.unzip block in
-    let ( @> ) i t = Cfg.Tail (Instruction i, t) in
     let move_immediates_to_temps src1 src2 ~modify ~no_imms =
       begin match (src1, src2) with
       | (Target.Imm _ as src1), (Target.Imm _ as src2) ->
@@ -207,7 +226,7 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
          uses = [ src ];
          _;
         } ->
-          Target.instr "str" ~defs:[] ~uses:[ src; dest ] @> go_tail tail
+          store ~dest ~src (go_tail tail)
         (* lower move with source memory operand into load *)
         | {
          Target.instr = "mov";
@@ -215,7 +234,7 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
          uses = [ ((MemAddr _ | StackSlot _) as src) ];
          _;
         } ->
-          Target.instr "ldr" ~defs:[ dest ] ~uses:[ src ] @> go_tail tail
+          load ~dest ~src (go_tail tail)
         (* remove redundant moves *)
         | { Target.instr = "mov"; defs = [ dest ]; uses = [ src ]; _ }
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->

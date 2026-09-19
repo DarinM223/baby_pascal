@@ -120,6 +120,10 @@ struct
         (Format.asprintf "find_reg: couldn't find index for register %a"
            Target.pp_reg reg)
 
+  let vreg_id = function
+    | Target.Virtual vreg -> Some vreg.id
+    | _ -> None
+
   let load_block_state ?(copy = false) state pos =
     let copy_arr = if copy then Array.copy else fun a -> a in
     let copy_bits = if copy then CCBV.copy else fun a -> a in
@@ -783,13 +787,13 @@ struct
         (handle_operand ~def:true uid live)
         instr;
       let defs =
-        Target.defs instr |> Target.RegSet.elements |> List.map Target.index
+        Target.defs instr |> Target.RegSet.elements |> List.filter_map vreg_id
         |> CCBV.of_list
       in
       CCBV.diff_into ~into:live defs;
       iter_of_fold Target.fold_reg_uses (handle_operand uid live) instr;
       let uses =
-        Target.uses instr |> Target.RegSet.elements |> List.map Target.index
+        Target.uses instr |> Target.RegSet.elements |> List.filter_map vreg_id
         |> CCBV.of_list
       in
       CCBV.union_into ~into:live uses;
@@ -800,7 +804,7 @@ struct
       let uid = G.id block in
       let live_out = state.liveness.live_out uid in
       let live =
-        CCBV.of_list (List.map Target.index (Target.RegSet.elements live_out))
+        CCBV.of_list (List.filter_map vreg_id (Target.RegSet.elements live_out))
       in
       let head, last = G.(goto_end (unzip block)) in
       begin match last with
@@ -823,15 +827,15 @@ struct
   let create_congruence_class state classes graph block =
     let live =
       let live_out = state.liveness.live_out (G.id block) in
-      CCBV.of_list (List.map Target.index (Target.RegSet.elements live_out))
+      CCBV.of_list (List.filter_map vreg_id (Target.RegSet.elements live_out))
     in
     let liveness_transfer instr =
       let defs =
-        Target.defs instr |> Target.RegSet.elements |> List.map Target.index
+        Target.defs instr |> Target.RegSet.elements |> List.filter_map vreg_id
         |> CCBV.of_list
       in
       let uses =
-        Target.uses instr |> Target.RegSet.elements |> List.map Target.index
+        Target.uses instr |> Target.RegSet.elements |> List.filter_map vreg_id
         |> CCBV.of_list
       in
       CCBV.diff_into ~into:live defs;
@@ -839,7 +843,13 @@ struct
     in
     let handle_jump_arg succ args i arg =
       let succ = G.idd (Some succ) in
-      let live = state.liveness.live_in succ in
+      let live =
+        Target.RegSet.filter
+          (function
+            | Target.Virtual _ -> true
+            | _ -> false)
+          (state.liveness.live_in succ)
+      in
       let check_interferes v =
         Unionfind.equal_repr
           (Unionfind.find classes (Target.index v))

@@ -155,7 +155,7 @@ module Arm = struct
       let extra = Arm.Cfg.precalculate_edges cfg in
       let module Dom = Dominator.Make (Arm.Cfg) ((val extra)) in
       let module Loop = Loopnesting.Make (Arm.Cfg) (Dom) in
-      (* 31 registers - x10 register - (x29 register if frame pointer is enabled) *)
+      (* 31 registers - x10 register - x11 register - (x29 register if frame pointer is enabled) *)
       let k = 31 - 2 - if Option.is_some state.frame_pointer then 1 else 0 in
       let cfg = Spill.Arm.spill_helper ~k ~args (module Loop) state cfg in
       let regs =
@@ -165,7 +165,8 @@ module Arm = struct
               Option.equal Arm.Target.equal_reg state.frame_pointer
                 (Some (Physical r))
             then None
-            else if reg <> "x10" then Some (Arm.Target.Physical r)
+            else if reg <> "x10" && reg <> "x11" then
+              Some (Arm.Target.Physical r)
             else None)
         |> Array.of_list
       in
