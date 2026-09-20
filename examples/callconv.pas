@@ -18,10 +18,22 @@ begin
   world := sum;
 end
 
+function blah() : integer;
+begin
+  a := alloca integer 8;
+  b := alloca integer 8;
+  *a := 3;
+  *b := 4;
+  c := *a + *b;
+  blah := c;
+end
+
 begin
   // 1 + 2 + 3 + 4 + 5 + 6 + 1 (8 - 7 instead of 7 - 8)
   // Should print "Result: 22"
   printInteger(hello(1, 2, 3, 4, 5, 6, 7, 8));
   // Should print "Result: 36"
   printInteger(world(8));
+  // Should print "Result: 7"
+  printInteger(blah());
 end

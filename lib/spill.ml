@@ -519,6 +519,11 @@ struct
     let w = RegSet.of_list (CCList.take m w) in
     (head, { w; s })
 
+  (* todo: check if proper register class *)
+  let is_valid_vreg = function
+    | Target.Virtual _ -> true
+    | _ -> false
+
   let min_algorithm ~add_spills (state : spill_state) (zblock : G.zblock)
       ({ w; s } : min_state) : G.zblock * min_state =
     let uid, w =
@@ -550,7 +555,8 @@ struct
               (fun var head ->
                 Logs.debug (fun m -> m "Reloading %a\n" Target.pp_reg var);
                 G.Head (head, Instruction (reload state var)))
-              r head
+              (RegSet.filter is_valid_vreg r)
+              head
           else head
         in
         let w = RegSet.union w (Target.defs instr) in

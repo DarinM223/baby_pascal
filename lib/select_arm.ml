@@ -303,11 +303,21 @@ module Select = struct
         @> mov ~dest ~src:(Reg (Physical Regs.sp))
         @> k dest
       end
-      else begin
+      else
         (* alloca in entry block, so use it as a stack slot *)
-        let slot = state.new_stack_slot size in
-        mov ~dest ~src:slot @> k dest
-      end
+        begin match (state.new_stack_slot size, state.frame_pointer) with
+        | Target.StackSlot { relative_to_base = true; offset; _ }, Some fp ->
+          (if offset = 0 then Target.mov ~dest ~src:(Reg fp)
+           else Target.instr "add" ~defs:[ dest ] ~uses:[ Reg fp; Imm offset ])
+          @> k dest
+        | Target.StackSlot { relative_to_base = false; offset; _ }, _ ->
+          (if offset = 0 then Target.mov ~dest ~src:(Reg (Physical Regs.sp))
+           else
+             Target.instr "add" ~defs:[ dest ]
+               ~uses:[ Reg (Physical Regs.sp); Imm offset ])
+          @> k dest
+        | _ -> failwith "Expected stack slot for alloca"
+        end
     | Undag.Target.Load (dest, src) ->
       let dest = assign_vreg (reg_class_of_operand dest) dest in
       let* src = translate_operand src in

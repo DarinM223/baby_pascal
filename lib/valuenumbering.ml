@@ -202,7 +202,8 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
                 Normalize.Target.pp_reg def);
           add_expr instr' def
         in
-        iter_defs (fun def -> map_to_instr def def) instr';
+        if not (Normalize.Target.is_side_effectful instr') then
+          iter_defs (fun def -> map_to_instr def def) instr';
         Some instr'
       end
     in

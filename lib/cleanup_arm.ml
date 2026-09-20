@@ -12,6 +12,10 @@ let ( @> ) i t = Cfg.Tail (Instruction i, t)
 let rec append_tail head = function
   | Cfg.Tail (i, tail) -> append_tail (Cfg.Head (head, i)) tail
   | Cfg.Last _ -> head
+let rec prepend_head head tail =
+  match head with
+  | Cfg.Head (head, i) -> prepend_head head (Cfg.Tail (i, tail))
+  | Cfg.First _ -> tail
 
 let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
     (tmp2 : Target.physical_reg) (cfg : Cfg.graph) : Cfg.graph =
@@ -35,13 +39,16 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
   in
   (* loads and stores can't have sp as an operand so use temporaries in that case *)
   let store ~dest ~src =
+    let move_to_tmp t =
+      Target.mov ~dest:(Reg (Physical tmp1)) ~src
+      @> Target.instr "str" ~defs:[] ~uses:[ Reg (Physical tmp1); dest ]
+      @> t
+    in
     match src with
+    | Target.Imm _ -> move_to_tmp
     | Target.Reg (Physical phys) when Target.equal_physical_reg phys Arm.Regs.sp
       ->
-      fun t ->
-        Target.mov ~dest:(Reg (Physical tmp1)) ~src
-        @> Target.instr "str" ~defs:[] ~uses:[ Reg (Physical tmp1); dest ]
-        @> t
+      move_to_tmp
     | _ -> fun t -> Target.instr "str" ~defs:[] ~uses:[ src; dest ] @> t
   in
   let load ~dest ~src =
@@ -242,7 +249,26 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
         | _ ->
           List.iter record_operand i.uses;
           List.iter record_operand i.defs;
-          i @> go_tail tail
+          let tmps = ref [ tmp1; tmp2 ] in
+          (* All memory operands as uses should be moved into temporaries *)
+          let head, i =
+            Target.fold_uses
+              (fun head -> function
+                | (StackSlot _ | MemAddr _) as src ->
+                  let dest =
+                    match !tmps with
+                    | tmp :: tmps' ->
+                      tmps := tmps';
+                      Target.Reg (Physical tmp)
+                    | _ ->
+                      failwith
+                        "cleanup_arm: more than two memory operands as uses"
+                  in
+                  (append_tail head (load ~dest ~src (Last Exit)), dest)
+                | op -> (head, op))
+              (First Entry) i
+          in
+          prepend_head (Cfg.Head (head, Instruction i)) (go_tail tail)
         end
       (* lower cmp instructions into cmp + j* *)
       | Cfg.Last
@@ -279,3 +305,38 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
   let cfg = List.fold_left go_block Cfg.empty rpo in
   let (head, tail), rest = Cfg.focus_entry cfg in
   Cfg.unfocus ((prelude head, tail), rest)
+
+let%expect_test "Add with memory operands gets lowered into loads" =
+  let cfg =
+    let open Arm.Cfg in
+    let open Arm.Target in
+    unfocus
+    @@ instruction
+         (instr "add"
+            ~defs:[ Reg (Physical Arm.Regs.x0) ]
+            ~uses:
+              [
+                StackSlot { relative_to_base = true; offset = 10 };
+                MemAddr
+                  {
+                    base = Physical Arm.Regs.x1;
+                    index = Physical Arm.Regs.x1;
+                    scale = 0;
+                    displacement = 8;
+                    preindexed = false;
+                  };
+              ])
+    @@ focus_entry empty
+  in
+  let state = Select_arm.State.init () in
+  let cfg = cleanup state Arm.Regs.x10 Arm.Regs.x11 cfg in
+  Format.printf "%a" Arm.Printer.pp_graph cfg;
+  [%expect
+    {|
+    stp x29, x30, [sp, -16]!
+    ldr x10, [sp, 10]
+    ldr x11, [x1, 8]
+    add x0, x10, x11
+    ldp x29, x30, [sp], #16
+    exit
+    |}]

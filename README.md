@@ -65,7 +65,7 @@ AARCH=1 ./test.sh
 - [ ] E-graph based optimizations
 - [x] Undag into list of trees
 - [x] X86 Instruction selection (basic)
-- [ ] ARM Instruction selection
+- [x] ARM Instruction selection (basic)
 - [x] Loop nesting tree
 - [x] Block execution frequency
 - [x] SSA reconstruction
