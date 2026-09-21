@@ -1,5 +1,5 @@
 let compile_shared lower_isa program =
-  Check.check_program program;
+  let program = Check.check_program program in
   let module F = Normalize.Fresh () in
   let program =
     let open Ast in

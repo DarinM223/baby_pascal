@@ -14,6 +14,7 @@ let test_example_1 () =
             Assign ("result", Int 60) );
       ]
   in
+  let _, expr = Check.(check_stmt M.empty M.empty expr) in
   let module Fresh = Normalize.Fresh () in
   let result = Normalize.normalize (module Fresh) expr in
   let expected =
