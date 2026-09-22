@@ -1,8 +1,8 @@
 open Alcotest
 open Baby_pascal
 
-let name' s i = Normalize.(Name.update_index i (Target.name s))
-let reg' s i = Normalize.Target.Reg (name' s i)
+let name' s i = (Ast.TInteger, Normalize.(Name.update_index i (Target.name s)))
+let reg' s i = Normalize.Target.Reg (TInteger, snd (name' s i))
 
 let test_figure_19_2 () =
   let module Fresh = Normalize.Fresh () in

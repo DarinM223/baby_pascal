@@ -26,16 +26,16 @@ module NameHashtbl = CCHashtbl.Make (struct
 end)
 
 module Target = struct
-  type reg = Name.t [@@deriving show, eq]
+  type reg = Ast.typ * Name.t [@@deriving show, eq]
   type regs = reg list [@@deriving show, eq]
   let pp_regs fmt regs =
-    pp_regs fmt @@ List.filter (fun n -> not (Name.is_tombstone n)) regs
+    pp_regs fmt @@ List.filter (fun n -> not (Name.is_tombstone (snd n))) regs
   let show_regs regs =
-    show_regs @@ List.filter (fun n -> not (Name.is_tombstone n)) regs
+    show_regs @@ List.filter (fun n -> not (Name.is_tombstone (snd n))) regs
   let equal_regs a b =
     equal_regs
-      (List.filter (fun n -> not (Name.is_tombstone n)) a)
-      (List.filter (fun n -> not (Name.is_tombstone n)) b)
+      (List.filter (fun n -> not (Name.is_tombstone (snd n))) a)
+      (List.filter (fun n -> not (Name.is_tombstone (snd n))) b)
 
   (* TODO: add types to operands *)
   module Operand = struct
@@ -49,9 +49,9 @@ module Target = struct
     let destruct_label = function
       | Label (l, ops) -> Some (l, ops)
       | _ -> None
-    let tombstone = Reg Name.tombstone
+    let tombstone = Reg (Ast.TVoid, Name.tombstone)
     let is_tombstone = function
-      | Reg r -> Name.is_tombstone r
+      | Reg (_, r) -> Name.is_tombstone r
       | _ -> false
     let pp_ts f fmt operands =
       pp_ts f fmt @@ List.filter (fun o -> not (is_tombstone o)) operands
@@ -67,13 +67,19 @@ module Target = struct
   include Operand
   include Instruction.Make (Operand)
   module Reg = struct
-    include Name
+    type t = reg [@@deriving show, eq]
+    let compare (_, n1) (_, n2) = Name.compare n1 n2
+    let tombstone = (Ast.TVoid, Name.tombstone)
+    let is_tombstone (_, r) = Name.is_tombstone r
     let of_operand = function
       | Reg r -> Some r
       | _ -> None
     let to_operand r = Reg r
   end
-  module RegSet = NameSet
+  module RegSet = struct
+    include CCSet.Make (Reg)
+    let pp = pp Reg.pp
+  end
 
   let rec regset_of_operand = function
     | Const _ -> RegSet.empty
@@ -87,7 +93,7 @@ module Target = struct
       if Reg.is_tombstone reg then RegSet.empty else RegSet.singleton reg
 
   let name (s : string) : Name.t = (s, -1)
-  let reg r = Reg (name r)
+  let reg typ r = Reg (typ, name r)
 
   let uses instr =
     srcs instr |> List.map regset_of_operand
@@ -101,19 +107,22 @@ module Target = struct
     | _ -> false
 end
 
+let names_of_regs regs =
+  regs |> Target.RegSet.to_list |> List.map snd |> NameSet.of_list
+
 module Cfg = Graph.Make (Target)
 module Flow = Dataflow.Make (Cfg)
 module type Fresh = sig
-  val fresh : unit -> Target.reg
+  val fresh : Ast.typ -> Target.reg
   val new_label : unit -> Cfg.label
   val reset_names : unit -> unit
   val reset_labels : unit -> unit
 end
 module Fresh () : Fresh = struct
   let c = ref (-1)
-  let fresh () =
+  let fresh typ =
     incr c;
-    Target.name ("tmp" ^ string_of_int !c)
+    (typ, Target.name ("tmp" ^ string_of_int !c))
 
   let l = ref 0
   let new_label () =
@@ -136,25 +145,25 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
     match snd exp with
     | Ast.Typed.Int i -> k (Target.Const i)
     | Bool b -> k (Target.Const (if b then 1 else 0))
-    | Var v -> k (Target.reg v)
+    | Var v -> k (Target.reg (fst exp) v)
     | Uop (uop, e) ->
       let* e = go_expr e in
-      let tmp = Target.Reg (fresh ()) in
+      let tmp = Target.Reg (fresh (fst exp)) in
       let rest = k tmp in
       fun zgraph ->
         Cfg.instruction (Target.uop uop ~src:e ~dest:tmp) @@ rest @@ zgraph
     | Bop (bop, e1, e2) ->
       let* e1 = go_expr e1 in
       let* e2 = go_expr e2 in
-      let tmp = Target.Reg (fresh ()) in
+      let tmp = Target.Reg (fresh (fst exp)) in
       let rest = k tmp in
       fun zgraph ->
         Cfg.instruction (Target.bop bop ~src1:e1 ~src2:e2 ~dest:tmp)
         @@ rest @@ zgraph
-    | Call (f, es) -> go_call (Target.Label ((-1, f), [])) es k
+    | Call (f, es) -> go_call ~typ:(fst exp) (Target.Label ((-1, f), [])) es k
     | Load e ->
       let* e = go_expr e in
-      let tmp = Target.Reg (fresh ()) in
+      let tmp = Target.Reg (fresh (fst exp)) in
       let rest = k tmp in
       fun zgraph -> Cfg.instruction (Target.Load (tmp, e)) @@ rest @@ zgraph
   and short_circuit t f = function
@@ -174,14 +183,14 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
       let cond = Target.cond_of_bop bop in
       Cfg.cbranch ~args:[ e1; e2 ] cond ~ifso:t ~ifnot:f
     | _ -> failwith "Invalid expression for short circuiting"
-  and go_call f es k =
+  and go_call ?(typ = Ast.TVoid) f es k =
     let rec go acc = function
       | e :: es ->
         let* e = go_expr e in
         go (e :: acc) es
       | [] ->
         let es = List.rev acc in
-        let tmp = Target.Reg (fresh ()) in
+        let tmp = Target.Reg (fresh typ) in
         let rest = k tmp in
         fun zgraph ->
           Cfg.instruction (Target.call ~dest:tmp f es) @@ rest @@ zgraph
@@ -189,8 +198,9 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
     go [] es
   and go_stmt (next : Cfg.label Lazy.t) : Ast.Typed.stmt -> Cfg.nodes = function
     | Ast.Typed.Assign (v, e) ->
+      let typ = fst e in
       let* e = go_expr e in
-      Cfg.instruction @@ Target.assign ~dest:(Target.reg v) ~src:e
+      Cfg.instruction @@ Target.assign ~dest:(Target.reg typ v) ~src:e
     | Group stmts ->
       let len = List.length stmts in
       let stmts =
@@ -228,8 +238,8 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
         Cfg.label begin_label @@ branch_cond @@ Cfg.label t @@ body
         @@ Cfg.branch begin_label @@ zgraph
     | Call (f, es) -> go_call (Target.Label ((-1, f), [])) es Fun.(const id)
-    | Alloca (x, _ty, size) ->
-      Cfg.instruction (Target.Alloca (Target.reg x, size))
+    | Alloca (x, ty, size) ->
+      Cfg.instruction (Target.Alloca (Target.reg (TPointer ty) x, size))
     | Store (ptr, value) ->
       let* ptr = go_expr ptr in
       let* value = go_expr value in
@@ -239,10 +249,12 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
   let stmt = go_stmt next stmt in
   Cfg.unfocus (stmt @@ label next @@ Cfg.focus_entry Cfg.empty)
 
-let set_return fn_name (graph : Cfg.graph) : Cfg.graph =
+let set_return ret_typ fn_name (graph : Cfg.graph) : Cfg.graph =
   let zblock, rest = Cfg.focus_exit graph in
   match zblock with
   | head, Last Exit ->
     Cfg.unfocus
-      ((head, Last (Return (Target.return ~uses:[ Target.reg fn_name ]))), rest)
+      ( ( head,
+          Last (Return (Target.return ~uses:[ Target.reg ret_typ fn_name ])) ),
+        rest )
   | _ -> graph

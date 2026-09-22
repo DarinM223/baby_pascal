@@ -5,6 +5,7 @@ let test_example_1 () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -18,6 +19,7 @@ let test_example_1 () =
   let expected =
     let open Undag.Target in
     let open Undag.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction
          (bop Add ~dest:(reg "c")
@@ -35,6 +37,7 @@ let test_use_in_jump () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -48,6 +51,7 @@ let test_use_in_jump () =
   let expected =
     let open Undag.Target in
     let open Undag.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ branch
@@ -70,6 +74,7 @@ let test_example_1_treeify () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -82,6 +87,7 @@ let test_example_1_treeify () =
   let expected =
     let open Undag.Target in
     let open Undag.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -111,6 +117,7 @@ let test_graph_treeify () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -125,6 +132,7 @@ let test_graph_treeify () =
   let expected =
     let open Undag.Target in
     let open Undag.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))

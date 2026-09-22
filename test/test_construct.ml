@@ -1,13 +1,14 @@
 open Alcotest
 open Baby_pascal
 
-let name' s i = Normalize.(Name.update_index i (Target.name s))
-let reg' s i = Normalize.Target.Reg (name' s i)
+let name' s i = (Ast.TInteger, Normalize.(Name.update_index i (Target.name s)))
+let reg' s i = Normalize.Target.Reg (TInteger, snd (name' s i))
 
 let test_figure_19_2 () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ branch (1, "label1")
     @@ label (1, "label1")
@@ -21,7 +22,7 @@ let test_figure_19_2 () =
     @@ label (3, "label3")
     @@ instruction (assign ~src:(reg "b") ~dest:(reg "a"))
     @@ branch ~args:[ tombstone ] (4, "label4")
-    @@ label ~args:[ Normalize.Name.tombstone ] (4, "label4")
+    @@ label ~args:[ (TVoid, Normalize.Name.tombstone) ] (4, "label4")
     @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
     @@ branch (5, "label5")
     @@ label (5, "label5")
@@ -64,6 +65,7 @@ let test_figure_19_3 () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ branch (1, "label1")
     @@ label (1, "label1")

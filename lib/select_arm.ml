@@ -48,7 +48,7 @@ module State = struct
     r
 
   let assign_vreg { fresh_vreg; mapping; _ } clz = function
-    | Undag.Target.Reg n ->
+    | Undag.Target.Reg (_, n) ->
       let vreg = fresh_vreg clz in
       NameHashtbl.add mapping n (Reg vreg);
       vreg
@@ -110,7 +110,7 @@ module Select = struct
         Undag.Target.operand -> (Target.operand -> 'a) -> 'a = function
       | Undag.Target.Instr src -> select state src
       | Undag.Target.Const i -> fun k -> k (Target.Imm i)
-      | Undag.Target.Reg r ->
+      | Undag.Target.Reg (_, r) ->
         fun k ->
           begin try k (NameHashtbl.find mapping r)
           with Not_found ->
@@ -361,7 +361,9 @@ include Isa.Codegen (Target) (Arm.Cfg) (Select)
 
 let%expect_test "Fibonacci code generation" =
   let cfg = Examples.fibonacci in
-  let _, cfg = codegen_test_helper ~args:[ "v" ] (State.init ()) cfg in
+  let _, cfg =
+    codegen_test_helper ~args:[ (TInteger, "v") ] (State.init ()) cfg
+  in
   Format.printf "%a" Arm.Printer.pp_graph cfg;
   [%expect
     {|

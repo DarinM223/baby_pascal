@@ -5,6 +5,7 @@ let test_simple () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -17,6 +18,7 @@ let test_simple () =
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -40,6 +42,7 @@ let test_phis () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -53,7 +56,7 @@ let test_phis () =
     @@ label (2, "label2")
     @@ instruction (bop Add ~dest:(reg "e") ~src1:(reg "a") ~src2:(reg "b"))
     @@ branch ~args:[ reg "e" ] (3, "label3")
-    @@ label ~args:[ name "z" ] (3, "label3")
+    @@ label ~args:[ (TInteger, name "z") ] (3, "label3")
     @@ instruction (bop Mul ~dest:(reg "f") ~src1:(reg "d") ~src2:(reg "e"))
     @@ instruction (bop Mul ~dest:(reg "g") ~src1:(reg "f") ~src2:(reg "z"))
     @@ instruction (call ~dest:(reg "h") (Label ((100, "func"), [])) [])
@@ -62,6 +65,7 @@ let test_phis () =
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -92,6 +96,7 @@ let test_phis_reverse_postorder () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -103,13 +108,14 @@ let test_phis_reverse_postorder () =
     @@ label (1, "label1")
     @@ instruction (bop Add ~dest:(reg "d") ~src1:(reg "a") ~src2:(reg "b"))
     @@ branch ~args:[ reg "d" ] (2, "label2")
-    @@ label ~args:[ name "z" ] (2, "label2")
+    @@ label ~args:[ (TInteger, name "z") ] (2, "label2")
     @@ instruction (bop Mul ~dest:(reg "e") ~src1:(reg "z") ~src2:(reg "z"))
     @@ focus_entry empty
   in
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -136,12 +142,13 @@ let test_loop_backedge () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
     @@ instruction (bop Add ~dest:(reg "c") ~src1:(reg "a") ~src2:(reg "b"))
     @@ branch ~args:[ reg "c" ] (1, "label1")
-    @@ label ~args:[ name "z" ] (1, "label1")
+    @@ label ~args:[ (TInteger, name "z") ] (1, "label1")
     @@ cbranch
          ~args:[ reg "z"; Const 0 ]
          EQ ~ifso:(3, "label3") ~ifnot:(2, "label2")
@@ -154,12 +161,13 @@ let test_loop_backedge () =
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
     @@ instruction (assign ~src:(Const 3) ~dest:(reg "c"))
     @@ branch ~args:[ reg "c" ] (1, "label1")
-    @@ label ~args:[ name "z" ] (1, "label1")
+    @@ label ~args:[ (TInteger, name "z") ] (1, "label1")
     @@ cbranch
          ~args:[ reg "z"; Const 0 ]
          EQ ~ifso:(3, "label3") ~ifnot:(2, "label2")
@@ -184,6 +192,7 @@ let test_simplify () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 0) ~dest:(reg "zero"))
     @@ instruction (call ~dest:(reg "a") (Label ((100, "z"), [])) [])
@@ -201,6 +210,7 @@ let test_simplify () =
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (call ~dest:(reg "a") (Label ((100, "z"), [])) [])
     @@ instruction (call ~dest:(reg "b") (Label ((100, "z"), [])) [])

@@ -5,37 +5,47 @@ module NameHashtbl = Hashtbl.Make (struct
   let equal n1 n2 = label n1 = label n2
   let hash n = Hashtbl.hash (label n)
 end)
+module RegHashtbl = Hashtbl.Make (struct
+  include Target.Reg
+  let equal (_, n1) (_, n2) = Name.(label n1 = label n2)
+  let hash n = Hashtbl.hash (Name.label n)
+end)
 module IntSet = Utils.IntSet
 
 type liveness = {
   live_in : Cfg.uid -> NameSet.t;
   live_out : Cfg.uid -> NameSet.t;
 }
-type a_orig = Cfg.uid -> NameSet.t
+type a_orig = Cfg.uid -> Target.RegSet.t
 
 let uid_of_label = function
   | None -> Cfg.entry_uid
   | Some (uid, _) -> uid
 
-let name_fact () =
-  let store = IntHashtbl.create Utils.hashtbl_size in
-  {
-    Flow.init_info = NameSet.empty;
-    add_info = NameSet.union;
-    changed = (fun ~before ~after -> NameSet.(cardinal after > cardinal before));
-    skip_block = Fun.const false;
-    get = IntHashtbl.find store;
-    set = IntHashtbl.replace store;
-  }
+module Fact (Set : Set.S) = struct
+  let fact () =
+    let store = IntHashtbl.create Utils.hashtbl_size in
+    {
+      Flow.init_info = Set.empty;
+      add_info = Set.union;
+      changed = (fun ~before ~after -> Set.(cardinal after > cardinal before));
+      skip_block = Fun.const false;
+      get = IntHashtbl.find store;
+      set = IntHashtbl.replace store;
+    }
+end
+module NameFact = Fact (NameSet)
+let name_fact = NameFact.fact
+module RegFact = Fact (Target.RegSet)
 
 let calc_a_orig graph : a_orig =
-  let fact = name_fact () in
-  let handle_instruction instr a = NameSet.union a (Target.defs instr) in
+  let fact = RegFact.fact () in
+  let handle_instruction instr a = Target.RegSet.union a (Target.defs instr) in
   let analysis =
     {
       Flow.BackwardAnalysis.first_in = (fun a _ -> a);
       middle_in = (fun a (Instruction instr) -> handle_instruction instr a);
-      last_in = (fun _ _ -> NameSet.empty);
+      last_in = (fun _ _ -> Target.RegSet.empty);
     }
   in
   let analysis = (fact, analysis) in
@@ -43,13 +53,15 @@ let calc_a_orig graph : a_orig =
   fact.get
 
 let calc_live graph : liveness =
-  let liveness_fact = name_fact () in
+  let liveness_fact = NameFact.fact () in
   let first_in a = function
     | Cfg.Entry -> a
-    | Cfg.Label (_, info) -> NameSet.(diff a (of_list info.args))
+    | Cfg.Label (_, info) -> NameSet.(diff a (of_list (List.map snd info.args)))
   in
   let handle_instruction instr a =
-    NameSet.union (Target.uses instr) (NameSet.diff a (Target.defs instr))
+    NameSet.union
+      (names_of_regs (Target.uses instr))
+      (NameSet.diff a (names_of_regs (Target.defs instr)))
   in
   let calc_live_out = function
     | Cfg.Exit -> NameSet.empty
@@ -77,16 +89,17 @@ let calc_live graph : liveness =
 let insert_phis (test : Cfg.uid -> Name.t -> bool)
     (module Dom : Dominator.S with type label = Cfg.label) (a_orig : a_orig)
     (graph : Cfg.graph) =
-  let defsites : Cfg.uid NameHashtbl.t = NameHashtbl.create 100 in
+  let defsites : Cfg.uid RegHashtbl.t = RegHashtbl.create 100 in
   Cfg.Blocks.iter
-    (fun n _ -> NameSet.iter (fun a -> NameHashtbl.add defsites a n) (a_orig n))
+    (fun n _ ->
+      Target.RegSet.iter (fun a -> RegHashtbl.add defsites a n) (a_orig n))
     graph;
-  let a_phi = NameHashtbl.(create (length defsites)) in
-  let go_variable a _ graph =
+  let a_phi = NameHashtbl.create RegHashtbl.(length defsites) in
+  let go_variable (a : Target.reg) _ graph =
     let go_frontier_node (worklist, graph) node_id =
       if
-        (not (List.mem node_id (NameHashtbl.find_all a_phi a)))
-        && test node_id a
+        (not (List.mem node_id (NameHashtbl.find_all a_phi (snd a))))
+        && test node_id (snd a)
       then begin
         let zblock, graph = Cfg.focus node_id graph in
         let graph =
@@ -98,9 +111,9 @@ let insert_phis (test : Cfg.uid -> Name.t -> bool)
             in
             Cfg.unfocus (zblock, graph)
         in
-        NameHashtbl.add a_phi a node_id;
+        NameHashtbl.add a_phi (snd a) node_id;
         let worklist =
-          if not (NameSet.mem a (a_orig node_id)) then
+          if not (Target.RegSet.mem a (a_orig node_id)) then
             IntSet.add node_id worklist
           else worklist
         in
@@ -124,9 +137,9 @@ let insert_phis (test : Cfg.uid -> Name.t -> bool)
         in
         go_defsite worklist graph
     in
-    go_defsite (IntSet.of_list (NameHashtbl.find_all defsites a)) graph
+    go_defsite (IntSet.of_list (RegHashtbl.find_all defsites a)) graph
   in
-  NameHashtbl.fold go_variable defsites graph
+  RegHashtbl.fold go_variable defsites graph
 
 let insert_phis_minimal = insert_phis (fun _ _ -> true)
 
@@ -145,20 +158,20 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
       | Some (uid, _) -> Cfg.focus uid graph
     in
     let first, tail = Cfg.goto_start zblock in
-    let replace_use (use : Name.t) : Name.t =
+    let replace_use ((typ, use) : Target.reg) : Target.reg =
       let i = try NameHashtbl.find stack use with Not_found -> 0 in
-      Name.update_index i use
+      (typ, Name.update_index i use)
     in
-    let replace_def (def : Name.t) : Name.t =
+    let replace_def ((typ, def) : Target.reg) : Target.reg =
       begin try NameHashtbl.replace count def (NameHashtbl.find count def + 1)
       with Not_found -> NameHashtbl.add count def 1
       end;
       let i = NameHashtbl.find count def in
       NameHashtbl.add stack def i;
-      Name.update_index i def
+      (typ, Name.update_index i def)
     in
-    let rename_block_argument vardefs (def : Name.t) =
-      (NameSet.add def vardefs, replace_def def)
+    let rename_block_argument vardefs (def : Target.reg) =
+      (NameSet.add (snd def) vardefs, replace_def def)
     in
     let rename_instruction vardefs (instr : Target.instr) =
       let instr =
@@ -187,7 +200,7 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
         Target.map_defs
           (function
             | Reg reg ->
-              vardefs := NameSet.add reg !vardefs;
+              vardefs := NameSet.add (snd reg) !vardefs;
               Reg (replace_def reg)
             | op -> op)
           instr

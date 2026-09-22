@@ -5,6 +5,7 @@ let test_dom () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ branch (2, "")
     @@ label (2, "")
