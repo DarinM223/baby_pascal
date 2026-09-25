@@ -26,7 +26,8 @@ module NameHashtbl = CCHashtbl.Make (struct
 end)
 
 module Target = struct
-  type reg = Ast.typ * Name.t [@@deriving show, eq]
+  type reg = Ast.typ * Name.t [@@deriving show]
+  let equal_reg (_, n1) (_, n2) = Name.equal n1 n2
   type regs = reg list [@@deriving show, eq]
   let pp_regs fmt regs =
     pp_regs fmt @@ List.filter (fun n -> not (Name.is_tombstone (snd n))) regs
@@ -37,7 +38,6 @@ module Target = struct
       (List.filter (fun n -> not (Name.is_tombstone (snd n))) a)
       (List.filter (fun n -> not (Name.is_tombstone (snd n))) b)
 
-  (* TODO: add types to operands *)
   module Operand = struct
     type label = int * string [@@deriving show, eq]
     type 'a t =
