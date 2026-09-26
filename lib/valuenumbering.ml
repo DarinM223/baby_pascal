@@ -64,8 +64,9 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
     in
     let rec rewrite_with_value_number = function
       | Normalize.Target.Const i -> Normalize.Target.Const i
-      | Reg r ->
-        begin try Reg (NameHashtbl.find state.vn r) with Not_found -> Reg r
+      | Reg (typ, n) ->
+        begin try Reg (typ, NameHashtbl.find state.vn n)
+        with Not_found -> Reg (typ, n)
         end
       | Label (lab, args) -> Label (lab, List.map rewrite_with_value_number args)
     in
@@ -80,7 +81,7 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
         let preds = Dom.predecessors pos in
         (* If backedge exists, don't bother rewriting phis *)
         if List.exists (Dom.dominates pos) preds then begin
-          List.iter (fun n -> add_vn n n) info.args;
+          List.iter (fun (_, n) -> add_vn n n) info.args;
           (Label (l, info), graph)
         end
         else
@@ -119,7 +120,7 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
                 Label (l', CCList.set_at_idx idx Normalize.Target.tombstone args)
               | op -> op)
           in
-          let rewrite_arg (idx, zippers, args) arg =
+          let rewrite_arg (idx, zippers, args) (typ, arg) =
             (* If all zipper's jump arg at that position is the same,
                remove them from all zippers, and set vn for arg to it *)
             let preds_args =
@@ -135,7 +136,7 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
               CCOption.flat_map Normalize.Target.Reg.of_operand
                 (OperandSet.min_elt_opt preds_args)
             with
-            | Some vn when OperandSet.cardinal preds_args = 1 ->
+            | Some (_, vn) when OperandSet.cardinal preds_args = 1 ->
               state.changed <- true;
               add_vn arg vn;
               let remove_jump_arg = function
@@ -148,7 +149,7 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
               (idx + 1, zippers, args)
             | _ ->
               add_vn arg arg;
-              (idx + 1, zippers, arg :: args)
+              (idx + 1, zippers, (typ, arg) :: args)
           in
           let _, zippers, args =
             List.fold_left rewrite_arg (0, zippers, []) info.args
@@ -165,11 +166,12 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
       let instr' =
         instr
         |> Normalize.Target.map_uses rewrite_with_value_number
-        |> Undag.treeify_instruction (NameHashtbl.find_opt state.instr_of_vn)
+        |> Undag.treeify_instruction (fun (_, r) ->
+            NameHashtbl.find_opt state.instr_of_vn r)
         |> Simplify.remove_use_assigns |> Simplify.simplify_instruction
       in
       iter_defs
-        (fun def -> NameHashtbl.replace state.instr_of_vn def instr')
+        (fun (_, def) -> NameHashtbl.replace state.instr_of_vn def instr')
         instr;
       let instr' = Simplify.convert_instruction instr' in
       Logs.debug (fun m ->
@@ -183,8 +185,8 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
           (fun def ->
             Logs.debug (fun m ->
                 m "Adding value number %a <- %a\n" Normalize.Target.pp_reg def
-                  Normalize.Target.pp_reg vn);
-            add_vn def vn)
+                  Normalize.Name.pp vn);
+            add_vn (snd def) vn)
           instr';
         if Normalize.Target.is_side_effectful instr' then Some instr'
         else begin
@@ -196,11 +198,11 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
           Logs.debug (fun m ->
               m "Adding value number %a <- %a\n" Normalize.Target.pp_reg def
                 Normalize.Target.pp_reg vn);
-          add_vn def vn;
+          add_vn (snd def) (snd vn);
           Logs.debug (fun m ->
               m "Adding expression %a <- %a\n" Normalize.Target.pp_instr instr'
                 Normalize.Target.pp_reg def);
-          add_expr instr' def
+          add_expr instr' (snd def)
         in
         if not (Normalize.Target.is_side_effectful instr') then
           iter_defs (fun def -> map_to_instr def def) instr';

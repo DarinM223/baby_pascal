@@ -1302,7 +1302,9 @@ let%expect_test "Nested loops register allocation" =
 let%expect_test "Fibonacci register allocation" =
   let cfg = Examples.fibonacci in
   let state = Select_x86.State.init () in
-  let args, cfg = Select_x86.codegen_test_helper ~args:[ "v" ] state cfg in
+  let args, cfg =
+    Select_x86.codegen_test_helper ~args:[ (TInteger, "v") ] state cfg
+  in
   let extra = X86.Cfg.precalculate_edges cfg in
   let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
