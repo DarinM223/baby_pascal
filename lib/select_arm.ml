@@ -48,7 +48,7 @@ module State = struct
     r
 
   let assign_vreg { fresh_vreg; mapping; _ } clz = function
-    | Undag.Target.Reg n ->
+    | Undag.Target.Reg (_, n) ->
       let vreg = fresh_vreg clz in
       NameHashtbl.add mapping n (Reg vreg);
       vreg
@@ -59,7 +59,9 @@ module Select = struct
   module G = Arm.Cfg
   module State = State
 
-  let reg_class_of_operand _ = Target.Int
+  let reg_class_of_operand : Undag.Target.operand -> Target.reg_class = function
+    | Undag.Target.Reg (Ast.TInteger, _) -> Target.Int
+    | _ -> Target.Int
 
   let call_conv ~caller { State.fresh_vreg; new_stack_slot; _ } = function
     | Target.Int ->
@@ -87,10 +89,10 @@ module Select = struct
         (Target.reuse_op tmp dest :: defs, num_hidden))
   let ( @> ) i t = Cfg.Tail (Instruction i, t)
 
-  let reuse_cond fresh src1 src2 init k mk_instr =
+  let reuse_cond fresh src1_class src1 src2_class src2 init k mk_instr =
     let open Target in
-    let tmp1 = Reg (fresh (reg_class_of_operand src1)) in
-    let tmp2 = Reg (fresh (reg_class_of_operand src1)) in
+    let tmp1 = Reg (fresh src1_class) in
+    let tmp2 = Reg (fresh src2_class) in
     let args, inject = init () in
     let setters =
       List.fold_right
@@ -110,7 +112,7 @@ module Select = struct
         Undag.Target.operand -> (Target.operand -> 'a) -> 'a = function
       | Undag.Target.Instr src -> select state src
       | Undag.Target.Const i -> fun k -> k (Target.Imm i)
-      | Undag.Target.Reg r ->
+      | Undag.Target.Reg (_, r) ->
         fun k ->
           begin try k (NameHashtbl.find mapping r)
           with Not_found ->
@@ -158,6 +160,8 @@ module Select = struct
     | Undag.Target.Bop (dest, bop, src1, src2) ->
       let open Target in
       let dest = assign_vreg Int dest in
+      let src1_class = reg_class_of_operand src1 in
+      let src2_class = reg_class_of_operand src2 in
       let* src1 = translate_operand src1 in
       let* src2 = translate_operand src2 in
       let mk_bop i = instr i ~defs:[ dest ] ~uses:[ src1; src2 ] @> k dest in
@@ -166,7 +170,7 @@ module Select = struct
           (instr "cset" ~defs:[] ~uses:[ ConditionCode code ])
       in
       let reuse_cond =
-        reuse_cond fresh_vreg src1 src2
+        reuse_cond fresh_vreg src1_class src1 src2_class src2
           (fun () ->
             let tmp = Reg (fresh_vreg Int) in
             let dest = Reg (fresh_vreg Int) in
@@ -251,6 +255,8 @@ module Select = struct
       let* args = translate_operands args in
       Cfg.Last (Cfg.Branch (Target.goto l args, l))
     | Undag.Target.Cbranch (src1, src2, cond, l1, l1args, l2, l2args) ->
+      let src1_class = reg_class_of_operand src1 in
+      let src2_class = reg_class_of_operand src2 in
       let* src1 = translate_operand src1 in
       let* src2 = translate_operand src2 in
       let* l1args = translate_operands l1args in
@@ -273,7 +279,7 @@ module Select = struct
           Target.instr "csel" ~defs:[ dest ]
             ~uses:[ arg; tmp; Target.ConditionCode code ]
         in
-        reuse_cond fresh_vreg src1 src2
+        reuse_cond fresh_vreg src1_class src1 src2_class src2
           (fun () ->
             let open Target in
             let args =
@@ -361,7 +367,9 @@ include Isa.Codegen (Target) (Arm.Cfg) (Select)
 
 let%expect_test "Fibonacci code generation" =
   let cfg = Examples.fibonacci in
-  let _, cfg = codegen_test_helper ~args:[ "v" ] (State.init ()) cfg in
+  let _, cfg =
+    codegen_test_helper ~args:[ (TInteger, "v") ] (State.init ()) cfg
+  in
   Format.printf "%a" Arm.Printer.pp_graph cfg;
   [%expect
     {|

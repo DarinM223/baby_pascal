@@ -5,6 +5,7 @@ let test_simple () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(reg "x") ~dest:(reg "a"))
     @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
@@ -16,6 +17,7 @@ let test_simple () =
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(reg "x") ~dest:(reg "a"))
     @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
@@ -31,6 +33,7 @@ let test_branch () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(reg "x") ~dest:(reg "a"))
     @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
@@ -50,6 +53,7 @@ let test_branch () =
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(reg "x") ~dest:(reg "a"))
     @@ instruction (bop Add ~dest:(reg "b") ~src1:(reg "a") ~src2:(Const 1))
@@ -72,6 +76,8 @@ let test_block_args () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
+    let name s = (Ast.TInteger, name s) in
     unfocus
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "c"))
     @@ instruction (assign ~src:(Const 3) ~dest:(reg "b"))
@@ -87,10 +93,11 @@ let test_block_args () =
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ instruction (assign ~src:(Const 3) ~dest:(reg "b"))
     @@ branch ~args:[ reg "b" ] (1, "")
-    @@ label ~args:[ name "e" ] (1, "")
+    @@ label ~args:[ (TInteger, name "e") ] (1, "")
     @@ cbranch ~args:[ reg "e"; Const 0 ] EQ ~ifso:(2, "") ~ifnot:(3, "")
     @@ label (2, "")
     @@ branch ~args:[ reg "h" ] (1, "")

@@ -3,7 +3,7 @@ type liveness = {
   live_in : Normalize.Cfg.uid -> Normalize.NameSet.t;
   live_out : Normalize.Cfg.uid -> Normalize.NameSet.t;
 }
-type a_orig = Normalize.Cfg.uid -> Normalize.NameSet.t
+type a_orig = Normalize.Cfg.uid -> Normalize.Target.RegSet.t
 
 val calc_a_orig : Normalize.Flow.G.graph -> a_orig
 val calc_live : Normalize.Flow.G.graph -> liveness

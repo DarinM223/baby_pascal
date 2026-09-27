@@ -5,6 +5,8 @@ let test_block_args () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
+    let name s = (Ast.TInteger, name s) in
     unfocus
     @@ branch ~args:[ reg "a"; reg "b"; reg "c" ] (1, "")
     @@ label ~args:[ name "d"; name "e"; name "f" ] (1, "")
@@ -15,14 +17,15 @@ let test_block_args () =
     @@ exit @@ focus_entry empty
   in
   let expected =
+    let open Normalize.Target in
+    let reg = reg TInteger in
     Constprop.(
       NameMap.of_list
-        Normalize.Target.
-          [
-            (name "d", OperandSet.of_list [ (0, reg "a"); (2, reg "g") ]);
-            (name "e", OperandSet.of_list [ (0, reg "b"); (2, reg "h") ]);
-            (name "f", OperandSet.of_list [ (0, reg "c"); (2, Const 1) ]);
-          ])
+        [
+          (name "d", OperandSet.of_list [ (0, reg "a"); (2, reg "g") ]);
+          (name "e", OperandSet.of_list [ (0, reg "b"); (2, reg "h") ]);
+          (name "f", OperandSet.of_list [ (0, reg "c"); (2, Const 1) ]);
+        ])
   in
   let result = Constprop.block_args cfg in
   (check
@@ -34,6 +37,7 @@ let test_const_prop_simple () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
     unfocus
     @@ label (1, "")
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
@@ -56,6 +60,8 @@ let test_const_prop_args () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
+    let name s = (Ast.TInteger, name s) in
     unfocus
     @@ label (1, "")
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
@@ -84,6 +90,8 @@ let test_const_prop_branch () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
+    let name s = (Ast.TInteger, name s) in
     unfocus
     @@ label (1, "")
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
@@ -129,6 +137,8 @@ let test_const_prop_function_args () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
+    let name s = (Ast.TInteger, name s) in
     unfocus
     @@ label (1, "")
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "c"))
@@ -140,6 +150,8 @@ let test_const_prop_function_args () =
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
+    let name s = (Ast.TInteger, name s) in
     unfocus
     @@ label (1, "")
     @@ branch ~args:[ reg "b"; reg "a" ] (2, "")
@@ -158,6 +170,8 @@ let test_const_prop_exit () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
+    let reg = reg TInteger in
+    let name s = (Ast.TInteger, name s) in
     unfocus
     @@ label (1, "")
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))

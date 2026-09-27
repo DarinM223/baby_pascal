@@ -5,7 +5,8 @@ let compile_shared lower_isa program =
     let open Ast in
     let normalize_decl = function
       | Function (f, ps, t, body) ->
-        Function (f, ps, t, Normalize.(set_return f (normalize (module F) body)))
+        Function
+          (f, ps, t, Normalize.(set_return t f (normalize (module F) body)))
       | Procedure (f, ps, body) ->
         Procedure (f, ps, Normalize.normalize (module F) body)
     in
@@ -41,7 +42,7 @@ let compile_shared lower_isa program =
     if changed || changed' || state.changed then round (module Dom) args cfg
     else cfg
   in
-  let lower_cfg f args cfg =
+  let lower_cfg f (args : (Ast.typ * string) list) cfg =
     let extra = Normalize.Cfg.precalculate_edges cfg in
     let module Extra = (val extra) in
     let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
@@ -49,12 +50,12 @@ let compile_shared lower_isa program =
     let live = Construct.calc_live cfg in
     let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
     let cfg = Construct.rename_variables (module Dom) cfg in
-    let args = List.map (fun arg -> (arg, 0)) args in
+    let args = List.map (fun (typ, arg) -> (typ, (arg, 0))) args in
     Format.printf "===================================\n";
     Format.printf "%s's initial cfg:\n" f;
     Format.printf "===================================\n";
     Format.printf "%a\n" Normalize.Cfg.pp_graph cfg;
-    let cfg = round (module Dom) args cfg in
+    let cfg = round (module Dom) (List.map snd args) cfg in
     Format.printf "===================================\n";
     Format.printf "%s's cfg after optimization passes:\n" f;
     Format.printf "===================================\n";
@@ -79,9 +80,9 @@ let compile_shared lower_isa program =
   in
   let lower_decl = function
     | Ast.Function (f, args, ret, body) ->
-      Ast.Function (f, args, ret, lower_cfg f (List.map fst args) body)
+      Ast.Function (f, args, ret, lower_cfg f (List.map CCPair.swap args) body)
     | Ast.Procedure (f, args, body) ->
-      Ast.Procedure (f, args, lower_cfg f (List.map fst args) body)
+      Ast.Procedure (f, args, lower_cfg f (List.map CCPair.swap args) body)
   in
   let decls = List.map lower_decl program.decls in
   let main = lower_cfg "main" [] program.main in

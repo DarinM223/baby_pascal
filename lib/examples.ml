@@ -2,7 +2,7 @@ open Normalize
 
 open struct
   let name = Target.name
-  let reg = Target.reg
+  let reg = Target.reg TInteger
 end
 
 let nested_loops_ast =
@@ -33,7 +33,7 @@ let nested_loops =
         Cfg.Tail
           ( Cfg.Instruction
               (Target.Assign
-                 ( Normalize.Target.Operand.Reg (name "i"),
+                 ( Normalize.Target.Operand.Reg (TInteger, name "i"),
                    Normalize.Target.Operand.Const 0 )),
             Cfg.Last
               (Cfg.Branch (Target.Goto ((6, "label6"), []), (6, "label6"))) ) );
@@ -43,7 +43,7 @@ let nested_loops =
         Cfg.Last
           (Cfg.CBranch
              ( Target.Cbranch
-                 ( Normalize.Target.Operand.Reg (name "i"),
+                 ( Normalize.Target.Operand.Reg (TInteger, name "i"),
                    Normalize.Target.Operand.Const 100,
                    LT,
                    (3, "label3"),
@@ -56,15 +56,15 @@ let nested_loops =
         Cfg.Tail
           ( Cfg.Instruction
               (Target.Assign
-                 ( Normalize.Target.Operand.Reg (name "j"),
-                   Normalize.Target.Operand.Reg (name "i") )),
+                 ( Normalize.Target.Operand.Reg (TInteger, name "j"),
+                   Normalize.Target.Operand.Reg (TInteger, name "i") )),
             Cfg.Last
               (Cfg.Branch (Target.Goto ((4, "label4"), []), (4, "label4"))) ) );
       ( Cfg.Label ((4, "label4"), { Cfg.local = false; args = [] }),
         Cfg.Last
           (Cfg.CBranch
              ( Target.Cbranch
-                 ( Normalize.Target.Operand.Reg (name "j"),
+                 ( Normalize.Target.Operand.Reg (TInteger, name "j"),
                    Normalize.Target.Operand.Const 100,
                    LT,
                    (5, "label5"),
@@ -77,27 +77,28 @@ let nested_loops =
         Cfg.Tail
           ( Cfg.Instruction
               (Target.Bop
-                 ( Normalize.Target.Operand.Reg (name "tmp1"),
+                 ( Normalize.Target.Operand.Reg (TInteger, name "tmp1"),
                    Ast.Add,
-                   Normalize.Target.Operand.Reg (name "j"),
+                   Normalize.Target.Operand.Reg (TInteger, name "j"),
                    Normalize.Target.Operand.Const 1 )),
             Cfg.Tail
               ( Cfg.Instruction
                   (Target.Assign
-                     ( Normalize.Target.Operand.Reg (name "j"),
-                       Normalize.Target.Operand.Reg (name "tmp1") )),
+                     ( Normalize.Target.Operand.Reg (TInteger, name "j"),
+                       Normalize.Target.Operand.Reg (TInteger, name "tmp1") )),
                 Cfg.Tail
                   ( Cfg.Instruction
                       (Target.Bop
-                         ( Normalize.Target.Operand.Reg (name "tmp0"),
+                         ( Normalize.Target.Operand.Reg (TInteger, name "tmp0"),
                            Ast.Add,
-                           Normalize.Target.Operand.Reg (name "i"),
+                           Normalize.Target.Operand.Reg (TInteger, name "i"),
                            Normalize.Target.Operand.Const 1 )),
                     Cfg.Tail
                       ( Cfg.Instruction
                           (Target.Assign
-                             ( Normalize.Target.Operand.Reg (name "i"),
-                               Normalize.Target.Operand.Reg (name "tmp0") )),
+                             ( Normalize.Target.Operand.Reg (TInteger, name "i"),
+                               Normalize.Target.Operand.Reg
+                                 (TInteger, name "tmp0") )),
                         Cfg.Last
                           (Cfg.Branch
                              (Target.Goto ((4, "label4"), []), (4, "label4")))
@@ -110,6 +111,7 @@ let nested_loops =
   List.fold_left (fun acc block -> Cfg.Blocks.insert block acc) Cfg.empty blocks
 
 let cbranch_same_label =
+  let name s = (Ast.TInteger, name s) in
   let blocks =
     [
       ( Cfg.Entry,
@@ -176,7 +178,7 @@ let fibonacci =
         Cfg.Last
           (Cfg.CBranch
              ( Target.Cbranch
-                 ( Target.Operand.Reg (name "v"),
+                 ( Target.Operand.Reg (TInteger, name "v"),
                    Target.Operand.Const 1,
                    LE,
                    (2, "label2"),
@@ -187,55 +189,58 @@ let fibonacci =
                (3, "label3") )) );
       ( Cfg.Label ((1, "label1"), { Cfg.local = false; args = [] }),
         Cfg.Last
-          (Cfg.Return (Target.Return [ Target.Operand.Reg (name "fibonacci") ]))
+          (Cfg.Return
+             (Target.Return [ Target.Operand.Reg (TInteger, name "fibonacci") ]))
       );
       ( Cfg.Label ((2, "label2"), { Cfg.local = false; args = [] }),
         Cfg.Tail
           ( Cfg.Instruction
               (Target.Assign
-                 ( Target.Operand.Reg (name "fibonacci"),
-                   Target.Operand.Reg (name "v") )),
+                 ( Target.Operand.Reg (TInteger, name "fibonacci"),
+                   Target.Operand.Reg (TInteger, name "v") )),
             Cfg.Last
               (Cfg.Branch (Target.Goto ((1, "label1"), []), (1, "label1"))) ) );
       ( Cfg.Label ((3, "label3"), { Cfg.local = false; args = [] }),
         Cfg.Tail
           ( Cfg.Instruction
               (Target.Bop
-                 ( Target.Operand.Reg (name "tmp0"),
+                 ( Target.Operand.Reg (TInteger, name "tmp0"),
                    Ast.Sub,
-                   Target.Operand.Reg (name "v"),
+                   Target.Operand.Reg (TInteger, name "v"),
                    Target.Operand.Const 1 )),
             Cfg.Tail
               ( Cfg.Instruction
                   (Target.Call
-                     ( Target.Operand.Reg (name "tmp1"),
+                     ( Target.Operand.Reg (TInteger, name "tmp1"),
                        Target.Operand.Label ((-1, "fibonacci"), []),
-                       [ Target.Operand.Reg (name "tmp0") ] )),
+                       [ Target.Operand.Reg (TInteger, name "tmp0") ] )),
                 Cfg.Tail
                   ( Cfg.Instruction
                       (Target.Bop
-                         ( Target.Operand.Reg (name "tmp2"),
+                         ( Target.Operand.Reg (TInteger, name "tmp2"),
                            Ast.Sub,
-                           Target.Operand.Reg (name "v"),
+                           Target.Operand.Reg (TInteger, name "v"),
                            Target.Operand.Const 2 )),
                     Cfg.Tail
                       ( Cfg.Instruction
                           (Target.Call
-                             ( Target.Operand.Reg (name "tmp3"),
+                             ( Target.Operand.Reg (TInteger, name "tmp3"),
                                Target.Operand.Label ((-1, "fibonacci"), []),
-                               [ Target.Operand.Reg (name "tmp2") ] )),
+                               [ Target.Operand.Reg (TInteger, name "tmp2") ] )),
                         Cfg.Tail
                           ( Cfg.Instruction
                               (Target.Bop
-                                 ( Target.Operand.Reg (name "tmp4"),
+                                 ( Target.Operand.Reg (TInteger, name "tmp4"),
                                    Ast.Add,
-                                   Target.Operand.Reg (name "tmp1"),
-                                   Target.Operand.Reg (name "tmp3") )),
+                                   Target.Operand.Reg (TInteger, name "tmp1"),
+                                   Target.Operand.Reg (TInteger, name "tmp3") )),
                             Cfg.Tail
                               ( Cfg.Instruction
                                   (Target.Assign
-                                     ( Target.Operand.Reg (name "fibonacci"),
-                                       Target.Operand.Reg (name "tmp4") )),
+                                     ( Target.Operand.Reg
+                                         (TInteger, name "fibonacci"),
+                                       Target.Operand.Reg (TInteger, name "tmp4")
+                                     )),
                                 Cfg.Last
                                   (Cfg.Branch
                                      ( Target.Goto ((1, "label1"), []),

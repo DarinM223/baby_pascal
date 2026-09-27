@@ -196,5 +196,7 @@ struct
         (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
         cfg Undag.Cfg.empty
     in
-    codegen_function ~args:(List.map (fun arg -> (arg, 0)) args) state cfg
+    codegen_function
+      ~args:(List.map (fun (typ, arg) -> (typ, (arg, 0))) args)
+      state cfg
 end

@@ -44,7 +44,7 @@ let block_args graph =
               | None -> Some OperandSet.empty
               | Some a -> Some a)
             a)
-        a info.args
+        a (List.map snd info.args)
   in
   let last_in uid =
     let go_use (a : OperandSet.t NameMap.t) = function
@@ -53,7 +53,7 @@ let block_args graph =
           let args' = IntHashtbl.find args_tbl uid' in
           List.fold_left
             (fun a (arg', arg) ->
-              NameMap.update arg'
+              NameMap.update (snd arg')
                 (function
                   | None -> Some (OperandSet.singleton (uid, arg))
                   | Some set -> Some (OperandSet.add (uid, arg) set))
@@ -184,10 +184,12 @@ let constprop (block_args : OperandSet.t NameMap.t)
     (function_args : Name.t list) graph =
   let fact = state_fact () in
   let converged = ref false in
-  let args_tbl = IntHashtbl.create Utils.hashtbl_size in
+  let args_tbl : Target.regs IntHashtbl.t =
+    IntHashtbl.create Utils.hashtbl_size
+  in
   let lookup_operand a = function
     | Target.Const c -> Defined c
-    | Target.Reg r ->
+    | Target.Reg (_, r) ->
       (try NameMap.find r a.mapping with Not_found -> NeverDefined)
     | _ -> NeverDefined
   in
@@ -215,7 +217,7 @@ let constprop (block_args : OperandSet.t NameMap.t)
                  (OperandSet.to_list call_args)));
         let get_values acc = function
           | uid, Target.Const i when is_executable fact uid -> Defined i :: acc
-          | uid, Target.Reg arg when is_executable fact uid ->
+          | uid, Target.Reg (_, arg) when is_executable fact uid ->
             begin match NameMap.find_opt arg a.mapping with
             | Some NeverDefined -> acc
             | Some v -> v :: acc
@@ -242,10 +244,10 @@ let constprop (block_args : OperandSet.t NameMap.t)
         add_mapping a arg lattice
       in
       if not !converged then begin
-        let a = List.fold_left update_block_arg a info.args in
-        let rewrite_block_arg arg =
-          match NameMap.find_opt arg a.mapping with
-          | Some (Defined _) -> Name.tombstone
+        let a = List.fold_left update_block_arg a (List.map snd info.args) in
+        let rewrite_block_arg (arg : Target.reg) : Target.reg =
+          match NameMap.find_opt (snd arg) a.mapping with
+          | Some (Defined _) -> Target.Reg.tombstone
           | _ -> arg
         in
         let args = List.map rewrite_block_arg info.args in
@@ -260,7 +262,7 @@ let constprop (block_args : OperandSet.t NameMap.t)
         end
   in
   let handle_instruction a = function
-    | Target.Assign (Reg res, arg) ->
+    | Target.Assign (Reg (_, res), arg) ->
       add_mapping a res
         (match lookup_operand a arg with
         | OverDefined -> Some OverDefined
@@ -268,28 +270,28 @@ let constprop (block_args : OperandSet.t NameMap.t)
         | Defined arg -> Some (Defined arg))
     | Target.Assign _ ->
       failwith "handle_instruction: assign destination not a name"
-    | Target.Uop (Reg res, uop, arg) ->
+    | Target.Uop (Reg (_, res), uop, arg) ->
       add_mapping a res
         (match lookup_operand a arg with
         | OverDefined -> Some OverDefined
         | NeverDefined -> None
         | Defined arg -> Some (Defined (apply_uop arg uop)))
     | Target.Uop _ -> failwith "handle_instruction: uop destination not a name"
-    | Target.Bop (Reg res, bop, lhs, rhs) ->
+    | Target.Bop (Reg (_, res), bop, lhs, rhs) ->
       add_mapping a res
         (match (lookup_operand a lhs, lookup_operand a rhs) with
         | OverDefined, _ | _, OverDefined -> Some OverDefined
         | NeverDefined, _ | _, NeverDefined -> None
         | Defined l, Defined r -> Some (Defined (apply_bop l r bop)))
     | Target.Bop _ -> failwith "handle_instruction: bop destination not a name"
-    | Target.Alloca (Reg res, _) | Target.Load (Reg res, _) ->
+    | Target.Alloca (Reg (_, res), _) | Target.Load (Reg (_, res), _) ->
       add_mapping a res (Some OverDefined)
     | Target.Alloca _ ->
       failwith "handle_instruction: alloca destination not a name"
     | Target.Load _ ->
       failwith "handle_instruction: load destination not a name"
     | Target.Store _ -> a
-    | Target.Call (Reg r, _, _) ->
+    | Target.Call (Reg (_, r), _, _) ->
       { a with mapping = NameMap.add r OverDefined a.mapping }
     | Target.Call _ ->
       failwith "handle_instruction: call destination not a name"
@@ -301,7 +303,7 @@ let constprop (block_args : OperandSet.t NameMap.t)
   in
   let middle_out a (Cfg.Instruction instr) =
     let all_defs_defined () =
-      instr |> Target.defs |> NameSet.to_list
+      instr |> Target.defs |> Target.RegSet.to_list
       |> List.map (fun n -> lookup_operand a (Reg n))
       |> List.for_all (function
         | Defined _ -> true

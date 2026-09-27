@@ -16,14 +16,14 @@ module Target = struct
     let destruct_label = function
       | Label (l, ops) -> Some (l, ops)
       | _ -> None
-    let tombstone = Reg Normalize.Name.tombstone
+    let tombstone = Normalize.Target.tombstone
     let is_tombstone = function
-      | Reg reg -> Normalize.Name.is_tombstone reg
+      | Reg reg -> Normalize.Target.Reg.is_tombstone reg
       | _ -> false
   end
   include Operand
   include Instruction.Make (Operand)
-  let reg r = Reg (Normalize.Target.name r)
+  let reg typ r = Reg (typ, Normalize.Target.name r)
 end
 
 module NameSet = Normalize.NameSet
@@ -36,7 +36,8 @@ module Convert = Converter.Make (Normalize.Target) (Target)
 open struct
   let increment = Option.fold ~none:(Some 1) ~some:(fun c -> Some (c + 1))
   let fold_uses f = Normalize.Target.fold_uses (fun acc use -> (f acc use, use))
-  let clean_regs = List.filter (fun n -> not (Normalize.Name.is_tombstone n))
+  let clean_regs =
+    List.filter (fun r -> not (Normalize.Target.Reg.is_tombstone r))
 end
 
 let treeify_instruction lookup instr =
@@ -59,8 +60,9 @@ let treeify_instruction lookup instr =
   Convert.convert convert_operand instr
 
 let treeify_block
-    ?(rewrite = fun acc -> treeify_instruction (Fun.flip NameMap.find_opt acc))
-    map (first, tail) =
+    ?(rewrite =
+      fun acc -> treeify_instruction (fun (_, r) -> NameMap.find_opt r acc)) map
+    (first, tail) =
   let first =
     match first with
     | Normalize.Cfg.Entry -> Cfg.Entry
@@ -83,7 +85,8 @@ let treeify_block
       let acc =
         NameSet.fold
           (fun def acc -> NameMap.add def rewritten acc)
-          (Normalize.Target.defs i) acc
+          (Normalize.names_of_regs (Normalize.Target.defs i))
+          acc
       in
       let acc, rest = rewrite_tail acc rest in
       (acc, Cfg.Tail (Instruction rewritten, rest))
@@ -103,7 +106,7 @@ let treeify_graph (graph : Normalize.Cfg.graph) : Cfg.graph =
 let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
   let add_uses instr acc =
     let rec fold_operand acc = function
-      | Normalize.Target.Reg r -> NameMap.update r increment acc
+      | Normalize.Target.Reg (_, r) -> NameMap.update r increment acc
       | Label (_, args) -> List.fold_left fold_operand acc args
       | _ -> acc
     in
@@ -126,9 +129,9 @@ let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
     let rec convert_operand = function
       | Normalize.Target.Const i -> Target.Const i
       | Normalize.Target.Reg reg ->
-        begin match NameMap.find_opt reg !acc with
+        begin match NameMap.find_opt (snd reg) !acc with
         | Some instr ->
-          acc := NameMap.remove reg !acc;
+          acc := NameMap.remove (snd reg) !acc;
           Target.Instr instr
         | None -> Target.Reg reg
         end
@@ -164,13 +167,15 @@ let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
         NameSet.fold
           (fun def acc ->
             acc + try NameMap.find def count with Not_found -> 0)
-          (Normalize.Target.defs i) 0
+          (Normalize.names_of_regs (Normalize.Target.defs i))
+          0
       in
       if num_uses <= 1 && not (Normalize.Target.is_side_effectful i) then
         let acc =
           NameSet.fold
             (fun def acc -> NameMap.add def rewritten acc)
-            (Normalize.Target.defs i) acc
+            (Normalize.names_of_regs (Normalize.Target.defs i))
+            acc
         in
         rewrite_tail acc rest
       else
