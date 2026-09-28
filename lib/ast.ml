@@ -4,6 +4,8 @@ type typ =
   | TVoid
   | TFunction of typ list * typ option
   | TPointer of typ
+  | TRecord of typ list
+  | TArray of typ * int
 [@@deriving show, eq]
 type uop = Not [@@deriving show, eq]
 type bop =

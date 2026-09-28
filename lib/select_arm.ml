@@ -361,6 +361,8 @@ module Select = struct
       | _ ->
         failwith "Select_Arm: expected destination of store to be a register"
       end
+    | Undag.Target.GetElementPtr _ ->
+      failwith "todo: implement getelementptr for ARM"
 end
 
 include Isa.Codegen (Target) (Arm.Cfg) (Select)

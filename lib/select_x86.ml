@@ -398,6 +398,8 @@ module Select = struct
       | _ ->
         failwith "Select_X86: expected destination of store to be a register"
       end
+    | Undag.Target.GetElementPtr _ ->
+      failwith "todo: implement getelementptr for X86"
 end
 
 include Isa.Codegen (Target) (X86.Cfg) (Select)
