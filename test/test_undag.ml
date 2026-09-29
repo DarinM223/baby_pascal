@@ -15,7 +15,8 @@ let test_example_1 () =
     @@ focus_entry empty
   in
   let block = Normalize.Cfg.(zip (fst (focus_entry cfg))) in
-  let block = Undag.undag block in
+  let module F = Undag.FreshGEP () in
+  let block = Undag.undag (module F) block in
   let expected =
     let open Undag.Target in
     let open Undag.Cfg in
@@ -47,7 +48,8 @@ let test_use_in_jump () =
     @@ exit @@ focus_entry empty
   in
   let block = Normalize.Cfg.(zip (fst (focus_entry cfg))) in
-  let block = Undag.undag block in
+  let module F = Undag.FreshGEP () in
+  let block = Undag.undag (module F) block in
   let expected =
     let open Undag.Target in
     let open Undag.Cfg in

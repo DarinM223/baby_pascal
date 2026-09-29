@@ -103,7 +103,58 @@ let treeify_graph (graph : Normalize.Cfg.graph) : Cfg.graph =
   in
   snd (List.fold_left go_block (NameMap.empty, Cfg.empty) rpo)
 
-let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
+module FreshGEP () : Normalize.Fresh = struct
+  let c = ref (-1)
+  let fresh typ =
+    incr c;
+    (typ, ("__gep_tmp", !c))
+  let new_label () = failwith "Can't create label for getelementptr"
+  let reset_names () = ()
+  let reset_labels () = ()
+end
+
+let lower_getelementptr (module F : Normalize.Fresh) (instr : Target.instr)
+    (rest : Cfg.tail) : Cfg.tail =
+  let new_tmp () = Target.Reg (F.fresh Ast.TInteger) in
+  match instr with
+  | Target.GetElementPtr (dest, typ, src, idxs) ->
+    let rec go offset tmp rest = function
+      | Ast.TPointer typ, (_, Target.Const idx) :: idxs ->
+        go (offset + idx) tmp rest (typ, idxs)
+      | Ast.TArray (typ, size), (_, Target.Const idx) :: idxs
+        when idx >= 0 && idx < size ->
+        go (offset + idx) tmp rest (typ, idxs)
+      | (Ast.TPointer typ | Ast.TArray (typ, _)), (idx_typ, idx) :: idxs ->
+        let sizeof = Ast.sizeof idx_typ in
+        (* offset += idx * sizeof(typ) *)
+        let idx =
+          if sizeof = 1 then idx
+          else
+            Target.Instr
+              (Target.bop Ast.Mul ~dest:(new_tmp ()) ~src1:idx
+                 ~src2:(Const sizeof))
+        in
+        let tmp =
+          Target.Instr
+            (Target.bop Ast.Add ~dest:(new_tmp ()) ~src1:tmp ~src2:idx)
+        in
+        go offset tmp rest (typ, idxs)
+      | Ast.TRecord _typs, _ -> failwith "todo: implement structure lowering"
+      | _, [] ->
+        Cfg.Tail
+          ( Cfg.Instruction
+              (Target.bop Ast.Add ~dest ~src1:tmp ~src2:(Const offset)),
+            rest )
+      | typ, _ ->
+        failwith
+        @@ Format.asprintf "lower_getelementptr: invalid type %a for lowering"
+             Ast.pp_typ typ
+    in
+    go 0 src rest (typ, idxs)
+  | instr -> Cfg.Tail (Instruction instr, rest)
+
+let undag (module F : Normalize.Fresh) ((first, tail) : Normalize.Cfg.block) :
+    Cfg.block =
   let add_uses instr acc =
     let rec fold_operand acc = function
       | Normalize.Target.Reg (_, r) -> NameMap.update r increment acc
@@ -180,7 +231,16 @@ let undag ((first, tail) : Normalize.Cfg.block) : Cfg.block =
         rewrite_tail acc rest
       else
         dump_mappings acc
-        @@ Cfg.Tail (Instruction rewritten, rewrite_tail NameMap.empty rest)
+        @@ lower_getelementptr
+             (module F)
+             rewritten
+             (rewrite_tail NameMap.empty rest)
   in
   let tail = rewrite_tail NameMap.empty tail in
   (first, tail)
+
+let undag_graph cfg =
+  let module F = FreshGEP () in
+  Normalize.Cfg.Blocks.fold
+    (fun _ block acc -> Cfg.Blocks.insert (undag (module F) block) acc)
+    cfg Cfg.empty

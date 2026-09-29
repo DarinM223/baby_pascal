@@ -399,7 +399,7 @@ module Select = struct
         failwith "Select_X86: expected destination of store to be a register"
       end
     | Undag.Target.GetElementPtr _ ->
-      failwith "todo: implement getelementptr for X86"
+      failwith "Select_X86: GetElementPtr should have already been lowered"
 end
 
 include Isa.Codegen (Target) (X86.Cfg) (Select)
@@ -468,11 +468,7 @@ let%expect_test "Nested loops code generation" =
 
 let%expect_test "CBranch with both labels the same with different arguments" =
   let cfg = Examples.cbranch_same_label in
-  let cfg =
-    Normalize.Cfg.Blocks.fold
-      (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
-      cfg Undag.Cfg.empty
-  in
+  let cfg = Undag.undag_graph cfg in
   let _, cfg = codegen_function ~args:[] (State.init ()) cfg in
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect

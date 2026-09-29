@@ -67,3 +67,13 @@ type 'a program = {
   main : 'a;
 }
 [@@deriving show, eq]
+
+let rec sizeof (typ : typ) : int =
+  match typ with
+  | TInteger -> 8
+  | TBoolean -> 1
+  | TVoid -> 0
+  | TFunction (_, _) -> failwith "Cannot get sizeof function"
+  | TPointer _ -> 8
+  | TRecord _ -> failwith "todo: calculate sizeof structures"
+  | TArray (typ, size) -> sizeof typ * size
