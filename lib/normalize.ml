@@ -152,6 +152,26 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
       let rest = k tmp in
       fun zgraph ->
         Cfg.instruction (Target.uop uop ~src:e ~dest:tmp) @@ rest @@ zgraph
+    | Array (((elem_typ, _) as init_expr), size) ->
+      let* init_expr = go_expr init_expr in
+      let array = Target.Reg (fresh (fst exp)) in
+      let initializers =
+        List.fold_right
+          (fun i f ->
+            fun zgraph ->
+             let ptr = Target.Reg (fresh elem_typ) in
+             Cfg.instruction
+               (Target.GetElementPtr
+                  (ptr, fst exp, array, [ (TInteger, Target.Const i) ]))
+             @@ Cfg.instruction (Target.Store (ptr, init_expr))
+             @@ f zgraph)
+          (CCList.range 0 (size - 1))
+          (fun zgraph -> zgraph)
+      in
+      let rest = k array in
+      fun zgraph ->
+        Cfg.instruction (Target.Alloca (array, Ast.sizeof (fst exp)))
+        @@ initializers @@ rest @@ zgraph
     | Bop (bop, e1, e2) ->
       let* e1 = go_expr e1 in
       let* e2 = go_expr e2 in
@@ -166,6 +186,15 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
       let tmp = Target.Reg (fresh (fst exp)) in
       let rest = k tmp in
       fun zgraph -> Cfg.instruction (Target.Load (tmp, e)) @@ rest @@ zgraph
+    | ArrayIndex (((array_typ, _) as array), ((index_typ, _) as index)) ->
+      let* array = go_expr array in
+      let* index = go_expr index in
+      let tmp = Target.Reg (fresh (fst exp)) in
+      let rest = k tmp in
+      fun zgraph ->
+        Cfg.instruction
+          (Target.GetElementPtr (tmp, array_typ, array, [ (index_typ, index) ]))
+        @@ rest @@ zgraph
   and short_circuit t f = function
     | _, Ast.Typed.Bool b -> Cfg.branch (if b then t else f)
     | _, Uop (Ast.Not, e) -> short_circuit f t e

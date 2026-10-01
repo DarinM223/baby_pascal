@@ -9,6 +9,9 @@ let rec check_expr venv fenv = function
     with Not_found ->
       failwith @@ Format.asprintf "Couldn't find variable %s" v
     end
+  | Array (init_expr, size) ->
+    let init_expr = check_expr venv fenv init_expr in
+    (TArray (fst init_expr, size), Array (init_expr, size))
   | Uop (_, e) -> check_expr venv fenv e
   | Bop (bop, l, r) ->
     let l_expected, r_expected, ret_expected =
@@ -41,6 +44,20 @@ let rec check_expr venv fenv = function
       | exception Not_found ->
         failwith @@ Format.asprintf "Couldn't find function %s" f
       end
+    end
+  | ArrayIndex (expr, index) ->
+    let expr = check_expr venv fenv expr in
+    let index = check_expr venv fenv index in
+    begin match (expr, index) with
+    | (TArray (array_typ, array_size), _), (TInteger, Int i) ->
+      if i >= 0 && i < array_size then (array_typ, ArrayIndex (expr, index))
+      else failwith (Format.sprintf "array index out of bounds: %d" i)
+    | (TArray (array_typ, _), _), (TInteger, _) ->
+      (array_typ, ArrayIndex (expr, index))
+    | _ ->
+      failwith
+        (Format.asprintf "invalid types for array index: %a and %a" pp_typ
+           (fst expr) pp_typ (fst index))
     end
   | Load expr ->
     begin match check_expr venv fenv expr with

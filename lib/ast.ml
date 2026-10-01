@@ -31,9 +31,11 @@ struct
     | Int of int
     | Bool of bool
     | Var of string
+    | Array of expr * int
     | Uop of uop * expr
     | Bop of bop * expr * expr
     | Load of expr
+    | ArrayIndex of expr * expr
     | Call of string * expr list
   and expr = expr' T.t [@@deriving show, eq]
 
