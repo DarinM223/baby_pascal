@@ -227,9 +227,9 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
     go [] es
   and go_stmt (next : Cfg.label Lazy.t) : Ast.Typed.stmt -> Cfg.nodes = function
     | Ast.Typed.Assign (v, e) ->
-      let typ = fst e in
+      let* v = go_expr v in
       let* e = go_expr e in
-      Cfg.instruction @@ Target.assign ~dest:(Target.reg typ v) ~src:e
+      Cfg.instruction @@ Target.assign ~dest:v ~src:e
     | Group stmts ->
       let len = List.length stmts in
       let stmts =

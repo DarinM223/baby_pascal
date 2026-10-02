@@ -66,9 +66,13 @@ let rec check_expr venv fenv = function
     end
 
 let rec check_stmt venv fenv = function
-  | Assign (x, e) ->
+  | Assign (Var x, e) ->
     let e = check_expr venv fenv e in
-    (M.add x (fst e) venv, Typed.Assign (x, e))
+    (M.add x (fst e) venv, Typed.Assign ((fst e, Var x), e))
+  | Assign (x, e) ->
+    let x = check_expr venv fenv x in
+    let e = check_expr venv fenv e in
+    (venv, Assign (x, e))
   | Group stmts ->
     let venv, stmts =
       List.fold_left_map (fun venv stmt -> check_stmt venv fenv stmt) venv stmts

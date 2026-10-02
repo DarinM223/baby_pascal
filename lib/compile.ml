@@ -72,6 +72,10 @@ let compile_shared lower_isa program =
     Format.printf "===================================\n";
     Format.printf "%a\n" Normalize.Cfg.pp_graph cfg;
     let cfg = Undag.undag_graph cfg in
+    Format.printf "===================================\n";
+    Format.printf "%s's cfg after undag:\n" f;
+    Format.printf "===================================\n";
+    Format.printf "%a\n" Undag.Cfg.pp_graph cfg;
     lower_isa ~f ~args ~cfg
   in
   let lower_decl = function

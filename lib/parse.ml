@@ -6,8 +6,11 @@ let print_position fmt lexbuf =
     (pos.pos_cnum - pos.pos_bol + 1)
 
 let parse_buf lexbuf =
-  try Some (Parser.program Lexer.token lexbuf)
-  with Parser.Error ->
+  try Some (Parser.program Lexer.token lexbuf) with
+  | Utils.Parser_error msg ->
+    Printf.eprintf "Invalid input: %s\n" msg;
+    None
+  | Parser.Error ->
     Format.fprintf Format.err_formatter "%a: syntax error\n" print_position
       lexbuf;
     None

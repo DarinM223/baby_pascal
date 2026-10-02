@@ -1,4 +1,4 @@
-%token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN COMMA
+%token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN LBRACK RBRACK COMMA
 %token PLUS MINUS TIMES DIV NOT AND OR LT LE GT GE
 %token VAR
 %token TRUE FALSE
@@ -21,6 +21,7 @@
 %type <Ast.stmt Ast.decl> decl
 %type <Ast.stmt> statement
 %type <Ast.expr> expr
+%type <Ast.expr> lvalue
 
 %%
 
@@ -53,14 +54,29 @@ statement:
 | IF e = expr THEN thn = statement {Ast.If (e, thn, Group [])}
 | IF e = expr THEN thn = statement ELSE els = statement {Ast.If (e, thn, els)}
 | WHILE e = expr DO body = statement {Ast.While (e, body)}
-| v = IDENT ASSIGN ALLOCA t = typ i = INT {Ast.Alloca (v, t, i)}
-| TIMES i = IDENT ASSIGN e = expr {Ast.Store (Ast.Var i, e)}
-| i = IDENT ASSIGN e = expr {Ast.Assign (i, e)}
+| TIMES e1 = lvalue ASSIGN e2 = expr {Ast.Store (e1, e2)}
+| e1 = lvalue ASSIGN rv = rvalue
+  {
+  match e1, rv with
+  | Ast.Var v, `Alloca (t, i) -> Ast.Alloca (v, t, i)
+  | _, `Exp e2 -> Ast.Assign (e1, e2)
+  | _ -> raise (Utils.Parser_error "invalid assignment statement")
+  }
 | f = IDENT LPAREN exprs = separated_list(COMMA, expr) RPAREN {Ast.Call (f, exprs)}
+
+lvalue:
+| id = IDENT {Ast.Var id}
+| e1 = lvalue LBRACK e2 = expr RBRACK {Ast.ArrayIndex (e1, e2)}
+
+rvalue:
+| ALLOCA t = typ i = INT {`Alloca (t, i)}
+| e = expr {`Exp e}
 
 expr:
 | LPAREN e = expr RPAREN {e}
 | TIMES e = expr {Ast.Load e}
+| LBRACK init = expr SEMI size = INT RBRACK {Ast.Array (init, size)}
+| lhs = expr LBRACK rhs = expr RBRACK {Ast.ArrayIndex (lhs, rhs)}
 | NOT e = expr {Ast.Uop (Not, e)}
 | lhs = expr EQUALS rhs = expr {Ast.Bop (Eq, lhs, rhs)}
 | lhs = expr NEQUALS rhs = expr {Ast.Bop (Neq, lhs, rhs)}

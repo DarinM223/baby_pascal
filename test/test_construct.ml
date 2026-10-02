@@ -116,24 +116,24 @@ let test_figure_19_4 () =
   let ast =
     Ast.Group
       [
-        Assign ("i", Int 1);
-        Assign ("j", Int 1);
-        Assign ("k", Int 0);
+        Assign (Var "i", Int 1);
+        Assign (Var "j", Int 1);
+        Assign (Var "k", Int 0);
         While
           ( Bop (Lt, Var "k", Int 100),
             If
               ( Bop (Lt, Var "j", Int 20),
                 Group
                   [
-                    Assign ("j", Var "i");
-                    Assign ("k", Bop (Add, Var "k", Int 1));
+                    Assign (Var "j", Var "i");
+                    Assign (Var "k", Bop (Add, Var "k", Int 1));
                   ],
                 Group
                   [
-                    Assign ("j", Var "k");
-                    Assign ("k", Bop (Add, Var "k", Int 2));
+                    Assign (Var "j", Var "k");
+                    Assign (Var "k", Bop (Add, Var "k", Int 2));
                   ] ) );
-        Assign ("result", Var "j");
+        Assign (Var "result", Var "j");
       ]
   in
   let _, ast = Check.(check_stmt M.empty M.empty ast) in
@@ -186,9 +186,15 @@ let test_pruned () =
   let ast =
     Ast.Group
       [
-        If (Bop (Lt, Var "i", Int 2), Assign ("y", Int 1), Assign ("y", Var "x"));
-        If (Bop (Lt, Var "i", Int 2), Assign ("z", Int 1), Assign ("z", Var "x"));
-        Assign ("result", Var "z");
+        If
+          ( Bop (Lt, Var "i", Int 2),
+            Assign (Var "y", Int 1),
+            Assign (Var "y", Var "x") );
+        If
+          ( Bop (Lt, Var "i", Int 2),
+            Assign (Var "z", Int 1),
+            Assign (Var "z", Var "x") );
+        Assign (Var "result", Var "z");
       ]
   in
   let _, ast =

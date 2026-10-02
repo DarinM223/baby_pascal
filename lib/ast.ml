@@ -40,7 +40,7 @@ struct
   and expr = expr' T.t [@@deriving show, eq]
 
   type stmt =
-    | Assign of string * expr
+    | Assign of expr * expr
     | If of expr * stmt * stmt
     | While of expr * stmt
     | Call of string * expr list

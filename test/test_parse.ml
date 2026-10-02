@@ -45,13 +45,14 @@ end
               Ast.TInteger,
               Ast.Group
                 [
-                  Ast.Assign ("add", Ast.Bop (Ast.Add, Ast.Var "a", Ast.Var "b"));
+                  Ast.Assign
+                    (Var "add", Ast.Bop (Ast.Add, Ast.Var "a", Ast.Var "b"));
                 ] );
         ];
       main =
         Ast.Group
           [
-            Ast.Assign ("result", Ast.Call ("add", [ Ast.Int 1; Ast.Int 2 ]));
+            Ast.Assign (Var "result", Ast.Call ("add", [ Ast.Int 1; Ast.Int 2 ]));
             Ast.If
               ( Ast.Bop (Ast.Gt, Ast.Var "result", Ast.Int 2),
                 Ast.Call ("print", [ Ast.Var "result" ]),
@@ -59,9 +60,10 @@ end
             Ast.If
               ( Ast.Bop (Ast.Le, Ast.Var "result", Ast.Int 2),
                 Ast.Assign
-                  ("result", Ast.Bop (Ast.Add, Ast.Var "result", Ast.Int 1)),
+                  (Var "result", Ast.Bop (Ast.Add, Ast.Var "result", Ast.Int 1)),
                 Ast.Assign
-                  ("result", Ast.Bop (Ast.Add, Ast.Var "result", Ast.Int 2)) );
+                  (Var "result", Ast.Bop (Ast.Add, Ast.Var "result", Ast.Int 2))
+              );
             Ast.Call ("foo", [ Ast.Var "result" ]);
           ];
     }

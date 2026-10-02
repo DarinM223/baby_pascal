@@ -113,17 +113,15 @@ module FreshGEP () : Normalize.Fresh = struct
   let reset_labels () = ()
 end
 
-let lower_getelementptr (module F : Normalize.Fresh) (instr : Target.instr)
-    (rest : Cfg.tail) : Cfg.tail =
-  let new_tmp () = Target.Reg (F.fresh Ast.TInteger) in
-  match instr with
+let rec lower_getelementptr (module F : Normalize.Fresh) = function
   | Target.GetElementPtr (dest, typ, src, idxs) ->
-    let rec go offset tmp rest = function
+    let new_tmp () = Target.Reg (F.fresh Ast.TInteger) in
+    let rec go offset tmp = function
       | Ast.TPointer typ, (_, Target.Const idx) :: idxs ->
-        go (offset + idx) tmp rest (typ, idxs)
+        go (offset + (idx * Ast.sizeof typ)) tmp (typ, idxs)
       | Ast.TArray (typ, size), (_, Target.Const idx) :: idxs
         when idx >= 0 && idx < size ->
-        go (offset + idx) tmp rest (typ, idxs)
+        go (offset + (idx * Ast.sizeof typ)) tmp (typ, idxs)
       | (Ast.TPointer typ | Ast.TArray (typ, _)), (idx_typ, idx) :: idxs ->
         let sizeof = Ast.sizeof idx_typ in
         (* offset += idx * sizeof(typ) *)
@@ -138,20 +136,23 @@ let lower_getelementptr (module F : Normalize.Fresh) (instr : Target.instr)
           Target.Instr
             (Target.bop Ast.Add ~dest:(new_tmp ()) ~src1:tmp ~src2:idx)
         in
-        go offset tmp rest (typ, idxs)
+        go offset tmp (typ, idxs)
       | Ast.TRecord _typs, _ -> failwith "todo: implement structure lowering"
-      | _, [] ->
-        Cfg.Tail
-          ( Cfg.Instruction
-              (Target.bop Ast.Add ~dest ~src1:tmp ~src2:(Const offset)),
-            rest )
+      | _, [] -> Target.bop Ast.Add ~dest ~src1:tmp ~src2:(Const offset)
       | typ, _ ->
         failwith
         @@ Format.asprintf "lower_getelementptr: invalid type %a for lowering"
              Ast.pp_typ typ
     in
-    go 0 src rest (typ, idxs)
-  | instr -> Cfg.Tail (Instruction instr, rest)
+    go 0 src (typ, idxs)
+  | instr ->
+    instr
+    |> Target.map_uses (function
+      | Target.Instr instr -> Instr (lower_getelementptr (module F) instr)
+      | op -> op)
+    |> Target.map_defs (function
+      | Target.Instr instr -> Instr (lower_getelementptr (module F) instr)
+      | op -> op)
 
 let undag (module F : Normalize.Fresh) ((first, tail) : Normalize.Cfg.block) :
     Cfg.block =
@@ -196,6 +197,7 @@ let undag (module F : Normalize.Fresh) ((first, tail) : Normalize.Cfg.block) :
               ops )
     in
     let instr = Convert.convert convert_operand instr in
+    let instr = lower_getelementptr (module F) instr in
     (instr, !acc)
   in
   let dump_mappings =
@@ -231,10 +233,7 @@ let undag (module F : Normalize.Fresh) ((first, tail) : Normalize.Cfg.block) :
         rewrite_tail acc rest
       else
         dump_mappings acc
-        @@ lower_getelementptr
-             (module F)
-             rewritten
-             (rewrite_tail NameMap.empty rest)
+        @@ Cfg.Tail (Instruction rewritten, rewrite_tail NameMap.empty rest)
   in
   let tail = rewrite_tail NameMap.empty tail in
   (first, tail)
