@@ -39,8 +39,8 @@ module type Target = sig
     val hash : reg -> int
     val reg : reg -> reg
   end
-  module RegSet : Set.S with type elt = reg
-  module RegMap : Map.S with type key = reg
+  module RegSet : CCSet.S with type elt = reg
+  module RegMap : CCMap.S with type key = reg
 
   type pcopy = (operand * operand) list [@@deriving show, eq]
   val is_pcopy : instr -> bool

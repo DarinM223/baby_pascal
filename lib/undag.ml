@@ -138,7 +138,11 @@ let rec lower_getelementptr (module F : Normalize.Fresh) = function
         in
         go offset tmp (typ, idxs)
       | Ast.TRecord _typs, _ -> failwith "todo: implement structure lowering"
-      | _, [] -> Target.bop Ast.Add ~dest ~src1:tmp ~src2:(Const offset)
+      | _, [] ->
+        begin match (offset, tmp) with
+        | 0, Target.Instr instr -> instr
+        | _ -> Target.bop Ast.Add ~dest ~src1:tmp ~src2:(Const offset)
+        end
       | typ, _ ->
         failwith
         @@ Format.asprintf "lower_getelementptr: invalid type %a for lowering"
