@@ -181,7 +181,7 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
         Cfg.instruction (Target.bop bop ~src1:e1 ~src2:e2 ~dest:tmp)
         @@ rest @@ zgraph
     | Call (f, es) -> go_call ~typ:(fst exp) (Target.Label ((-1, f), [])) es k
-    | Load e ->
+    | Deref e ->
       let* e = go_expr e in
       let tmp = Target.Reg (fresh (fst exp)) in
       let rest = k tmp in
@@ -226,7 +226,11 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
     in
     go [] es
   and go_stmt (next : Cfg.label Lazy.t) : Ast.Typed.stmt -> Cfg.nodes = function
-    | Ast.Typed.Assign (v, e) ->
+    | Ast.Typed.Assign ((_, Deref ptr), value) ->
+      let* ptr = go_expr ptr in
+      let* value = go_expr value in
+      Cfg.instruction (Target.Store (ptr, value))
+    | Assign (v, e) ->
       let* v = go_expr v in
       let* e = go_expr e in
       Cfg.instruction @@ Target.assign ~dest:v ~src:e
@@ -269,10 +273,6 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
     | Call (f, es) -> go_call (Target.Label ((-1, f), [])) es Fun.(const id)
     | Alloca (x, ty, size) ->
       Cfg.instruction (Target.Alloca (Target.reg (TPointer ty) x, size))
-    | Store (ptr, value) ->
-      let* ptr = go_expr ptr in
-      let* value = go_expr value in
-      Cfg.instruction (Target.Store (ptr, value))
   in
   let next = lazy (new_label ()) in
   let stmt = go_stmt next stmt in

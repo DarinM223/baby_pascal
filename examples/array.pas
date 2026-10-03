@@ -20,6 +20,6 @@ end
 
 begin
     result := sumnums();
-    // Should print "Result: 34"
+    // Should print "Result: 15"
     printInteger(result);
 end

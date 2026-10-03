@@ -34,7 +34,7 @@ struct
     | Array of expr * int
     | Uop of uop * expr
     | Bop of bop * expr * expr
-    | Load of expr
+    | Deref of expr
     | ArrayIndex of expr * expr
     | Call of string * expr list
   and expr = expr' T.t [@@deriving show, eq]
@@ -45,7 +45,6 @@ struct
     | While of expr * stmt
     | Call of string * expr list
     | Alloca of string * typ * int
-    | Store of expr * expr
     | Group of stmt list
   [@@deriving show, eq]
 end

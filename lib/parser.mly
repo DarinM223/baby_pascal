@@ -54,7 +54,6 @@ statement:
 | IF e = expr THEN thn = statement {Ast.If (e, thn, Group [])}
 | IF e = expr THEN thn = statement ELSE els = statement {Ast.If (e, thn, els)}
 | WHILE e = expr DO body = statement {Ast.While (e, body)}
-| TIMES e1 = lvalue ASSIGN e2 = expr {Ast.Store (e1, e2)}
 | e1 = lvalue ASSIGN rv = rvalue
   {
   match e1, rv with
@@ -67,6 +66,7 @@ statement:
 lvalue:
 | id = IDENT {Ast.Var id}
 | e1 = lvalue LBRACK e2 = expr RBRACK {Ast.ArrayIndex (e1, e2)}
+| TIMES e = lvalue {Ast.Deref e}
 
 rvalue:
 | ALLOCA t = typ i = INT {`Alloca (t, i)}
@@ -74,7 +74,7 @@ rvalue:
 
 expr:
 | LPAREN e = expr RPAREN {e}
-| TIMES e = expr {Ast.Load e}
+| TIMES e = expr {Ast.Deref e}
 | LBRACK init = expr SEMI size = INT RBRACK {Ast.Array (init, size)}
 | lhs = expr LBRACK rhs = expr RBRACK {Ast.ArrayIndex (lhs, rhs)}
 | NOT e = expr {Ast.Uop (Not, e)}
