@@ -9,18 +9,18 @@ let nested_loops_ast =
   let open Ast in
   Group
     [
-      Assign ("i", Int 0);
+      Assign (Var "i", Int 0);
       While
         ( Bop (Lt, Var "i", Int 100),
           Group
             [
-              Assign ("j", Var "i");
+              Assign (Var "j", Var "i");
               While
                 ( Bop (Lt, Var "j", Int 100),
                   Group
                     [
-                      Assign ("j", Bop (Add, Var "j", Int 1));
-                      Assign ("i", Bop (Add, Var "i", Int 1));
+                      Assign (Var "j", Bop (Add, Var "j", Int 1));
+                      Assign (Var "i", Bop (Add, Var "i", Int 1));
                     ] );
             ] );
     ]
@@ -153,9 +153,9 @@ let fibonacci_ast =
     let open Ast in
     If
       ( Bop (Le, Var v, Int 1),
-        Assign (fn, Var v),
+        Assign (Var fn, Var v),
         Assign
-          ( fn,
+          ( Var fn,
             Bop
               ( Add,
                 Call (fn, [ Bop (Sub, Var v, Int 1) ]),

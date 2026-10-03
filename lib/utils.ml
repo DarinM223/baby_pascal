@@ -1,3 +1,5 @@
+exception Parser_error of string
+
 module IntSet = struct
   include CCSet.Make (Int)
   let pp = pp CCInt.pp

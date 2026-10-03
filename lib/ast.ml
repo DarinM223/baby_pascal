@@ -4,6 +4,8 @@ type typ =
   | TVoid
   | TFunction of typ list * typ option
   | TPointer of typ
+  | TRecord of typ list
+  | TArray of typ * int
 [@@deriving show, eq]
 type uop = Not [@@deriving show, eq]
 type bop =
@@ -29,19 +31,20 @@ struct
     | Int of int
     | Bool of bool
     | Var of string
+    | Array of expr * int
     | Uop of uop * expr
     | Bop of bop * expr * expr
-    | Load of expr
+    | Deref of expr
+    | ArrayIndex of expr * expr
     | Call of string * expr list
   and expr = expr' T.t [@@deriving show, eq]
 
   type stmt =
-    | Assign of string * expr
+    | Assign of expr * expr
     | If of expr * stmt * stmt
     | While of expr * stmt
     | Call of string * expr list
     | Alloca of string * typ * int
-    | Store of expr * expr
     | Group of stmt list
   [@@deriving show, eq]
 end
@@ -65,3 +68,13 @@ type 'a program = {
   main : 'a;
 }
 [@@deriving show, eq]
+
+let rec sizeof (typ : typ) : int =
+  match typ with
+  | TInteger -> 8
+  | TBoolean -> 1
+  | TVoid -> 0
+  | TFunction (_, _) -> failwith "Cannot get sizeof function"
+  | TPointer _ -> 8
+  | TRecord _ -> failwith "todo: calculate sizeof structures"
+  | TArray (typ, size) -> sizeof typ * size

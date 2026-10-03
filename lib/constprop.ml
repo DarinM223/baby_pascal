@@ -288,6 +288,12 @@ let constprop (block_args : OperandSet.t NameMap.t)
       add_mapping a res (Some OverDefined)
     | Target.Alloca _ ->
       failwith "handle_instruction: alloca destination not a name"
+    | Target.GetElementPtr (Reg (_, res), _, _, _) ->
+      (* todo: constant folding of getelementptr is possible
+         if input operand + all index operands are defined *)
+      add_mapping a res (Some OverDefined)
+    | Target.GetElementPtr _ ->
+      failwith "handle_instruction: getelementptr destination not a name"
     | Target.Load _ ->
       failwith "handle_instruction: load destination not a name"
     | Target.Store _ -> a

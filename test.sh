@@ -235,3 +235,37 @@ if [ -v AARCH ]; then
     exit 1
   fi
 fi
+
+dune exec compile -- -x86_64 examples/array.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "array compilation failed"
+    exit 1
+fi
+./build.sh array.pas
+./array.pas > array.pas.test
+if cmp --silent array.pas.test examples/array.pas.expected; then
+  echo "array test succeeded"
+else
+  echo "array test failed"
+  echo "Diff:"
+  diff array.pas.test examples/array.pas.expected
+  exit 1
+fi
+
+if [ -v AARCH ]; then
+  dune exec compile -- -aarch64 examples/array.pas &> /dev/null
+  if [ $? -ne 0 ]; then
+      echo "array compilation failed"
+      exit 1
+  fi
+  ./build-aarch.sh array.pas
+  ./run-aarch.sh array.pas > array.pas.test
+  if cmp --silent array.pas.test examples/array.pas.expected; then
+    echo "array test succeeded"
+  else
+    echo "array test failed"
+    echo "Diff:"
+    diff array.pas.test examples/array.pas.expected
+    exit 1
+  fi
+fi

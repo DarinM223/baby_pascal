@@ -654,6 +654,7 @@ struct
           state.reg_current_pref.(reg) <- pref
         end;
         (head, r'.reg)
+      | Target.Virtual r' -> (head, r'.reg)
       | r -> (head, r)
     in
     let head, instr = Target.fold_reg_defs go_def head instr in

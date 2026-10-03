@@ -36,9 +36,8 @@ module Make (T : Operand) = struct
     | Return of operands
     | Uop of operand * Ast.uop * operand
     | Bop of operand * Ast.bop * operand * operand
-    (* TODO: add GetElementPtr for indexing into structs and things
-       that require more complicated address computations
-       Might have to add types to the IR as well. *)
+    (* Example: getelementptr { i32, ptr }, ptr @MyPtr, i64 0, i32 1 *)
+    | GetElementPtr of operand * Ast.typ * operand * (Ast.typ * operand) list
     | Alloca of operand * int
     | Load of operand * operand
     | Store of operand * operand
@@ -58,6 +57,7 @@ module Make (T : Operand) = struct
     | Assign (_, o) | Uop (_, _, o) | Load (_, o) -> [ o ]
     | Bop (_, _, o1, o2) | Store (o1, o2) -> [ o1; o2 ]
     | Alloca _ -> []
+    | GetElementPtr (_, _, o, tos) -> o :: List.map snd tos
   let dests = function
     | Assign (o, _) -> [ o ]
     | Call (o, _, _) -> [ o ]
@@ -66,6 +66,7 @@ module Make (T : Operand) = struct
     | Load (o, _) -> [ o ]
     | Alloca (o, _) -> [ o ]
     | Cbranch _ | Goto (_, _) | Return _ | Store _ -> []
+    | GetElementPtr (o, _, _, _) -> [ o ]
 
   let fold_uses f acc =
     let f acc op = if T.is_tombstone op then (acc, op) else f acc op in
@@ -112,6 +113,16 @@ module Make (T : Operand) = struct
       let acc, v = f acc v in
       (acc, Store (addr, v))
     | Alloca (dest, offset) -> (acc, Alloca (dest, offset))
+    | GetElementPtr (dest, typ, ptr, typed_idxs) ->
+      let acc, ptr = f acc ptr in
+      let acc, typed_idxs =
+        List.fold_left_map
+          (fun acc (typ, idx) ->
+            let acc, idx = f acc idx in
+            (acc, (typ, idx)))
+          acc typed_idxs
+      in
+      (acc, GetElementPtr (dest, typ, ptr, typed_idxs))
   let map_uses f i = snd (fold_uses (fun _ op -> ((), f op)) () i)
   let fold_defs f acc =
     let f acc op = if T.is_tombstone op then (acc, op) else f acc op in
@@ -135,6 +146,9 @@ module Make (T : Operand) = struct
       let acc, d = f acc d in
       (acc, Alloca (d, offset))
     | (Cbranch _ | Goto _ | Return _ | Store _) as op -> (acc, op)
+    | GetElementPtr (d, typ, ptr, typed_idxs) ->
+      let acc, d = f acc d in
+      (acc, GetElementPtr (d, typ, ptr, typed_idxs))
   let map_defs f i = snd (fold_defs (fun _ op -> ((), f op)) () i)
 
   let assign ~dest ~src = Assign (dest, src)
@@ -167,5 +181,7 @@ module Convert (X : Operand) (Y : Operand with type label = X.label) = struct
       | X'.Alloca (d, offset) -> Y'.Alloca (f d, offset)
       | X'.Load (d, o) -> Y'.Load (f d, f o)
       | X'.Store (o1, o2) -> Y'.Store (f o1, f o2)
+      | X'.GetElementPtr (d, typ, o, tos) ->
+        Y'.GetElementPtr (f d, typ, f o, List.map (CCPair.map_snd f) tos)
   end
 end
