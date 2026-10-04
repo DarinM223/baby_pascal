@@ -163,6 +163,85 @@ module Make (T : Operand) = struct
   let bop (op : Ast.bop) ~dest ~src1 ~src2 = Bop (dest, op, src1, src2)
 end
 
+module Writer = struct
+  module Instruction = struct
+    module Make (X : Operand) (I : module type of Make (X)) = struct
+      include X
+      include I
+      let rec pp_operand op = X.pp_operand pp_instr op
+
+      and pp_operands ops =
+        Format.pp_print_list ~pp_sep:Utils.pp_sep pp_operand ops
+
+      and pp_instr fmt = function
+        | I.Assign (dest, src) ->
+          Format.fprintf fmt "%a <- %a" pp_operand dest pp_operand src
+        | Call (dest, f, args) ->
+          Format.fprintf fmt "%a <- call %a %a" pp_operand dest pp_operand f
+            pp_operands args
+        | Goto (label, args) ->
+          Format.fprintf fmt "goto %a %a" X.pp_label label pp_operands args
+        | Cbranch (op1, op2, cond, thn, thn_args, els, els_args) ->
+          Format.fprintf fmt "cbranch %a %a %a [then: %a %a] [else: %a %a]"
+            pp_operand op1 Graph.Cond.pp cond pp_operand op2 X.pp_label thn
+            pp_operands thn_args X.pp_label els pp_operands els_args
+        | Return ops -> Format.fprintf fmt "  ret %a" pp_operands ops
+        | Uop (dest, uop, src) ->
+          Format.fprintf fmt "%a <- %a %a" pp_operand dest Ast.pp_uop uop
+            pp_operand src
+        | Bop (dest, bop, lhs, rhs) ->
+          Format.fprintf fmt "%a <- %a %a %a" pp_operand dest pp_operand lhs
+            Ast.pp_bop bop pp_operand rhs
+        | GetElementPtr (dest, typ, src, args) ->
+          let pp_arg fmt (typ, op) =
+            Format.fprintf fmt "%a %a" Ast.pp_typ typ pp_operand op
+          in
+          Format.fprintf fmt "%a <- gep %a %a %a" pp_operand dest Ast.pp_typ typ
+            pp_operand src
+            (Format.pp_print_list ~pp_sep:Utils.pp_sep pp_arg)
+            args
+        | Alloca (dest, size) ->
+          Format.fprintf fmt "%a <- alloca %d" pp_operand dest size
+        | Load (dest, src) ->
+          Format.fprintf fmt "%a <- load %a" pp_operand dest pp_operand src
+        | Store (dest, src) ->
+          Format.fprintf fmt "store %a %a" pp_operand dest pp_operand src
+    end
+    end
+  module Graph = struct
+    module Make
+        (Cfg : Graph.S with type label = int * string)
+        (Req : sig
+          val pp_instr : Format.formatter -> Cfg.Target.instr -> unit
+        end) =
+    struct
+      include Cfg
+      let pp_label fmt (_, l) = Format.fprintf fmt "%s" l
+      let pp_first fmt = function
+        | Entry -> ()
+        | Label (l, _info) -> Format.fprintf fmt "%a:" pp_label l
+      let pp_middle fmt (Instruction instr) =
+        Format.fprintf fmt "%a" Req.pp_instr instr
+      let pp_last fmt = function
+        | Exit | Return _ -> Format.fprintf fmt "ret"
+        | Branch (i, _) | CBranch (i, _, _) ->
+          Format.fprintf fmt "%a" Req.pp_instr i
+
+      let rec pp_head state fmt = function
+        | First f -> Format.fprintf fmt "%a@\n" pp_first f
+        | Head (h, m) ->
+          Format.fprintf fmt "%a  %a@\n" (pp_head state) h pp_middle m
+      let rec pp_tail fmt = function
+        | Last l -> Format.fprintf fmt "%a@\n" pp_last l
+        | Tail (m, t) -> Format.fprintf fmt "%a@\n  %a" pp_middle m pp_tail t
+      let pp_block fmt (f, t) =
+        Format.fprintf fmt "%a@\n  %a" pp_first f pp_tail t
+      let pp_graph fmt =
+        Cfg.Blocks.iter (fun _ block -> Format.fprintf fmt "%a" pp_block block)
+    end
+  end
+  end
+
 module Convert (X : Operand) (Y : Operand with type label = X.label) = struct
   module type X' = module type of Make (X)
   module type Y' = module type of Make (Y)

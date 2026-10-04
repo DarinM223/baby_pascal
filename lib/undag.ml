@@ -9,7 +9,15 @@ module Target = struct
       | Instr of 'a
       | Reg of reg
       | Label of label * 'a t list
-    [@@deriving show, eq]
+    [@@deriving eq]
+    let rec pp pp_instr fmt = function
+      | Const c -> Format.fprintf fmt "$%d" c
+      | Instr i -> Format.fprintf fmt "(%a)" pp_instr i
+      | Reg r -> Format.fprintf fmt "%%%a" pp_reg r
+      | Label (l, args) ->
+        Format.fprintf fmt "%a(%a)" pp_label l
+          (Format.pp_print_list ~pp_sep:Utils.pp_sep (pp pp_instr))
+          args
     type 'a operand = 'a t [@@deriving show, eq]
     type 'a operands = 'a t list [@@deriving show, eq]
     let label l ops = Label (l, ops)
@@ -29,6 +37,11 @@ end
 module NameSet = Normalize.NameSet
 module NameMap = Constprop.NameMap
 module Cfg = Graph.Make (Target)
+module Writer = struct
+  module Target' = Instruction.Writer.Instruction.Make (Target.Operand) (Target)
+  include Target'
+  include Instruction.Writer.Graph.Make (Cfg) (Target')
+end
 module Converter =
   Instruction.Convert (Normalize.Target.Operand) (Target.Operand)
 module Convert = Converter.Make (Normalize.Target) (Target)

@@ -54,12 +54,12 @@ let compile_shared lower_isa program =
     Format.printf "===================================\n";
     Format.printf "%s's initial cfg:\n" f;
     Format.printf "===================================\n";
-    Format.printf "%a\n" Normalize.Cfg.pp_graph cfg;
+    Format.printf "%a\n" Normalize.Writer.pp_graph cfg;
     let cfg = round (module Dom) (List.map snd args) cfg in
     Format.printf "===================================\n";
     Format.printf "%s's cfg after optimization passes:\n" f;
     Format.printf "===================================\n";
-    Format.printf "%a\n" Normalize.Cfg.pp_graph cfg;
+    Format.printf "%a\n" Normalize.Writer.pp_graph cfg;
     let module Critedgesplit =
       Critedgesplit.Make (F) (Normalize.Cfg) (Extra)
         (struct
@@ -70,12 +70,12 @@ let compile_shared lower_isa program =
     Format.printf "===================================\n";
     Format.printf "%s's cfg after critical edge split:\n" f;
     Format.printf "===================================\n";
-    Format.printf "%a\n" Normalize.Cfg.pp_graph cfg;
+    Format.printf "%a\n" Normalize.Writer.pp_graph cfg;
     let cfg = Undag.undag_graph cfg in
     Format.printf "===================================\n";
     Format.printf "%s's cfg after undag:\n" f;
     Format.printf "===================================\n";
-    Format.printf "%a\n" Undag.Cfg.pp_graph cfg;
+    Format.printf "%a\n" Undag.Writer.pp_graph cfg;
     lower_isa ~f ~args ~cfg
   in
   let lower_decl = function
@@ -96,13 +96,17 @@ module X86 = struct
       Format.printf "===================================\n";
       Format.printf "%s's cfg after codegen:\n" f;
       Format.printf "===================================\n";
-      Format.printf "%a\n" X86.Cfg.pp_graph cfg;
+      Format.printf "%a\n" X86.Printer.pp_graph cfg;
       let extra = X86.Cfg.precalculate_edges cfg in
       let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
       let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
       (* 16 registers - r10 register - rsp register - (rbp register if frame pointer is enabled) *)
       let k = 16 - 2 - if Option.is_some state.frame_pointer then 1 else 0 in
       let cfg = Spill.X86.spill_helper ~k ~args (module Loop) state cfg in
+      Format.printf "===================================\n";
+      Format.printf "%s after spilling:\n" f;
+      Format.printf "===================================\n";
+      Format.printf "%a\n" X86.Printer.pp_graph cfg;
       let regs =
         X86.Regs.int_regs
         |> List.filter_map (fun ((_, _, reg) as r) ->

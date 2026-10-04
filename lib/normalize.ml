@@ -27,6 +27,9 @@ end)
 
 module Target = struct
   type reg = Ast.typ * Name.t [@@deriving show]
+  let pp_reg fmt (typ, name) =
+    Format.fprintf fmt "%a:%a" Name.pp name Ast.pp_typ typ
+  let show_reg = Format.asprintf "%a" pp_reg
   let equal_reg (_, n1) (_, n2) = Name.equal n1 n2
   type regs = reg list [@@deriving show, eq]
   let pp_regs fmt regs =
@@ -44,7 +47,18 @@ module Target = struct
       | Const of int
       | Reg of reg
       | Label of label * 'a ts
-    and 'a ts = 'a t list [@@deriving show, eq]
+    and 'a ts = 'a t list [@@deriving eq]
+    let rec pp pp_instr fmt = function
+      | Const c -> Format.fprintf fmt "$%d" c
+      | Reg r -> Format.fprintf fmt "%%%a" pp_reg r
+      | Label (l, args) ->
+        Format.fprintf fmt "%a(%a)" pp_label l
+          (Format.pp_print_list ~pp_sep:Utils.pp_sep (pp pp_instr))
+          args
+
+    and pp_ts pp_instr = Format.pp_print_list ~pp_sep:Utils.pp_sep (pp pp_instr)
+
+    and show_ts pp_instr = Format.asprintf "%a" (pp_ts pp_instr)
     let label l ops = Label (l, ops)
     let destruct_label = function
       | Label (l, ops) -> Some (l, ops)
@@ -111,6 +125,11 @@ let names_of_regs regs =
   regs |> Target.RegSet.to_list |> List.map snd |> NameSet.of_list
 
 module Cfg = Graph.Make (Target)
+module Writer = struct
+  module Target' = Instruction.Writer.Instruction.Make (Target.Operand) (Target)
+  include Target'
+  include Instruction.Writer.Graph.Make (Cfg) (Target')
+end
 module Flow = Dataflow.Make (Cfg)
 module type Fresh = sig
   val fresh : Ast.typ -> Target.reg

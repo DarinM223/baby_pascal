@@ -96,7 +96,6 @@ module Target = struct
       }
     | Label of label * operand list
   [@@deriving eq]
-  let pp_sep fmt () = Format.fprintf fmt ", "
   let rec pp_operand' pp_reg fmt = function
     | Imm i -> Format.fprintf fmt "#%d" i
     | ConditionCode code -> Format.fprintf fmt "%a" pp_cond_code code
@@ -118,7 +117,7 @@ module Target = struct
     | Label (l, []) -> Format.fprintf fmt "%s" (snd l)
     | Label (l, args) ->
       Format.fprintf fmt "%s(%a)" (snd l)
-        (Format.pp_print_list ~pp_sep (pp_operand' pp_reg))
+        (Format.pp_print_list ~pp_sep:Utils.pp_sep (pp_operand' pp_reg))
         args
   let pp_operand = pp_operand' pp_reg
   let show_operand = Format.asprintf "%a" (pp_operand' pp_reg)
@@ -205,7 +204,7 @@ module Target = struct
       in
       Format.fprintf fmt "pcopy %a" pp_pcopy (List.combine i.defs pad_uses)
     else
-      let pp_operands = Format.pp_print_list ~pp_sep pp_operand in
+      let pp_operands = Format.pp_print_list ~pp_sep:Utils.pp_sep pp_operand in
       Format.fprintf fmt "%s %a" i.instr pp_operands (i.defs @ i.uses)
   let show_instr = Format.asprintf "%a" pp_instr
 
@@ -399,12 +398,11 @@ module Printer = struct
     | Branch of Target.instr * label
     | CBranch of Target.instr * label * label
     | Return of Target.instr
-  let pp_sep fmt () = Format.fprintf fmt ", "
   let pp_first fmt = function
     | Entry -> ()
     | Label (l, info) ->
       Format.fprintf fmt "%a(local=%b)(%a):" pp_label l info.local
-        (Format.pp_print_list ~pp_sep Target.pp_reg)
+        (Format.pp_print_list ~pp_sep:Utils.pp_sep Target.pp_reg)
         info.args
   let pp_middle fmt (Instruction instr) =
     Format.fprintf fmt "%a" Target.pp_instr instr
@@ -456,7 +454,7 @@ module Writer = struct
     | op -> Target.pp_operand' pp_reg fmt op
   let pp_instr state fmt i =
     let pp_operands =
-      Format.pp_print_list ~pp_sep:Target.pp_sep (pp_operand state)
+      Format.pp_print_list ~pp_sep:Utils.pp_sep (pp_operand state)
     in
     Format.fprintf fmt "%s %a" i.Target.instr pp_operands
       (List.filter
@@ -472,7 +470,6 @@ module Writer = struct
     | Branch of Target.instr * label
     | CBranch of Target.instr * label * label
     | Return of Target.instr
-  let pp_sep fmt () = Format.fprintf fmt ", "
   let pp_first fmt = function
     | Entry -> ()
     | Label (l, _info) -> Format.fprintf fmt "%a:" pp_label l

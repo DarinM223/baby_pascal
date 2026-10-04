@@ -6,8 +6,28 @@ type typ =
   | TPointer of typ
   | TRecord of typ list
   | TArray of typ * int
-[@@deriving show, eq]
-type uop = Not [@@deriving show, eq]
+[@@deriving eq]
+
+let rec pp_typ fmt = function
+  | TInteger -> Format.fprintf fmt "int"
+  | TBoolean -> Format.fprintf fmt "bool"
+  | TVoid -> Format.fprintf fmt "void"
+  | TFunction (args, ret) ->
+    let pp_ret fmt = function
+      | Some typ -> pp_typ fmt typ
+      | None -> Format.fprintf fmt "void"
+    in
+    Format.fprintf fmt "(%a) -> %a"
+      (Format.pp_print_list ~pp_sep:Utils.pp_sep pp_typ)
+      args pp_ret ret
+  | TPointer ptr -> Format.fprintf fmt "*%a" pp_typ ptr
+  | TRecord _ -> Format.fprintf fmt ""
+  | TArray (typ, size) -> Format.fprintf fmt "[%d]%a" size pp_typ typ
+
+type uop = Not [@@deriving eq]
+let pp_uop fmt = function
+  | Not -> Format.fprintf fmt "!"
+
 type bop =
   | Add
   | Sub
@@ -21,7 +41,21 @@ type bop =
   | Le
   | Gt
   | Ge
-[@@deriving show, eq]
+[@@deriving eq]
+
+let pp_bop fmt = function
+  | Add -> Format.fprintf fmt "+"
+  | Sub -> Format.fprintf fmt "-"
+  | Mul -> Format.fprintf fmt "*"
+  | Div -> Format.fprintf fmt "/"
+  | And -> Format.fprintf fmt "&&"
+  | Or -> Format.fprintf fmt "||"
+  | Eq -> Format.fprintf fmt "=="
+  | Neq -> Format.fprintf fmt "!="
+  | Lt -> Format.fprintf fmt "<"
+  | Le -> Format.fprintf fmt "<="
+  | Gt -> Format.fprintf fmt ">"
+  | Ge -> Format.fprintf fmt ">="
 
 module Make (T : sig
   type 'a t [@@deriving show, eq]
@@ -54,7 +88,10 @@ include Make (struct
 end)
 
 module Typed = Make (struct
-  type 'a t = typ * 'a [@@deriving show, eq]
+  type 'a t = typ * 'a [@@deriving eq]
+  let pp pp_reg fmt (typ, reg) =
+    Format.fprintf fmt "%a:%a" pp_reg reg pp_typ typ
+  let show pp_reg = Format.asprintf "%a" (pp pp_reg)
 end)
 
 type 'a decl =

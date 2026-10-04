@@ -18,6 +18,40 @@ begin
     sumnums := sum;
 end
 
+function multi() : integer;
+begin
+    matrix := [[0; 4]; 4];
+    matrix[0][0] := 1;
+    matrix[0][1] := 2;
+    matrix[0][2] := 3;
+    matrix[0][3] := 4;
+    matrix[1][0] := 1;
+    matrix[1][1] := 2;
+    matrix[1][2] := 3;
+    matrix[1][3] := 4;
+    matrix[2][0] := 1;
+    matrix[2][1] := 2;
+    matrix[2][2] := 3;
+    matrix[2][3] := 4;
+    matrix[3][0] := 1;
+    matrix[3][1] := 2;
+    matrix[3][2] := 3;
+    matrix[3][3] := 4;
+    sum := 0;
+    x := 0;
+    while x < 4 do
+    begin
+        y := 0;
+        while y < 4 do
+        begin
+            sum := sum + matrix[x][y];
+            y := y + 1;
+        end;
+        x := x + 1;
+    end;
+    multi := sum;
+end
+
 begin
     result := sumnums();
     // Should print "Result: 15"
