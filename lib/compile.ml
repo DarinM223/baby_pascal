@@ -71,11 +71,11 @@ let compile_shared lower_isa program =
     Format.printf "%s's cfg after critical edge split:\n" f;
     Format.printf "===================================\n";
     Format.printf "%a\n" Normalize.Cfg.pp_graph cfg;
-    let cfg =
-      Normalize.Cfg.Blocks.fold
-        (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
-        cfg Undag.Cfg.empty
-    in
+    let cfg = Undag.undag_graph cfg in
+    Format.printf "===================================\n";
+    Format.printf "%s's cfg after undag:\n" f;
+    Format.printf "===================================\n";
+    Format.printf "%a\n" Undag.Cfg.pp_graph cfg;
     lower_isa ~f ~args ~cfg
   in
   let lower_decl = function

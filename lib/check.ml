@@ -1,7 +1,7 @@
 open Ast
 module M = Map.Make (String)
 
-let rec check_expr venv fenv = function
+let rec check_expr ?(inside_selector = false) venv fenv = function
   | Int i -> (TInteger, Typed.Int i)
   | Bool b -> (TBoolean, Bool b)
   | Var v ->
@@ -9,6 +9,9 @@ let rec check_expr venv fenv = function
     with Not_found ->
       failwith @@ Format.asprintf "Couldn't find variable %s" v
     end
+  | Array (init_expr, size) ->
+    let init_expr = check_expr venv fenv init_expr in
+    (TArray (fst init_expr, size), Array (init_expr, size))
   | Uop (_, e) -> check_expr venv fenv e
   | Bop (bop, l, r) ->
     let l_expected, r_expected, ret_expected =
@@ -42,16 +45,41 @@ let rec check_expr venv fenv = function
         failwith @@ Format.asprintf "Couldn't find function %s" f
       end
     end
-  | Load expr ->
+  | ArrayIndex (expr, index) ->
+    let expr = check_expr ~inside_selector:true venv fenv expr in
+    let index = check_expr venv fenv index in
+    let result =
+      if inside_selector then Typed.ArrayIndex (expr, index)
+      else Typed.Deref (fst expr, ArrayIndex (expr, index))
+    in
+    begin match (expr, index) with
+    | (TArray (array_typ, array_size), _), (TInteger, Int i) ->
+      if i >= 0 && i < array_size then (array_typ, result)
+      else failwith (Format.sprintf "array index out of bounds: %d" i)
+    | (TArray (array_typ, _), _), (TInteger, _) -> (array_typ, result)
+    | _ ->
+      failwith
+        (Format.asprintf "invalid types for array index: %a and %a" pp_typ
+           (fst expr) pp_typ (fst index))
+    end
+  | Deref expr ->
     begin match check_expr venv fenv expr with
-    | (TPointer ty, _) as expr -> (ty, Load expr)
+    | (TPointer ty, _) as expr -> (ty, Deref expr)
     | _ -> failwith "Expected pointer type for load"
     end
 
 let rec check_stmt venv fenv = function
-  | Assign (x, e) ->
+  | Assign (Var x, e) ->
     let e = check_expr venv fenv e in
-    (M.add x (fst e) venv, Typed.Assign (x, e))
+    (M.add x (fst e) venv, Typed.Assign ((fst e, Var x), e))
+  | Assign (x, e) ->
+    let x = check_expr venv fenv x in
+    let e = check_expr venv fenv e in
+    if fst x <> fst e then
+      failwith
+        (Format.asprintf "Right expression is different, expected %a" pp_typ
+           (TPointer (fst e)));
+    (venv, Assign (x, e))
   | Group stmts ->
     let venv, stmts =
       List.fold_left_map (fun venv stmt -> check_stmt venv fenv stmt) venv stmts
@@ -83,14 +111,6 @@ let rec check_stmt venv fenv = function
       end
     end
   | Alloca (x, t, i) -> (M.add x (TPointer t) venv, Alloca (x, t, i))
-  | Store (lhs, rhs) ->
-    let lhs = check_expr venv fenv lhs in
-    let rhs = check_expr venv fenv rhs in
-    if fst lhs <> TPointer (fst rhs) then
-      failwith
-        (Format.asprintf "Right expression is different, expected %a" pp_typ
-           (TPointer (fst rhs)));
-    (venv, Store (lhs, rhs))
 
 let insert_header fenv = function
   | Procedure (f, xs, _) -> M.add f (List.map snd xs, None) fenv

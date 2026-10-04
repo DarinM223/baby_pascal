@@ -39,8 +39,8 @@ module type Target = sig
     val hash : reg -> int
     val reg : reg -> reg
   end
-  module RegSet : Set.S with type elt = reg
-  module RegMap : Map.S with type key = reg
+  module RegSet : CCSet.S with type elt = reg
+  module RegMap : CCMap.S with type key = reg
 
   type pcopy = (operand * operand) list [@@deriving show, eq]
   val is_pcopy : instr -> bool
@@ -191,11 +191,7 @@ struct
     let live = Construct.calc_live cfg in
     let cfg = Construct.insert_phis_pruned live (module Dom) a_orig cfg in
     let cfg = Construct.rename_variables (module Dom) cfg in
-    let cfg =
-      Normalize.Cfg.Blocks.fold
-        (fun _ block acc -> Undag.Cfg.Blocks.insert (Undag.undag block) acc)
-        cfg Undag.Cfg.empty
-    in
+    let cfg = Undag.undag_graph cfg in
     codegen_function
       ~args:(List.map (fun (typ, arg) -> (typ, (arg, 0))) args)
       state cfg

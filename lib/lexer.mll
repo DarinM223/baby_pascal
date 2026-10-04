@@ -14,6 +14,8 @@ rule token = parse
 | ',' {COMMA}
 | '(' {LPAREN}
 | ')' {RPAREN}
+| '[' {LBRACK}
+| ']' {RBRACK}
 | ":=" {ASSIGN}
 | '=' {EQUALS}
 | "<>" {NEQUALS}
