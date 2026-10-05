@@ -637,7 +637,22 @@ struct
         vreg.reg
       | reg -> reg
     in
-    let instr = Target.map_reg_uses go_use instr in
+    (* Memory addresses that are definitions are not
+       actually creating a new live range, they are using an
+       existing live range. So they actually count as a use here
+       and need to be killed if they are dead at this point otherwise
+       they will stay around forever.
+
+       todo: this may be a problem in other places, look for other uses of
+       map_reg_uses.
+       todo: look into possibly separating definitions
+       that don't create a new live range from definitions that do. *)
+    let instr =
+      instr |> Target.map_reg_uses go_use
+      |> Target.map_defs (fun op ->
+          if Target.is_memaddr op then Target.subst_reg_operand go_use op
+          else op)
+    in
     (* Assign registers for definitions *)
     let go_def head = function
       | Target.Virtual r' as r when Target.equal_reg r'.reg r ->

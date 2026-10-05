@@ -76,6 +76,6 @@ AARCH=1 ./test.sh
 - [ ] Comprehensive IR fuzz testing
 - [ ] Add floats to language
 - [ ] Test spilling and register allocation with multiple register classes
-- [ ] Add arrays to language
+- [x] Add arrays to language
 - [ ] Add structs to language
 - [ ] Autovectorization

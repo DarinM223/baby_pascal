@@ -104,6 +104,9 @@ module Target = struct
   let destruct_reg = function
     | Reg r -> Some r
     | _ -> None
+  let is_memaddr = function
+    | MemAddr _ -> true
+    | _ -> false
   let label label args = Label (label, args)
   let destruct_label = function
     | Label (l, args) -> Some (l, args)

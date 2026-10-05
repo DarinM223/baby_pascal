@@ -22,6 +22,7 @@ module type Target = sig
   val index : reg -> int
   val reg : reg -> operand
   val destruct_reg : operand -> reg option
+  val is_memaddr : operand -> bool
 
   val fold_reg_operand :
     ('a -> reg -> 'a * reg) -> 'a -> operand -> 'a * operand
