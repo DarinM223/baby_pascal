@@ -116,12 +116,12 @@ module Select = struct
         fun k ->
           begin try k (NameHashtbl.find mapping r)
           with Not_found ->
-            let pp_sep fmt () = Format.pp_print_string fmt "," in
             failwith
             @@ Format.asprintf
                  "Select_Arm: Register %a not found in mapping %a\n"
                  Normalize.Name.pp r
-                 (NameHashtbl.pp ~pp_sep Normalize.Name.pp Target.pp_operand)
+                 (NameHashtbl.pp ~pp_sep:Utils.pp_sep Normalize.Name.pp
+                    Target.pp_operand)
                  mapping
           end
       | Undag.Target.Label (l, args) ->

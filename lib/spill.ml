@@ -489,12 +489,11 @@ struct
       G.head * min_state =
     let dists = M.next_use_distances.at_instruction block_uid instr_num in
     Logs.debug (fun m ->
-        let pp_sep fmt () = Format.fprintf fmt ", " in
         let pp_print_tuple fmt (a, b) =
           Format.fprintf fmt "%d -> %a" a (Format.pp_print_option CCInt.pp) b
         in
         m "Distances: %a\n"
-          Format.(pp_print_list ~pp_sep pp_print_tuple)
+          Format.(pp_print_list ~pp_sep:Utils.pp_sep pp_print_tuple)
           (List.map
              (fun v -> (Target.index v, IntMap.find_opt (Target.index v) dists))
              (RegSet.elements w)));
