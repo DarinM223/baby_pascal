@@ -4,7 +4,7 @@ type typ =
   | TVoid
   | TFunction of typ list * typ option
   | TPointer of typ
-  | TRecord of typ list
+  | TRecord of (string * typ) list
   | TArray of typ * int
 [@@deriving eq]
 
@@ -21,7 +21,13 @@ let rec pp_typ fmt = function
       (Format.pp_print_list ~pp_sep:Utils.pp_sep pp_typ)
       args pp_ret ret
   | TPointer ptr -> Format.fprintf fmt "*%a" pp_typ ptr
-  | TRecord _ -> Format.fprintf fmt ""
+  | TRecord fields ->
+    let pp_field fmt (name, typ) =
+      Format.fprintf fmt "%s: %a" name pp_typ typ
+    in
+    Format.fprintf fmt "{%a}"
+      (Format.pp_print_list ~pp_sep:Utils.pp_sep pp_field)
+      fields
   | TArray (typ, size) -> Format.fprintf fmt "[%d]%a" size pp_typ typ
 
 type uop = Not [@@deriving eq]
@@ -106,12 +112,38 @@ type 'a program = {
 }
 [@@deriving show, eq]
 
-let rec sizeof (typ : typ) : int =
-  match typ with
+let rec alignof = function
   | TInteger -> 8
   | TBoolean -> 1
   | TVoid -> 0
-  | TFunction (_, _) -> failwith "Cannot get sizeof function"
+  | TFunction (_, _) -> failwith "Cannot get alignof function yet"
   | TPointer _ -> 8
-  | TRecord _ -> failwith "todo: calculate sizeof structures"
+  | TRecord fields ->
+    List.fold_left (fun acc (_, typ) -> max acc (alignof typ)) 0 fields
+  | TArray (typ, _size) -> alignof typ
+
+let rec sizeof = function
+  | TInteger -> 8
+  | TBoolean -> 1
+  | TVoid -> 0
+  | TFunction (_, _) -> failwith "Cannot get sizeof function yet"
+  | TPointer _ -> 8
+  | TRecord fields ->
+    let rec go max_align offset = function
+      | (_, typ) :: rest ->
+        (* each field has to be padded to its alignment *)
+        let alignment = alignof typ in
+        let max_align = max max_align alignment in
+        let remainder = offset mod alignment in
+        if remainder = 0 then go max_align (offset + sizeof typ) rest
+        else
+          let offset = offset + alignment - remainder in
+          go max_align (offset + sizeof typ) rest
+      | [] ->
+        (* struct itself is aligned with the maximum alignment of the fields
+           has to be padded to that at the end of the struct *)
+        let remainder = offset mod max_align in
+        if remainder = 0 then offset else offset + max_align - remainder
+    in
+    go 0 0 fields
   | TArray (typ, size) -> sizeof typ * size
