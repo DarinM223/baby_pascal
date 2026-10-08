@@ -56,4 +56,7 @@ begin
     result := sumnums();
     // Should print "Result: 15"
     printInteger(result);
+    result2 := multi();
+    // Should print "Result: 40"
+    printInteger(result2);
 end

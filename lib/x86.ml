@@ -104,6 +104,9 @@ module Target = struct
   let destruct_reg = function
     | Reg r -> Some r
     | _ -> None
+  let is_memaddr = function
+    | MemAddr _ -> true
+    | _ -> false
   let label label args = Label (label, args)
   let destruct_label = function
     | Label (l, args) -> Some (l, args)
@@ -199,22 +202,34 @@ module Target = struct
   let num_hidden_uses i = i.hidden_uses
   let num_hidden_defs i = i.hidden_defs
 
-  let srcs i = i.uses
-  let dests i = i.defs
+  let srcs i = i.uses @ List.filter is_memaddr i.defs
+  let dests i = List.filter (fun op -> not (is_memaddr op)) i.defs
   let fold_uses f init i =
     let res, uses =
       List.fold_left_map
         (fun acc op -> if is_tombstone op then (acc, op) else f acc op)
         init i.uses
     in
-    (res, { i with uses })
+    (* Memory address definitions are actually treated like uses,
+       since they use an existing register and don't define any
+       new ones. *)
+    let res, defs =
+      List.fold_left_map
+        (fun acc op -> if is_memaddr op then f acc op else (acc, op))
+        res i.defs
+    in
+    (res, { i with uses; defs })
   let map_uses f i = snd (fold_uses (fun _ op -> ((), f op)) () i)
   let map_reg_uses f = map_uses (subst_reg_operand f)
   let fold_reg_uses f = fold_uses (fold_reg_operand f)
   let fold_defs f init i =
     let res, defs =
       List.fold_left_map
-        (fun acc op -> if is_tombstone op then (acc, op) else f acc op)
+        (fun acc op ->
+          (* Because memory address definitions are treated like uses,
+             they aren't treated as definitions either. So they don't
+             need to be iterated over. *)
+          if is_tombstone op || is_memaddr op then (acc, op) else f acc op)
         init i.defs
     in
     (res, { i with defs })
