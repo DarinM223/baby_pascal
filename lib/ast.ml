@@ -76,6 +76,7 @@ struct
     | Bop of bop * expr * expr
     | Deref of expr
     | ArrayIndex of expr * expr
+    | RecordField of expr * string
     | Call of string * expr list
   and expr = expr' T.t [@@deriving show, eq]
 
@@ -147,3 +148,19 @@ let rec sizeof = function
     in
     go 0 0 fields
   | TArray (typ, size) -> sizeof typ * size
+
+let offsetof field fields =
+  let rec go offset = function
+    | (field', typ) :: rest ->
+      if String.equal field field' then Some offset
+      else
+        (* each field has to be padded to its alignment *)
+        let alignment = alignof typ in
+        let remainder = offset mod alignment in
+        if remainder = 0 then go (offset + sizeof typ) rest
+        else
+          let offset = offset + alignment - remainder in
+          go (offset + sizeof typ) rest
+    | [] -> None
+  in
+  go 0 fields

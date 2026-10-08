@@ -214,6 +214,26 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
         Cfg.instruction
           (Target.GetElementPtr (tmp, array_typ, array, [ (index_typ, index) ]))
         @@ rest @@ zgraph
+    | RecordField (((TRecord fields, _) as record), field) ->
+      begin match Ast.offsetof field fields with
+      | Some index ->
+        let* record = go_expr record in
+        let tmp = Target.Reg (fresh (fst exp)) in
+        let rest = k tmp in
+        fun zgraph ->
+          Cfg.instruction
+            (Target.GetElementPtr
+               (tmp, TRecord fields, record, [ (TInteger, Const index) ]))
+          @@ rest @@ zgraph
+      | None ->
+        failwith
+        @@ Format.asprintf "normalize: record field %s doesn't exist on type %a"
+             field Ast.pp_typ (TRecord fields)
+      end
+    | RecordField (record, field) ->
+      failwith
+      @@ Format.asprintf "normalize: invalid record field %s on %a" field
+           Ast.Typed.pp_expr record
   and short_circuit t f = function
     | _, Ast.Typed.Bool b -> Cfg.branch (if b then t else f)
     | _, Uop (Ast.Not, e) -> short_circuit f t e

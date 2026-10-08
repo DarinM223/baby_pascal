@@ -62,6 +62,23 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
         (Format.asprintf "invalid types for array index: %a and %a" pp_typ
            (fst expr) pp_typ (fst index))
     end
+  | RecordField (expr, field) ->
+    let expr = check_expr ~inside_selector:true venv fenv expr in
+    let result =
+      if inside_selector then Typed.RecordField (expr, field)
+      else Typed.Deref (fst expr, RecordField (expr, field))
+    in
+    begin match expr with
+    | TRecord fields, _ ->
+      if List.mem_assq field fields then (List.assq field fields, result)
+      else
+        failwith
+        @@ Format.asprintf "Field %s not in %a" field Ast.pp_typ (fst expr)
+    | typ, _ ->
+      failwith
+      @@ Format.asprintf "Invalid record field %s on type %a" field Ast.pp_typ
+           typ
+    end
   | Deref expr ->
     begin match check_expr venv fenv expr with
     | (TPointer ty, _) as expr -> (ty, Deref expr)
