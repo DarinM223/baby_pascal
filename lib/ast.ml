@@ -81,6 +81,7 @@ struct
   and expr = expr' T.t [@@deriving show, eq]
 
   type stmt =
+    | Declare of string * typ
     | Assign of expr * expr
     | If of expr * stmt * stmt
     | While of expr * stmt

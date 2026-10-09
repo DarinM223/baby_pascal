@@ -135,8 +135,8 @@ let rec lower_getelementptr (module F : Normalize.Fresh) = function
       | Ast.TArray (typ, size), (_, Target.Const idx) :: idxs
         when idx >= 0 && idx < size ->
         go (offset + (idx * Ast.sizeof typ)) tmp (typ, idxs)
-      | (Ast.TPointer typ | Ast.TArray (typ, _)), (idx_typ, idx) :: idxs ->
-        let sizeof = Ast.sizeof idx_typ in
+      | (Ast.TPointer typ | Ast.TArray (typ, _)), (_, idx) :: idxs ->
+        let sizeof = Ast.sizeof typ in
         (* offset += idx * sizeof(typ) *)
         let idx =
           if sizeof = 1 then idx

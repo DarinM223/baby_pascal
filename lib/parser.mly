@@ -36,6 +36,7 @@ global:
 
 typ:
 | LPAREN params = separated_list(COMMA, typ) RPAREN COLON ret = typ {Ast.TFunction (params, Some ret)}
+| LBRACK size = INT RBRACK t = typ {Ast.TArray (t, size)}
 | INTEGER {Ast.TInteger}
 | BOOLEAN {Ast.TBoolean}
 | VOID {Ast.TVoid}
@@ -51,6 +52,7 @@ decl:
 
 statement:
 | BEGIN stmts = list(terminated(statement, SEMI)) END {Ast.Group stmts}
+| VAR r = separated_pair(IDENT, COLON, typ) {let (id, typ) = r in Ast.Declare (id, typ)}
 | IF e = expr THEN thn = statement {Ast.If (e, thn, Group [])}
 | IF e = expr THEN thn = statement ELSE els = statement {Ast.If (e, thn, els)}
 | WHILE e = expr DO body = statement {Ast.While (e, body)}

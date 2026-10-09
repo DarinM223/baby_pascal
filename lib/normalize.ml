@@ -265,6 +265,9 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
     in
     go [] es
   and go_stmt (next : Cfg.label Lazy.t) : Ast.Typed.stmt -> Cfg.nodes = function
+    | Ast.Typed.Declare (x, typ) ->
+      let x = Target.reg typ x in
+      Cfg.instruction (Target.Alloca (x, Ast.sizeof typ))
     | Ast.Typed.Assign ((_, Deref ptr), value) ->
       let* ptr = go_expr ptr in
       let* value = go_expr value in

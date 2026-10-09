@@ -86,6 +86,7 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     end
 
 let rec check_stmt venv fenv = function
+  | Declare (x, typ) -> (M.add x typ venv, Typed.Declare (x, typ))
   | Assign (Var x, e) ->
     let e = check_expr venv fenv e in
     (M.add x (fst e) venv, Typed.Assign ((fst e, Var x), e))
