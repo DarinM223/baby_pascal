@@ -153,15 +153,14 @@ let rec sizeof = function
 let offsetof field fields =
   let rec go offset = function
     | (field', typ) :: rest ->
+      (* each field has to be padded to its alignment *)
+      let alignment = alignof typ in
+      let remainder = offset mod alignment in
+      let offset =
+        if remainder = 0 then offset else offset + alignment - remainder
+      in
       if String.equal field field' then Some offset
-      else
-        (* each field has to be padded to its alignment *)
-        let alignment = alignof typ in
-        let remainder = offset mod alignment in
-        if remainder = 0 then go (offset + sizeof typ) rest
-        else
-          let offset = offset + alignment - remainder in
-          go (offset + sizeof typ) rest
+      else go (offset + sizeof typ) rest
     | [] -> None
   in
   go 0 fields

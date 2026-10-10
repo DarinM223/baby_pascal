@@ -215,7 +215,15 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
           (Target.GetElementPtr (tmp, array_typ, array, [ (index_typ, index) ]))
         @@ rest @@ zgraph
     | RecordField (((TRecord fields, _) as record), field) ->
-      begin match Ast.offsetof field fields with
+      let index_of field =
+        let rec go idx = function
+          | (field', _) :: rest ->
+            if field = field' then Some idx else go (idx + 1) rest
+          | [] -> None
+        in
+        go 0
+      in
+      begin match index_of field fields with
       | Some index ->
         let* record = go_expr record in
         let tmp = Target.Reg (fresh (fst exp)) in
@@ -250,7 +258,9 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
       let* e2 = go_expr e2 in
       let cond = Target.cond_of_bop bop in
       Cfg.cbranch ~args:[ e1; e2 ] cond ~ifso:t ~ifnot:f
-    | _ -> failwith "Invalid expression for short circuiting"
+    | expr ->
+      let* expr = go_expr expr in
+      Cfg.cbranch ~args:[ expr; Const 0 ] EQ ~ifso:f ~ifnot:t
   and go_call ?(typ = Ast.TVoid) f es k =
     let rec go acc = function
       | e :: es ->

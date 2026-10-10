@@ -1,4 +1,4 @@
-%token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN LBRACK RBRACK COMMA
+%token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN LBRACK RBRACK LBRACE RBRACE COMMA DOT
 %token PLUS MINUS TIMES DIV NOT AND OR LT LE GT GE
 %token VAR
 %token TRUE FALSE
@@ -37,6 +37,7 @@ global:
 typ:
 | LPAREN params = separated_list(COMMA, typ) RPAREN COLON ret = typ {Ast.TFunction (params, Some ret)}
 | LBRACK size = INT RBRACK t = typ {Ast.TArray (t, size)}
+| LBRACE fields = separated_list(COMMA, separated_pair(IDENT, COLON, typ)) RBRACE {Ast.TRecord fields}
 | INTEGER {Ast.TInteger}
 | BOOLEAN {Ast.TBoolean}
 | VOID {Ast.TVoid}
@@ -68,6 +69,7 @@ statement:
 lvalue:
 | id = IDENT {Ast.Var id}
 | e1 = lvalue LBRACK e2 = expr RBRACK {Ast.ArrayIndex (e1, e2)}
+| e1 = lvalue DOT field = IDENT {Ast.RecordField (e1, field)}
 | TIMES e = lvalue {Ast.Deref e}
 
 rvalue:
@@ -79,6 +81,7 @@ expr:
 | TIMES e = expr {Ast.Deref e}
 | LBRACK init = expr SEMI size = INT RBRACK {Ast.Array (init, size)}
 | lhs = expr LBRACK rhs = expr RBRACK {Ast.ArrayIndex (lhs, rhs)}
+| lhs = expr DOT rhs = IDENT {Ast.RecordField (lhs, rhs)}
 | NOT e = expr {Ast.Uop (Not, e)}
 | lhs = expr EQUALS rhs = expr {Ast.Bop (Eq, lhs, rhs)}
 | lhs = expr NEQUALS rhs = expr {Ast.Bop (Neq, lhs, rhs)}

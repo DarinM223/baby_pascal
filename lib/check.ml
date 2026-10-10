@@ -24,12 +24,12 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     let ((r_typ, _) as r_expr) = check_expr venv fenv r in
     if l_typ <> l_expected then
       failwith
-        (Format.asprintf "Left expression is different, expected %a" pp_typ
-           l_typ);
+        (Format.asprintf "Left expression is different, expected %a got %a"
+           pp_typ l_expected pp_typ l_typ);
     if r_typ <> r_expected then
       failwith
-        (Format.asprintf "Right expression is different, expected %a" pp_typ
-           r_typ);
+        (Format.asprintf "Right expression is different, expected %a got %a"
+           pp_typ r_expected pp_typ r_typ);
     (ret_expected, Bop (bop, l_expr, r_expr))
   | Call (f, xs) ->
     let xs = List.map (check_expr venv fenv) xs in
@@ -70,7 +70,7 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     in
     begin match expr with
     | TRecord fields, _ ->
-      if List.mem_assq field fields then (List.assq field fields, result)
+      if List.mem_assoc field fields then (List.assoc field fields, result)
       else
         failwith
         @@ Format.asprintf "Field %s not in %a" field Ast.pp_typ (fst expr)

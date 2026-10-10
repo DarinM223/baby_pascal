@@ -32,9 +32,16 @@ let test_sizeof_struct () =
   in
   check int "Test struct 3" 40 result
 
+let test_offsetof_struct () =
+  let fields = [ ("a", TBoolean); ("b", TInteger); ("c", TBoolean) ] in
+  check (option int) "Test struct a field" (Some 0) (offsetof "a" fields);
+  check (option int) "Test struct b field" (Some 8) (offsetof "b" fields);
+  check (option int) "Test struct c field" (Some 16) (offsetof "c" fields)
+
 let _ =
   run "Test AST"
     [
       ("Tests alignof", [ test_case "structs" `Quick test_alignof_struct ]);
       ("Tests sizeof", [ test_case "structs" `Quick test_sizeof_struct ]);
+      ("Tests offsetof", [ test_case "structs" `Quick test_offsetof_struct ]);
     ]
