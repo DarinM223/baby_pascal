@@ -32,7 +32,8 @@ end
   let program = Parse.parse_string program in
   let expected =
     {
-      Ast.globals = [ ("hello", Ast.TInteger) ];
+      Ast.globals =
+        [ { id = "hello"; typ = Ast.TInteger; value = Ast.External } ];
       decls =
         [
           Ast.Procedure

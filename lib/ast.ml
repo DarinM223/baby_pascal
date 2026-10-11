@@ -1,6 +1,7 @@
 type typ =
   | TInteger
   | TBoolean
+  | TDouble
   | TVoid
   | TFunction of typ list * typ option
   | TPointer of typ
@@ -9,8 +10,9 @@ type typ =
 [@@deriving eq]
 
 let rec pp_typ fmt = function
-  | TInteger -> Format.fprintf fmt "int"
-  | TBoolean -> Format.fprintf fmt "bool"
+  | TInteger -> Format.fprintf fmt "integer"
+  | TBoolean -> Format.fprintf fmt "boolean"
+  | TDouble -> Format.fprintf fmt "double"
   | TVoid -> Format.fprintf fmt "void"
   | TFunction (args, ret) ->
     let pp_ret fmt = function
@@ -70,6 +72,7 @@ struct
   type expr' =
     | Int of int
     | Bool of bool
+    | Double of float
     | Var of string
     | Array of expr * int
     | Uop of uop * expr
@@ -102,13 +105,33 @@ module Typed = Make (struct
   let show pp_reg = Format.asprintf "%a" (pp pp_reg)
 end)
 
+type constant =
+  | ConstInt of int
+  | ConstDouble of float
+  | ConstString of string
+  | ConstArray of constant list
+[@@deriving show, eq]
+
+type global =
+  | Uninitialized
+  | Initialized of constant
+  | External
+[@@deriving show, eq]
+
+type global_def = {
+  id : string;
+  typ : typ;
+  value : global;
+}
+[@@deriving show, eq]
+
 type 'a decl =
   | Function of string * (string * typ) list * typ * 'a
   | Procedure of string * (string * typ) list * 'a
 [@@deriving show, eq]
 
 type 'a program = {
-  globals : (string * typ) list;
+  globals : global_def list;
   decls : 'a decl list;
   main : 'a;
 }
@@ -117,6 +140,7 @@ type 'a program = {
 let rec alignof = function
   | TInteger -> 8
   | TBoolean -> 1
+  | TDouble -> 8
   | TVoid -> 0
   | TFunction (_, _) -> failwith "Cannot get alignof function yet"
   | TPointer _ -> 8
@@ -127,6 +151,7 @@ let rec alignof = function
 let rec sizeof = function
   | TInteger -> 8
   | TBoolean -> 1
+  | TDouble -> 8
   | TVoid -> 0
   | TFunction (_, _) -> failwith "Cannot get sizeof function yet"
   | TPointer _ -> 8

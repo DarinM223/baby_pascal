@@ -16,7 +16,7 @@ let test_example_1 () =
   in
   let _, expr = Check.(check_stmt M.empty M.empty expr) in
   let module Fresh = Normalize.Fresh () in
-  let result = Normalize.normalize (module Fresh) expr in
+  let emitted_globals, result = Normalize.normalize (module Fresh) [] expr in
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in
@@ -56,6 +56,8 @@ let test_example_1 () =
          LT ~ifso:(5, "label5") ~ifnot:(6, "label6")
     @@ focus_entry empty
   in
+  (check (list Ast.(testable pp_global_def equal_global_def)))
+    "Doesn't emit any globals" [] emitted_globals;
   (check Normalize.Cfg.(testable pp_graph equal_graph))
     "Produces proper graph" expected result
 

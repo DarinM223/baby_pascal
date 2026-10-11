@@ -153,17 +153,25 @@ module Fresh () : Fresh = struct
   let reset_labels () = l := 0
 end
 
-let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
+let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
+    (stmt : Ast.Typed.stmt) : Ast.global_def list * Cfg.graph =
   let open Fresh in
   let ( let* ) = ( @@ ) in
   let label l =
     if Lazy.is_val l then Cfg.label (Lazy.force l) else fun a -> a
   in
+  let globals = ref globals in
   let rec go_expr (exp : Ast.Typed.expr) (k : Target.operand -> Cfg.nodes) :
       Cfg.nodes =
     match snd exp with
     | Ast.Typed.Int i -> k (Target.Const i)
     | Bool b -> k (Target.Const (if b then 1 else 0))
+    | Double d ->
+      (* emit global float constant, and return label to it *)
+      let id = Name.label (snd (fresh TDouble)) in
+      globals :=
+        { id; typ = TDouble; value = Initialized (ConstDouble d) } :: !globals;
+      k (Target.Label ((-1, id), []))
     | Var v -> k (Target.reg (fst exp) v)
     | Uop (uop, e) ->
       let* e = go_expr e in
@@ -328,7 +336,7 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
   in
   let next = lazy (new_label ()) in
   let stmt = go_stmt next stmt in
-  Cfg.unfocus (stmt @@ label next @@ Cfg.focus_entry Cfg.empty)
+  (!globals, Cfg.unfocus (stmt @@ label next @@ Cfg.focus_entry Cfg.empty))
 
 let set_return ret_typ fn_name (graph : Cfg.graph) : Cfg.graph =
   let zblock, rest = Cfg.focus_exit graph in

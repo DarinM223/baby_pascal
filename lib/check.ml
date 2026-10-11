@@ -4,6 +4,7 @@ module M = Map.Make (String)
 let rec check_expr ?(inside_selector = false) venv fenv = function
   | Int i -> (TInteger, Typed.Int i)
   | Bool b -> (TBoolean, Bool b)
+  | Double d -> (TDouble, Double d)
   | Var v ->
     begin try (M.find v venv, Var v)
     with Not_found ->
@@ -14,23 +15,42 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     (TArray (fst init_expr, size), Array (init_expr, size))
   | Uop (_, e) -> check_expr venv fenv e
   | Bop (bop, l, r) ->
-    let l_expected, r_expected, ret_expected =
-      match bop with
-      | Add | Sub | Mul | Div -> (TInteger, TInteger, TInteger)
-      | And | Or -> (TBoolean, TBoolean, TBoolean)
-      | Eq | Neq | Lt | Le | Gt | Ge -> (TInteger, TInteger, TBoolean)
-    in
     let ((l_typ, _) as l_expr) = check_expr venv fenv l in
     let ((r_typ, _) as r_expr) = check_expr venv fenv r in
-    if l_typ <> l_expected then
-      failwith
-        (Format.asprintf "Left expression is different, expected %a got %a"
-           pp_typ l_expected pp_typ l_typ);
-    if r_typ <> r_expected then
-      failwith
-        (Format.asprintf "Right expression is different, expected %a got %a"
-           pp_typ r_expected pp_typ r_typ);
-    (ret_expected, Bop (bop, l_expr, r_expr))
+    begin match bop with
+    | Add | Sub | Mul | Div ->
+      if l_typ <> TInteger && l_typ <> TDouble then
+        failwith
+          (Format.asprintf
+             "Left expression is different, expected %a or %a got %a" pp_typ
+             TInteger pp_typ TDouble pp_typ l_typ);
+      if r_typ <> l_typ then
+        failwith
+          (Format.asprintf "Right expression is different, expected %a got %a"
+             pp_typ l_typ pp_typ r_typ);
+      (l_typ, Bop (bop, l_expr, r_expr))
+    | And | Or ->
+      if l_typ <> TBoolean then
+        failwith
+          (Format.asprintf "Left expression is different, expected %a got %a"
+             pp_typ TBoolean pp_typ l_typ);
+      if r_typ <> TBoolean then
+        failwith
+          (Format.asprintf "Right expression is different, expected %a got %a"
+             pp_typ TBoolean pp_typ r_typ);
+      (TBoolean, Bop (bop, l_expr, r_expr))
+    | Eq | Neq | Lt | Le | Gt | Ge ->
+      if l_typ <> TInteger && l_typ <> TDouble then
+        failwith
+          (Format.asprintf
+             "Left expression is different, expected %a or %a got %a" pp_typ
+             TInteger pp_typ TDouble pp_typ l_typ);
+      if r_typ <> l_typ then
+        failwith
+          (Format.asprintf "Right expression is different, expected %a got %a"
+             pp_typ l_typ pp_typ r_typ);
+      (TBoolean, Bop (bop, l_expr, r_expr))
+    end
   | Call (f, xs) ->
     let xs = List.map (check_expr venv fenv) xs in
     begin match M.find f fenv with
@@ -160,7 +180,9 @@ let check_decl venv fenv decl =
   update body
 
 let check_program p =
-  let venv = List.fold_left (fun m (k, v) -> M.add k v m) M.empty p.globals in
+  let venv =
+    List.fold_left (fun m { id; typ; _ } -> M.add id typ m) M.empty p.globals
+  in
   let fenv = List.fold_left insert_header M.empty p.decls in
   let decls = List.map (check_decl venv fenv) p.decls in
   let _, main = check_stmt venv fenv p.main in

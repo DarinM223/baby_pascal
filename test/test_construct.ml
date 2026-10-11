@@ -138,7 +138,7 @@ let test_figure_19_4 () =
   in
   let _, ast = Check.(check_stmt M.empty M.empty ast) in
   let module Fresh = Normalize.Fresh () in
-  let cfg = Normalize.normalize (module Fresh) ast in
+  let _, cfg = Normalize.normalize (module Fresh) [] ast in
   let extra = Normalize.Cfg.precalculate_edges cfg in
   let module Extra = (val extra) in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
@@ -206,7 +206,7 @@ let test_pruned () =
     Check.(check_stmt venv M.empty ast)
   in
   let module Fresh = Normalize.Fresh () in
-  let cfg = Normalize.normalize (module Fresh) ast in
+  let _, cfg = Normalize.normalize (module Fresh) [] ast in
   let extra = Normalize.Cfg.precalculate_edges cfg in
   let module Extra = (val extra) in
   let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in

@@ -3,18 +3,19 @@ let compile_shared lower_isa program =
   let module F = Normalize.Fresh () in
   let program =
     let open Ast in
-    let normalize_decl = function
+    let normalize_decl globals = function
       | Function (f, ps, t, body) ->
-        Function
-          (f, ps, t, Normalize.(set_return t f (normalize (module F) body)))
+        let globals, body = Normalize.normalize (module F) globals body in
+        (globals, Function (f, ps, t, Normalize.set_return t f body))
       | Procedure (f, ps, body) ->
-        Procedure (f, ps, Normalize.normalize (module F) body)
+        let globals, body = Normalize.normalize (module F) globals body in
+        (globals, Procedure (f, ps, body))
     in
-    {
-      program with
-      main = Normalize.normalize (module F) program.main;
-      decls = List.map normalize_decl program.decls;
-    }
+    let globals, decls =
+      List.fold_left_map normalize_decl program.globals program.decls
+    in
+    let globals, main = Normalize.normalize (module F) globals program.main in
+    { globals; main; decls }
   in
   let rec round (module Dom : Dominator.S with type label = Normalize.Cfg.label)
       args cfg =
