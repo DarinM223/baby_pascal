@@ -11,11 +11,14 @@ rule token = parse
 | newline { Lexing.new_line lexbuf; token lexbuf }
 | "//" { comment lexbuf }
 | ':' {COLON}
+| '.' {DOT}
 | ',' {COMMA}
 | '(' {LPAREN}
 | ')' {RPAREN}
 | '[' {LBRACK}
 | ']' {RBRACK}
+| '{' {LBRACE}
+| '}' {RBRACE}
 | ":=" {ASSIGN}
 | '=' {EQUALS}
 | "<>" {NEQUALS}

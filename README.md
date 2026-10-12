@@ -74,8 +74,9 @@ AARCH=1 ./test.sh
 - [x] Randomized testing for register shuffles in register allocation
 - [x] Lower parallel moves
 - [ ] Comprehensive IR fuzz testing
+- [ ] Add string literals to language
 - [ ] Add floats to language
 - [ ] Test spilling and register allocation with multiple register classes
 - [x] Add arrays to language
-- [ ] Add structs to language
+- [x] Add structs to language
 - [ ] Autovectorization

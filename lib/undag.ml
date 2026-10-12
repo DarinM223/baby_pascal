@@ -135,8 +135,8 @@ let rec lower_getelementptr (module F : Normalize.Fresh) = function
       | Ast.TArray (typ, size), (_, Target.Const idx) :: idxs
         when idx >= 0 && idx < size ->
         go (offset + (idx * Ast.sizeof typ)) tmp (typ, idxs)
-      | (Ast.TPointer typ | Ast.TArray (typ, _)), (idx_typ, idx) :: idxs ->
-        let sizeof = Ast.sizeof idx_typ in
+      | (Ast.TPointer typ | Ast.TArray (typ, _)), (_, idx) :: idxs ->
+        let sizeof = Ast.sizeof typ in
         (* offset += idx * sizeof(typ) *)
         let idx =
           if sizeof = 1 then idx
@@ -150,7 +150,10 @@ let rec lower_getelementptr (module F : Normalize.Fresh) = function
             (Target.bop Ast.Add ~dest:(new_tmp ()) ~src1:tmp ~src2:idx)
         in
         go offset tmp (typ, idxs)
-      | Ast.TRecord _typs, _ -> failwith "todo: implement structure lowering"
+      | Ast.TRecord fields, (_, Target.Const idx) :: idxs ->
+        let field, typ = List.nth fields idx in
+        let offset' = Option.get (Ast.offsetof field fields) in
+        go (offset + offset') tmp (typ, idxs)
       | _, [] ->
         begin match (offset, tmp) with
         | 0, Target.Instr instr -> instr

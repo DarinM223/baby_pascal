@@ -269,3 +269,37 @@ if [ -v AARCH ]; then
     exit 1
   fi
 fi
+
+dune exec compile -- -x86_64 examples/record.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "record compilation failed"
+    exit 1
+fi
+./build.sh record.pas
+./record.pas > record.pas.test
+if cmp --silent record.pas.test examples/record.pas.expected; then
+  echo "record test succeeded"
+else
+  echo "record test failed"
+  echo "Diff:"
+  diff record.pas.test examples/record.pas.expected
+  exit 1
+fi
+
+if [ -v AARCH ]; then
+  dune exec compile -- -aarch64 examples/record.pas &> /dev/null
+  if [ $? -ne 0 ]; then
+      echo "record compilation failed"
+      exit 1
+  fi
+  ./build-aarch.sh record.pas
+  ./run-aarch.sh record.pas > record.pas.test
+  if cmp --silent record.pas.test examples/record.pas.expected; then
+    echo "record test succeeded"
+  else
+    echo "record test failed"
+    echo "Diff:"
+    diff record.pas.test examples/record.pas.expected
+    exit 1
+  fi
+fi

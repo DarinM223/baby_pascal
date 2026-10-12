@@ -214,6 +214,34 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
         Cfg.instruction
           (Target.GetElementPtr (tmp, array_typ, array, [ (index_typ, index) ]))
         @@ rest @@ zgraph
+    | RecordField (((TRecord fields, _) as record), field) ->
+      let index_of field =
+        let rec go idx = function
+          | (field', _) :: rest ->
+            if field = field' then Some idx else go (idx + 1) rest
+          | [] -> None
+        in
+        go 0
+      in
+      begin match index_of field fields with
+      | Some index ->
+        let* record = go_expr record in
+        let tmp = Target.Reg (fresh (fst exp)) in
+        let rest = k tmp in
+        fun zgraph ->
+          Cfg.instruction
+            (Target.GetElementPtr
+               (tmp, TRecord fields, record, [ (TInteger, Const index) ]))
+          @@ rest @@ zgraph
+      | None ->
+        failwith
+        @@ Format.asprintf "normalize: record field %s doesn't exist on type %a"
+             field Ast.pp_typ (TRecord fields)
+      end
+    | RecordField (record, field) ->
+      failwith
+      @@ Format.asprintf "normalize: invalid record field %s on %a" field
+           Ast.Typed.pp_expr record
   and short_circuit t f = function
     | _, Ast.Typed.Bool b -> Cfg.branch (if b then t else f)
     | _, Uop (Ast.Not, e) -> short_circuit f t e
@@ -230,7 +258,9 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
       let* e2 = go_expr e2 in
       let cond = Target.cond_of_bop bop in
       Cfg.cbranch ~args:[ e1; e2 ] cond ~ifso:t ~ifnot:f
-    | _ -> failwith "Invalid expression for short circuiting"
+    | expr ->
+      let* expr = go_expr expr in
+      Cfg.cbranch ~args:[ expr; Const 0 ] EQ ~ifso:f ~ifnot:t
   and go_call ?(typ = Ast.TVoid) f es k =
     let rec go acc = function
       | e :: es ->
@@ -245,6 +275,9 @@ let normalize (module Fresh : Fresh) (stmt : Ast.Typed.stmt) : Cfg.graph =
     in
     go [] es
   and go_stmt (next : Cfg.label Lazy.t) : Ast.Typed.stmt -> Cfg.nodes = function
+    | Ast.Typed.Declare (x, typ) ->
+      let x = Target.reg typ x in
+      Cfg.instruction (Target.Alloca (x, Ast.sizeof typ))
     | Ast.Typed.Assign ((_, Deref ptr), value) ->
       let* ptr = go_expr ptr in
       let* value = go_expr value in
