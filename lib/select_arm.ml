@@ -61,6 +61,7 @@ module Select = struct
 
   let reg_class_of_operand : Undag.Target.operand -> Target.reg_class = function
     | Undag.Target.Reg (Ast.TInteger, _) -> Target.Int
+    | Reg (TDouble, _) -> Target.Float
     | _ -> Target.Int
 
   let call_conv ~caller { State.fresh_vreg; new_stack_slot; _ } = function

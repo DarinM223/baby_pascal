@@ -89,6 +89,25 @@ let compile_shared lower_isa program =
   let main = lower_cfg "main" [] program.main in
   { program with decls; main }
 
+let write_global out { Ast.id; typ; value } =
+  match value with
+  (* write in .bss *)
+  | Ast.Uninitialized ->
+    Format.fprintf out ".bss\n.lcomm %s, %d\n" id (Ast.sizeof typ)
+  (* write in .data *)
+  | Ast.Initialized (ConstDouble f) ->
+    Format.fprintf out ".data\n%s: .float %f\n" id f
+  | Ast.Initialized (ConstInt i) ->
+    Format.fprintf out ".data\n%s: .quad %d\n" id i
+  | Ast.Initialized (ConstString s) ->
+    Format.fprintf out ".data\n%s: .asciz \"%s\"\n" id s
+  | Ast.Initialized (ConstArray _a) ->
+    (* todo: recursively lower elements inside of an array
+           so an array of arrays or strings would have the elements
+           lowered first *)
+    failwith "todo: constant arrays not handled yet"
+  | Ast.External -> ()
+
 module X86 = struct
   let compile program =
     let lower_isa ~f ~args ~cfg =
@@ -137,6 +156,7 @@ module X86 = struct
 
   let write_file out program =
     let out = Format.formatter_of_out_channel out in
+    List.iter (write_global out) program.Ast.globals;
     Format.fprintf out ".global main\n.text\n";
     let write_decl = function
       | Ast.Function (f, _args, _ret, (state, body)) ->
@@ -193,6 +213,7 @@ module Arm = struct
 
   let write_file out program =
     let out = Format.formatter_of_out_channel out in
+    List.iter (write_global out) program.Ast.globals;
     Format.fprintf out ".global main\n.text\n";
     let write_decl = function
       | Ast.Function (f, _args, _ret, (state, body)) ->
@@ -200,7 +221,7 @@ module Arm = struct
       | Ast.Procedure (f, _args, (state, body)) ->
         Format.fprintf out "%s: %a\n" f (Arm.Writer.pp_graph state) body
     in
-    List.iter write_decl program.Ast.decls;
+    List.iter write_decl program.decls;
     let state, main = program.main in
     Format.fprintf out "main: %a\n" (Arm.Writer.pp_graph state) main
 end

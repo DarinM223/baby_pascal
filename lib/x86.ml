@@ -315,6 +315,23 @@ module Regs = struct
   let r14 = (14, Target.Int, "r14")
   let r15 = (15, Target.Int, "r15")
 
+  let xmm0 = (0, Target.Float, "xmm0")
+  let xmm1 = (1, Target.Float, "xmm1")
+  let xmm2 = (2, Target.Float, "xmm2")
+  let xmm3 = (3, Target.Float, "xmm3")
+  let xmm4 = (4, Target.Float, "xmm4")
+  let xmm5 = (5, Target.Float, "xmm5")
+  let xmm6 = (6, Target.Float, "xmm6")
+  let xmm7 = (7, Target.Float, "xmm7")
+  let xmm8 = (8, Target.Float, "xmm8")
+  let xmm9 = (9, Target.Float, "xmm9")
+  let xmm10 = (10, Target.Float, "xmm10")
+  let xmm11 = (11, Target.Float, "xmm11")
+  let xmm12 = (12, Target.Float, "xmm12")
+  let xmm13 = (13, Target.Float, "xmm13")
+  let xmm14 = (14, Target.Float, "xmm14")
+  let xmm15 = (15, Target.Float, "xmm15")
+
   let caller_save = [ rax; rcx; rdx; rsi; rdi; r8; r9; r10; r11 ]
   let callee_save = [ r12; r13; r14; r15; rbx; rsp; rbp ]
   let int_regs =
@@ -335,6 +352,25 @@ module Regs = struct
       r13;
       r14;
       r15;
+    ]
+  let float_regs =
+    [
+      xmm0;
+      xmm1;
+      xmm2;
+      xmm3;
+      xmm4;
+      xmm5;
+      xmm6;
+      xmm7;
+      xmm8;
+      xmm9;
+      xmm10;
+      xmm11;
+      xmm12;
+      xmm13;
+      xmm14;
+      xmm15;
     ]
 end
 

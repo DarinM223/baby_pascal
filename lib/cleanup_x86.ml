@@ -97,8 +97,9 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
     | _ -> f
   in
   (* convert jump arguments that are immediates to moves *)
-  let lower_jump_label f = function
-    | X86.Target.Label (l', args) ->
+  let lower_jump_label ls f = function
+    | X86.Target.Label (l', args)
+      when List.exists (fun l -> X86.Target.equal_label l' l) ls ->
       let phis =
         match X86.Cfg.(firstt (fst (fst (focus (idd (Some l')) cfg)))) with
         | Entry -> []
@@ -154,7 +155,9 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
         when List.exists (fun (_, i) -> i = instr) Target.cond_mapping ->
         List.iter record_operand (first_use :: uses);
         List.iter record_operand defs;
-        let tail, _ = X86.Target.fold_uses lower_jump_label Fun.id i in
+        let tail, _ =
+          X86.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
+        in
         tail
         @@ Target.mov ~dest:(Reg (Physical tmp)) ~src:first_use
         @> Target.instr "cmp" ~defs:[ Reg (Physical tmp) ] ~uses
@@ -165,7 +168,7 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
       | Cfg.Last (Branch (i, l)) ->
         List.iter record_operand i.uses;
         List.iter record_operand i.defs;
-        let tail, i = X86.Target.fold_uses lower_jump_label Fun.id i in
+        let tail, i = X86.Target.fold_uses (lower_jump_label [ l ]) Fun.id i in
         tail (Cfg.Last (Branch (i, l)))
       | Cfg.Last (Return i) ->
         List.iter record_operand i.uses;

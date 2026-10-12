@@ -61,6 +61,7 @@ module Select = struct
 
   let reg_class_of_operand : Undag.Target.operand -> Target.reg_class = function
     | Undag.Target.Reg (Ast.TInteger, _) -> Target.Int
+    | Reg (TDouble, _) -> Target.Float
     | _ -> Target.Int
 
   let call_conv ~caller { State.fresh_vreg; new_stack_slot; _ } = function
@@ -77,7 +78,21 @@ module Select = struct
           else
             Target.StackSlot { relative_to_base = true; offset = (n - 5) * 8 }
       end
-    | Target.Float -> failwith "Float calling convention not supported yet"
+    | Target.Float ->
+      begin function
+        | 0 -> Target.(Reg (constrained Regs.xmm0 (fresh_vreg Float)))
+        | 1 -> Target.(Reg (constrained Regs.xmm1 (fresh_vreg Float)))
+        | 2 -> Target.(Reg (constrained Regs.xmm2 (fresh_vreg Float)))
+        | 3 -> Target.(Reg (constrained Regs.xmm3 (fresh_vreg Float)))
+        | 4 -> Target.(Reg (constrained Regs.xmm4 (fresh_vreg Float)))
+        | 5 -> Target.(Reg (constrained Regs.xmm5 (fresh_vreg Float)))
+        | 6 -> Target.(Reg (constrained Regs.xmm6 (fresh_vreg Float)))
+        | 7 -> Target.(Reg (constrained Regs.xmm7 (fresh_vreg Float)))
+        | n ->
+          if caller then new_stack_slot 8
+          else
+            Target.StackSlot { relative_to_base = true; offset = (n - 7) * 8 }
+      end
 
   let reuse_instr tmp dest instr =
     instr
@@ -139,13 +154,14 @@ module Select = struct
     match instruction with
     | Undag.Target.Assign (dest, src) ->
       let open Target in
-      let dest = assign_vreg Int dest in
+      let dest = assign_vreg (reg_class_of_operand dest) dest in
       let* src = translate_operand src in
       mov ~dest ~src @> k dest
     | Undag.Target.Uop (dest, Not, src) ->
+      let src_class = reg_class_of_operand src in
       let open Target in
-      let dest = assign_vreg Int dest in
-      let tmp = Reg (fresh_vreg Int) in
+      let dest = assign_vreg src_class dest in
+      let tmp = Reg (fresh_vreg src_class) in
       let* src = translate_operand src in
       mov ~dest:tmp ~src:(Imm 0)
       @> instr "testq" ~defs:[] ~uses:[ src; src ]
@@ -153,13 +169,13 @@ module Select = struct
       @> k dest
     | Undag.Target.Bop (dest, bop, src1, src2) ->
       let open Target in
-      let dest = assign_vreg Int dest in
       let src1_class = reg_class_of_operand src1 in
       let src2_class = reg_class_of_operand src2 in
+      let dest = assign_vreg src1_class dest in
       let* src1 = translate_operand src1 in
       let* src2 = translate_operand src2 in
       let reuse_bop i =
-        let tmp = Reg (fresh_vreg Int) in
+        let tmp = Reg (fresh_vreg src1_class) in
         mov ~dest:tmp ~src:src1
         @> reuse_instr tmp dest (instr i ~defs:[] ~uses:[ src2 ])
         @> k dest
