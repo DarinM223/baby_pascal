@@ -96,7 +96,7 @@ let write_global out { Ast.id; typ; value } =
     Format.fprintf out ".bss\n.lcomm %s, %d\n" id (Ast.sizeof typ)
   (* write in .data *)
   | Ast.Initialized (ConstDouble f) ->
-    Format.fprintf out ".data\n%s: .float %f\n" id f
+    Format.fprintf out ".data\n%s: .double %f\n" id f
   | Ast.Initialized (ConstInt i) ->
     Format.fprintf out ".data\n%s: .quad %d\n" id i
   | Ast.Initialized (ConstString s) ->

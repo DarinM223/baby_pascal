@@ -154,9 +154,13 @@ module Select = struct
     match instruction with
     | Undag.Target.Assign (dest, src) ->
       let open Target in
-      let dest = assign_vreg (reg_class_of_operand dest) dest in
+      let dest_class = reg_class_of_operand dest in
+      let dest = assign_vreg dest_class dest in
       let* src = translate_operand src in
-      mov ~dest ~src @> k dest
+      begin match dest_class with
+      | Int -> mov ~dest ~src @> k dest
+      | Float -> instr "movsd" ~defs:[ dest ] ~uses:[ src ] @> k dest
+      end
     | Undag.Target.Uop (dest, Not, src) ->
       let src_class = reg_class_of_operand src in
       let open Target in
@@ -198,10 +202,12 @@ module Select = struct
                    (Format.pp_print_list Target.pp_operand)
                    dests)
       in
-      begin match bop with
-      | Ast.Add -> reuse_bop "addq"
-      | Ast.Sub -> reuse_bop "subq"
-      | Ast.Mul ->
+      begin match (src1_class, bop) with
+      | Int, Ast.Add -> reuse_bop "addq"
+      | Float, Ast.Add -> reuse_bop "addsd"
+      | Int, Ast.Sub -> reuse_bop "subq"
+      | Float, Ast.Sub -> reuse_bop "subsd"
+      | Int, Ast.Mul ->
         let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int)) in
         let tmp2 = Reg (fresh_vreg Int) in
         let tmp3 = Reg (constrained Regs.rdx (fresh_vreg Int)) in
@@ -219,7 +225,7 @@ module Select = struct
              (RegSet.of_list Regs.[ Physical rax; Physical rdx ])
              (pcopy ~dests:[ tmp1 ] ~srcs:[ src1 ])
         @> mul @> mov ~dest ~src:tmp4 @> k dest
-      | Ast.Div ->
+      | Int, Ast.Div ->
         let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int)) in
         let tmp2 = Reg (fresh_vreg Int) in
         let tmp3 = Reg (constrained Regs.rdx (fresh_vreg Int)) in
@@ -247,26 +253,30 @@ module Select = struct
              (RegSet.of_list Regs.[ Physical rax; Physical rdx ])
              (pcopy ~dests:[ tmp1 ] ~srcs:[ src1 ])
         @> cqto @> div @> mov ~dest ~src:tmp5 @> k dest
-      | Ast.And ->
+      | Int, Ast.And ->
         (* todo: change to use bitwise and since we use that in value numbering *)
         let tmp = Reg (fresh_vreg Int) in
         mov ~dest:tmp ~src:src1
         @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
         @> reuse_instr tmp dest (instr "cmovnz" ~defs:[] ~uses:[ src2 ])
         @> k dest
-      | Ast.Or ->
+      | Int, Ast.Or ->
         (* todo: change to use bitwise or since we use that in value numbering *)
         let tmp = Reg (fresh_vreg Int) in
         mov ~dest:tmp ~src:src1
         @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
         @> reuse_instr tmp dest (instr "cmovz" ~defs:[] ~uses:[ src2 ])
         @> k dest
-      | Ast.Eq -> reuse_cond (instr_of_cond "setz")
-      | Ast.Neq -> reuse_cond (instr_of_cond "setnz")
-      | Ast.Lt -> reuse_cond (instr_of_cond "setl")
-      | Ast.Le -> reuse_cond (instr_of_cond "setle")
-      | Ast.Gt -> reuse_cond (instr_of_cond "setg")
-      | Ast.Ge -> reuse_cond (instr_of_cond "setge")
+      | Int, Ast.Eq -> reuse_cond (instr_of_cond "setz")
+      | Int, Ast.Neq -> reuse_cond (instr_of_cond "setnz")
+      | Int, Ast.Lt -> reuse_cond (instr_of_cond "setl")
+      | Int, Ast.Le -> reuse_cond (instr_of_cond "setle")
+      | Int, Ast.Gt -> reuse_cond (instr_of_cond "setg")
+      | Int, Ast.Ge -> reuse_cond (instr_of_cond "setge")
+      | Float, op ->
+        failwith
+        @@ Format.asprintf "Floating point operator for %a not implemented yet"
+             Ast.pp_bop op
       end
     | Undag.Target.Return ops ->
       let* ops = translate_operands ops in
