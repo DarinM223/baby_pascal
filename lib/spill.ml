@@ -178,8 +178,10 @@ module Liveness = struct
         Graph.S
           with type Target.reg = Target.reg
            and type Target.instr = Target.instr)
-      (Flow : Dataflow.S with module G = G) :
-    S with module Target = Target and module G = G = struct
+      (Flow : Dataflow.S with module G = G)
+      (Requirements : sig
+        val matches : Target.reg -> bool
+      end) : S with module Target = Target and module G = G = struct
     module Target = Target
     module G = G
     module RegSet = Target.RegSet
@@ -236,9 +238,8 @@ module Liveness = struct
       }
     let calc graph : t =
       let fact = fact () in
-      let add_reg map reg = (RegSet.add reg map, reg) in
-      let uses instr = fst @@ Target.fold_reg_uses add_reg RegSet.empty instr in
-      let defs instr = fst @@ Target.fold_reg_defs add_reg RegSet.empty instr in
+      let uses instr = RegSet.filter Requirements.matches (Target.uses instr) in
+      let defs instr = RegSet.filter Requirements.matches (Target.defs instr) in
       let update_mapping mapping a =
         {
           a with
@@ -264,7 +265,7 @@ module Liveness = struct
       let first_in (a : State.t) = function
         | G.Entry -> finish_dead a
         | G.Label (_, info) ->
-          let uses = RegSet.of_list info.args in
+          let uses = RegSet.(filter Requirements.matches (of_list info.args)) in
           let a = update_dead uses a in
           finish_dead
           @@ update_mapping RegSet.(diff a.mapping (of_list info.args)) a
@@ -332,7 +333,7 @@ module Make
          and type Dom.uid = G.uid)
     (NextUseDistances : NextUseDistances.S with module G = G)
     (M : sig
-      val reg_class : Target.reg_class
+      val matches : Target.reg -> bool
       val k : int
       val next_use_distances : NextUseDistances.distances
       val liveness : Liveness.t
@@ -477,7 +478,7 @@ struct
   let reload (state : spill_state) v =
     try
       let slot = IntHashtbl.find state.spill_mapping (Target.index v) in
-      let v' = state.select_state.fresh_vreg M.reg_class in
+      let v' = state.select_state.fresh_vreg (Target.Reg.reg_class v) in
       RegHashtbl.add state.copies v v';
       Target.mov ~dest:(Target.reg v') ~src:slot
     with Not_found ->
@@ -688,13 +689,22 @@ struct
       graph rpo
 end
 
-module X86 = struct
+module type RegClass = sig
+  module Target : Isa.Target
+  val reg_class : Target.reg_class
+  val k : int
+end
+
+module X86 (RegClass : RegClass with module Target = X86.Target) = struct
+  module Matches = struct
+    let matches r = X86.Target.Reg.reg_class r = RegClass.reg_class
+  end
   module NextUseDistances =
     NextUseDistances.Make (X86.Target) (X86.Cfg) (X86.Flow)
-  module Liveness = Liveness.Make (X86.Target) (X86.Cfg) (X86.Flow)
+  module Liveness = Liveness.Make (X86.Target) (X86.Cfg) (X86.Flow) (Matches)
   module Make = Make (X86.Target) (X86.Cfg) (Select_x86.State) (Liveness)
 
-  let spill_helper ?(reg_class = X86.Target.Int) ?(k = 16) ?(args = [])
+  let spill_helper ?(args = [])
       (module Loop : Loopnesting.S
         with type Dom.label = X86.Cfg.label
          and type Dom.position = int
@@ -705,8 +715,8 @@ module X86 = struct
     let module Spill' =
       Make (Loop) (NextUseDistances)
         (struct
-          let reg_class = reg_class
-          let k = k
+          include Matches
+          include RegClass
           let next_use_distances = next_use_distances
           let liveness = liveness
         end) in
@@ -732,13 +742,16 @@ module X86 = struct
     Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
 end
 
-module Arm = struct
+module Arm (RegClass : RegClass with module Target = Arm.Target) = struct
+  module Matches = struct
+    let matches r = Arm.Target.Reg.reg_class r = RegClass.reg_class
+  end
   module NextUseDistances =
     NextUseDistances.Make (Arm.Target) (Arm.Cfg) (Arm.Flow)
-  module Liveness = Liveness.Make (Arm.Target) (Arm.Cfg) (Arm.Flow)
+  module Liveness = Liveness.Make (Arm.Target) (Arm.Cfg) (Arm.Flow) (Matches)
   module Make = Make (Arm.Target) (Arm.Cfg) (Select_arm.State) (Liveness)
 
-  let spill_helper ?(reg_class = Arm.Target.Int) ?(k = 16) ?(args = [])
+  let spill_helper ?(args = [])
       (module Loop : Loopnesting.S
         with type Dom.label = Arm.Cfg.label
          and type Dom.position = int
@@ -749,8 +762,8 @@ module Arm = struct
     let module Spill' =
       Make (Loop) (NextUseDistances)
         (struct
-          let reg_class = reg_class
-          let k = k
+          include Matches
+          include RegClass
           let next_use_distances = next_use_distances
           let liveness = liveness
         end) in

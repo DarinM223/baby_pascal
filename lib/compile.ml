@@ -120,9 +120,14 @@ module X86 = struct
       let extra = X86.Cfg.precalculate_edges cfg in
       let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
       let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-      (* 16 registers - r10 register - rsp register - (rbp register if frame pointer is enabled) *)
-      let k = 16 - 2 - if Option.is_some state.frame_pointer then 1 else 0 in
-      let cfg = Spill.X86.spill_helper ~k ~args (module Loop) state cfg in
+      let module IntRegClass = struct
+        (* 16 registers - r10 register - rsp register - (rbp register if frame pointer is enabled) *)
+        let k = 16 - 2 - if Option.is_some state.frame_pointer then 1 else 0
+        let reg_class = X86.Target.Int
+        module Target = X86.Target
+      end in
+      let module X86SpillInt = Spill.X86 (IntRegClass) in
+      let cfg = X86SpillInt.spill_helper ~args (module Loop) state cfg in
       Format.printf "===================================\n";
       Format.printf "%s after spilling:\n" f;
       Format.printf "===================================\n";
@@ -139,7 +144,7 @@ module X86 = struct
             else None)
         |> Array.of_list
       in
-      let module Helper = Regalloc.X86Helper (Loop) in
+      let module Helper = Regalloc.X86Helper (Loop) (IntRegClass) in
       let cfg =
         Helper.regalloc ~args:(X86.Target.RegSet.of_list args) ~regs state cfg
           (fun _ -> ())
@@ -181,9 +186,14 @@ module Arm = struct
       let extra = Arm.Cfg.precalculate_edges cfg in
       let module Dom = Dominator.Make (Arm.Cfg) ((val extra)) in
       let module Loop = Loopnesting.Make (Arm.Cfg) (Dom) in
-      (* 31 registers - x10 register - x11 register - (x29 register if frame pointer is enabled) *)
-      let k = 31 - 2 - if Option.is_some state.frame_pointer then 1 else 0 in
-      let cfg = Spill.Arm.spill_helper ~k ~args (module Loop) state cfg in
+      let module IntRegClass = struct
+        (* 31 registers - x10 register - x11 register - (x29 register if frame pointer is enabled) *)
+        let k = 31 - 2 - if Option.is_some state.frame_pointer then 1 else 0
+        let reg_class = Arm.Target.Int
+        module Target = Arm.Target
+      end in
+      let module ArmSpillInt = Spill.Arm (IntRegClass) in
+      let cfg = ArmSpillInt.spill_helper ~args (module Loop) state cfg in
       let regs =
         Arm.Regs.int_regs
         |> List.filter_map (fun ((_, _, reg) as r) ->
@@ -196,7 +206,7 @@ module Arm = struct
             else None)
         |> Array.of_list
       in
-      let module Helper = Regalloc.ArmHelper (Loop) in
+      let module Helper = Regalloc.ArmHelper (Loop) (IntRegClass) in
       let cfg =
         Helper.regalloc ~args:(Arm.Target.RegSet.of_list args) ~regs state cfg
           (fun _ -> ())

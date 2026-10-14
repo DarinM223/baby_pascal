@@ -175,6 +175,13 @@ module Target = struct
     let reg = function
       | Virtual v -> v.reg
       | r -> r
+    let reg_class = function
+      | Virtual v -> v.reg_class
+      | Physical (_, clz, _) -> clz
+      | Tombstone ->
+        failwith
+          "reg_class: attempted to get the register class of a tombstone \
+           register"
   end
   module RegSet = CCSet.Make (Reg)
   module RegMap = CCMap.Make (Reg)

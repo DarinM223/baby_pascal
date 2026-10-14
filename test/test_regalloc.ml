@@ -47,10 +47,16 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
          else instr_num)
     | _ -> None
   in
+  let module RegClass = struct
+    module Target = X86.Target
+    let reg_class = X86.Target.Int
+    let k = 16
+  end in
+  let module X86Spill = Spill.X86 (RegClass) in
   let liveness =
     X86.Target.
       {
-        Spill.X86.Liveness.live_in = (fun _ -> RegSet.empty);
+        X86Spill.Liveness.live_in = (fun _ -> RegSet.empty);
         live_out = (fun _ -> RegSet.empty);
         used_in_block = (fun _ -> RegSet.empty);
         dies;
@@ -59,7 +65,8 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   in
   let open Regalloc in
   let module Regalloc =
-    Make (X86.Target) (X86.Cfg) (Select_x86.State) (Spill.X86.Liveness) (Dom)
+    Make (X86.Target) (X86.Cfg) (Select_x86.State) (X86Spill.Liveness) (Dom)
+      (X86Spill.Matches)
   in
   let state =
     Regalloc.init_state ~select_state ~regs ~block_execution_frequency ~liveness

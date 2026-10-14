@@ -39,6 +39,7 @@ module type Target = sig
     val compare : reg -> reg -> int
     val hash : reg -> int
     val reg : reg -> reg
+    val reg_class : reg -> reg_class
   end
   module RegSet : CCSet.S with type elt = reg
   module RegMap : CCMap.S with type key = reg

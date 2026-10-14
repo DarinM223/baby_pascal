@@ -11,7 +11,10 @@ module Make
       Dominator.S
         with type label = G.label
          and type position = int
-         and type uid = G.uid) =
+         and type uid = G.uid)
+    (Requirements : sig
+      val matches : Target.reg -> bool
+    end) =
 struct
   module RegSet = Target.RegSet
   module RegMap = Target.RegMap
@@ -121,7 +124,7 @@ struct
            Target.pp_reg reg)
 
   let vreg_id = function
-    | Target.Virtual vreg -> Some vreg.id
+    | Target.Virtual vreg as reg when Requirements.matches reg -> Some vreg.id
     | _ -> None
 
   let load_block_state ?(copy = false) state pos =
@@ -363,6 +366,12 @@ struct
         is necessary *)
   end
 
+  let matches_operand op =
+    fst
+    @@ Target.fold_reg_operand
+         (fun acc reg -> (acc && Requirements.matches reg, reg))
+         true op
+
   let iter_use_defs ~k_pair_both_regs ?(k_pair_use_reg = fun _ -> ())
       ?(k_pair_def_reg = fun _ -> ()) ?(k_pair_no_reg = fun _ -> ())
       ?(k_def_only = fun _ -> ()) instr =
@@ -383,13 +392,15 @@ struct
         go ([], defs)
       | _, [] -> ()
     in
-    go (Target.srcs instr, Target.dests instr)
+    go
+      ( List.filter matches_operand (Target.srcs instr),
+        List.filter matches_operand (Target.dests instr) )
 
   let iter_of_fold fold f instr =
     fst
     @@ fold
          (fun () reg ->
-           f reg;
+           if Requirements.matches reg then f reg;
            ((), reg))
          () instr
 
@@ -574,7 +585,8 @@ struct
         (fun (arg, phi) args ->
           match (Target.destruct_reg arg, phi) with
           | ( Some (Virtual { reg = arg_reg; _ } | (Physical _ as arg_reg)),
-              (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ) ->
+              (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) )
+            when Requirements.(matches arg_reg && matches (Physical phi_reg)) ->
             let arg_reg_idx = find_reg_index state.regs arg_reg in
             let phi_reg_idx = find_reg_index state.regs (Physical phi_reg) in
             if arg_reg_idx <> phi_reg_idx then begin
@@ -620,6 +632,7 @@ struct
     (* Update instruction uses, replacing virtual registers with physical registers,
        and removing dead uses from the currently occupied registers *)
     let go_use = function
+      | reg when not (Requirements.matches reg) -> reg
       | Target.Virtual vreg when dies state uid (Virtual vreg) instr_num ->
         Logs.debug (fun m ->
             m "Killing dead register %a for %a\n" Target.pp_reg vreg.Target.reg
@@ -640,6 +653,7 @@ struct
     let instr = Target.map_reg_uses go_use instr in
     (* Assign registers for definitions *)
     let go_def head = function
+      | reg when not (Requirements.matches reg) -> (head, reg)
       | Target.Virtual r' as r when Target.equal_reg r'.reg r ->
         let reg, pref, head =
           get_register ~don't_use_for_optimistic_moves state uid r head
@@ -655,7 +669,7 @@ struct
         end;
         (head, r'.reg)
       | Target.Virtual r' -> (head, r'.reg)
-      | r -> (head, r)
+      | reg -> (head, reg)
     in
     let head, instr = Target.fold_reg_defs go_def head instr in
     (head, instr)
@@ -675,7 +689,9 @@ struct
         let head, args =
           List.fold_left_map
             (fun head -> function
-              | Target.Virtual phi' as phi when Target.equal_reg phi'.reg phi ->
+              | Target.Virtual phi' as phi
+                when Requirements.matches phi && Target.equal_reg phi'.reg phi
+                ->
                 let reg, pref, head =
                   get_register ~don't_use_for_optimistic_moves state uid phi
                     head
@@ -846,9 +862,7 @@ struct
       let succ = G.idd (Some succ) in
       let live =
         Target.RegSet.filter
-          (function
-            | Target.Virtual _ -> true
-            | _ -> false)
+          (fun reg -> Option.is_some (vreg_id reg))
           (state.liveness.live_in succ)
       in
       let check_interferes v =
@@ -903,7 +917,8 @@ struct
             List.iteri
               (fun i op ->
                 match Target.destruct_reg op with
-                | Some r -> handle_jump_arg succ args i r
+                | Some r when Requirements.matches r ->
+                  handle_jump_arg succ args i r
                 | _ -> ())
               args
           | _ -> ())
@@ -1035,7 +1050,7 @@ struct
       let zblock, cfg = G.(focus (idd (Dom.label_of_position pred)) cfg) in
       let head, last = G.goto_end zblock in
       (* if predecessor is unprocessed, insert the uncolored virtual register,
-       it will be colored with the right register later. *)
+         it will be colored with the right register later. *)
       let v = if state.processed.(pred) then get_reg v else v in
       let rewrite_edge instr =
         let add_phi_arg op =
@@ -1081,7 +1096,8 @@ struct
           let head =
             RegSet.fold
               (function
-                | Target.Virtual r' as r when Target.equal_reg r'.reg r ->
+                | Target.Virtual r' as r
+                  when Requirements.matches r && Target.equal_reg r'.reg r ->
                   fun head ->
                     let reg, pref, head =
                       get_register state G.entry_uid r head
@@ -1190,17 +1206,20 @@ module X86Helper
         with type Dom.label = X86.Cfg.label
          and type Dom.position = int
          and type Dom.uid = int
-         and type Dom.graph = X86.Cfg.graph) =
+         and type Dom.graph = X86.Cfg.graph)
+    (RegClass : Spill.RegClass with module Target = X86.Target) =
 struct
+  module X86Spill = Spill.X86 (RegClass)
   module Regalloc =
-    Make (X86.Target) (X86.Cfg) (Select_x86.State) (Spill.X86.Liveness)
+    Make (X86.Target) (X86.Cfg) (Select_x86.State) (X86Spill.Liveness)
       (Loop.Dom)
+      (X86Spill.Matches)
   let regalloc ?(args = X86.Target.RegSet.empty)
       ?(regs =
         X86.Regs.int_regs |> Array.of_list
         |> Array.map (fun r -> X86.Target.Physical r)) state cfg k_prefs =
     (* have to recalculate because added spills may have modified the instruction numbers *)
-    let liveness = Spill.X86.Liveness.calc cfg in
+    let liveness = X86Spill.Liveness.calc cfg in
     let module Freq = Execfreq.Make (X86.Cfg) (Loop) (X86.ExecfreqRequirements)
     in
     let block_execution_frequency uid =
@@ -1218,17 +1237,20 @@ module ArmHelper
         with type Dom.label = Arm.Cfg.label
          and type Dom.position = int
          and type Dom.uid = int
-         and type Dom.graph = Arm.Cfg.graph) =
+         and type Dom.graph = Arm.Cfg.graph)
+    (RegClass : Spill.RegClass with module Target = Arm.Target) =
 struct
+  module ArmSpill = Spill.Arm (RegClass)
   module Regalloc =
-    Make (Arm.Target) (Arm.Cfg) (Select_arm.State) (Spill.Arm.Liveness)
+    Make (Arm.Target) (Arm.Cfg) (Select_arm.State) (ArmSpill.Liveness)
       (Loop.Dom)
+      (ArmSpill.Matches)
   let regalloc ?(args = Arm.Target.RegSet.empty)
       ?(regs =
         Arm.Regs.int_regs |> Array.of_list
         |> Array.map (fun r -> Arm.Target.Physical r)) state cfg k_prefs =
     (* have to recalculate because added spills may have modified the instruction numbers *)
-    let liveness = Spill.Arm.Liveness.calc cfg in
+    let liveness = ArmSpill.Liveness.calc cfg in
     let module Freq = Execfreq.Make (Arm.Cfg) (Loop) (Arm.ExecfreqRequirements)
     in
     let block_execution_frequency uid =
@@ -1248,8 +1270,14 @@ let%expect_test "Nested loops register allocation" =
   let extra = X86.Cfg.precalculate_edges cfg in
   let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-  let cfg = Spill.X86.spill_helper (module Loop) state cfg in
-  let module Helper = X86Helper (Loop) in
+  let module RegClass = struct
+    module Target = X86.Target
+    let reg_class = X86.Target.Int
+    let k = 16
+  end in
+  let module X86Spill = Spill.X86 (RegClass) in
+  let cfg = X86Spill.spill_helper (module Loop) state cfg in
+  let module Helper = X86Helper (Loop) (RegClass) in
   let cfg =
     Helper.regalloc state cfg @@ fun state ->
     Format.printf "%a\n"
@@ -1309,7 +1337,13 @@ let%expect_test "Fibonacci register allocation" =
   let extra = X86.Cfg.precalculate_edges cfg in
   let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-  let cfg = Spill.X86.spill_helper ~args (module Loop) state cfg in
+  let module RegClass = struct
+    module Target = X86.Target
+    let reg_class = X86.Target.Int
+    let k = 16
+  end in
+  let module X86Spill = Spill.X86 (RegClass) in
+  let cfg = X86Spill.spill_helper ~args (module Loop) state cfg in
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
@@ -1337,7 +1371,7 @@ let%expect_test "Fibonacci register allocation" =
       movq %29any, %30(reuse=%31)
       jmp label1(%29any)
     |}];
-  let module Helper = X86Helper (Loop) in
+  let module Helper = X86Helper (Loop) (RegClass) in
   let cfg =
     Helper.regalloc ~args:(X86.Target.RegSet.of_list args) state cfg
     @@ fun state ->
