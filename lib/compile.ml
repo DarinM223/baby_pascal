@@ -126,13 +126,27 @@ module X86 = struct
         let reg_class = X86.Target.Int
         module Target = X86.Target
       end in
+      let module FloatRegClass = struct
+        (* 16 registers - xmm10 register *)
+        let k = 16 - 1
+        let reg_class = X86.Target.Float
+        module Target = X86.Target
+      end in
       let module X86SpillInt = Spill.X86 (IntRegClass) in
-      let cfg = X86SpillInt.spill_helper ~args (module Loop) state cfg in
+      let module X86SpillFloat = Spill.X86 (FloatRegClass) in
+      let int_args = List.filter X86SpillInt.Matches.matches args in
+      let float_args = List.filter X86SpillFloat.Matches.matches args in
+      let cfg =
+        X86SpillInt.spill_helper ~args:int_args (module Loop) state cfg
+      in
+      let cfg =
+        X86SpillFloat.spill_helper ~args:float_args (module Loop) state cfg
+      in
       Format.printf "===================================\n";
       Format.printf "%s after spilling:\n" f;
       Format.printf "===================================\n";
       Format.printf "%a\n" X86.Printer.pp_graph cfg;
-      let regs =
+      let int_regs =
         X86.Regs.int_regs
         |> List.filter_map (fun ((_, _, reg) as r) ->
             if
@@ -144,13 +158,28 @@ module X86 = struct
             else None)
         |> Array.of_list
       in
+      let float_regs =
+        X86.Regs.float_regs
+        |> List.filter_map (fun ((_, _, reg) as r) ->
+            if reg <> "xmm10" then Some (X86.Target.Physical r) else None)
+        |> Array.of_list
+      in
       let module Helper = Regalloc.X86Helper (Loop) (IntRegClass) in
       let cfg =
-        Helper.regalloc ~args:(X86.Target.RegSet.of_list args) ~regs state cfg
-          (fun _ -> ())
+        Helper.regalloc ~args:(X86.Target.RegSet.of_list int_args)
+          ~regs:int_regs state cfg (fun _ -> ())
       in
       Format.printf "===================================\n";
-      Format.printf "%s after register allocation:\n" f;
+      Format.printf "%s after integer register allocation:\n" f;
+      Format.printf "===================================\n";
+      Format.printf "%a\n" X86.Printer.pp_graph cfg;
+      let module Helper = Regalloc.X86Helper (Loop) (FloatRegClass) in
+      let cfg =
+        Helper.regalloc ~args:(X86.Target.RegSet.of_list float_args)
+          ~regs:float_regs state cfg (fun _ -> ())
+      in
+      Format.printf "===================================\n";
+      Format.printf "%s after float register allocation:\n" f;
       Format.printf "===================================\n";
       Format.printf "%a\n" X86.Printer.pp_graph cfg;
       let cfg = X86.Sequentialize.sequentialize cfg in

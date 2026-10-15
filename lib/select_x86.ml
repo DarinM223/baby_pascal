@@ -290,7 +290,8 @@ module Select = struct
       end
     | Undag.Target.Call (dest, f, args) ->
       let open Target in
-      let dest = assign_vreg (reg_class_of_operand dest) dest in
+      let dest_class = reg_class_of_operand dest in
+      let dest = assign_vreg dest_class dest in
       let* f = translate_operand f in
       let f =
         match f with
@@ -302,14 +303,31 @@ module Select = struct
         List.(init (length args) (call_conv ~caller:true state Target.Int))
       in
       let clobbered =
-        List.map
-          (fun r -> Reg (constrained r (fresh_vreg Int)))
-          Regs.caller_save
+        let ints =
+          List.map
+            (fun r -> Reg (constrained r (fresh_vreg Int)))
+            Regs.caller_save
+        in
+        let floats =
+          List.map
+            (fun r -> Reg (constrained r (fresh_vreg Float)))
+            Regs.float_regs
+        in
+        ints @ floats
       in
       let rax =
         List.find
           (function
             | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = Regs.rax
+              ->
+              true
+            | _ -> false)
+          clobbered
+      in
+      let xmm0 =
+        List.find
+          (function
+            | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = Regs.xmm0
               ->
               true
             | _ -> false)
@@ -322,10 +340,15 @@ module Select = struct
         |> Target.modify_defs (fun ~defs ~num_hidden ->
             (clobbered @ defs, num_hidden + List.length clobbered))
       in
+      let mov_instr =
+        match dest_class with
+        | Int -> Target.mov ~dest ~src:rax
+        | Float -> Target.instr "movsd" ~defs:[ dest ] ~uses:[ xmm0 ]
+      in
       with_clobber_regs
         (Regs.caller_save |> List.map (fun r -> Physical r) |> RegSet.of_list)
         (pcopy ~dests ~srcs:args)
-      @> call @> mov ~dest ~src:rax @> k dest
+      @> call @> mov_instr @> k dest
     | Undag.Target.Goto (l, args) ->
       let* args = translate_operands args in
       Cfg.Last (Cfg.Branch (Target.goto l args, l))
@@ -440,9 +463,9 @@ let%expect_test "Fibonacci code generation" =
     {|
       pcopy [(%1any, %0(%rdi))]
       jle label2, label3, %1any, $1
-    label1(local=false)(32any):
-      pcopy [(%33(%rax), %32any)]
-      ret %33(%rax)
+    label1(local=false)(64any):
+      pcopy [(%65(%rax), %64any)]
+      ret %65(%rax)
     label2(local=false)():
       movq %2any, %1any
       jmp label1(%2any)
@@ -450,17 +473,17 @@ let%expect_test "Fibonacci code generation" =
       movq %5any, %1any
       subq %4(reuse=%5), %5any, $1
       pcopy [(%6(%rdi), %4(reuse=%5))]
-      call %7(%rax), %8(%rcx), %9(%rdx), %10(%rsi), %11(%rdi), %12(%r8), %13(%r9), %14(%r10), %15(%r11), %6(%rdi), fibonacci
+      call %7(%rax), %8(%rcx), %9(%rdx), %10(%rsi), %11(%rdi), %12(%r8), %13(%r9), %14(%r10), %15(%r11), %16f(%xmm0), %17f(%xmm1), %18f(%xmm2), %19f(%xmm3), %20f(%xmm4), %21f(%xmm5), %22f(%xmm6), %23f(%xmm7), %24f(%xmm8), %25f(%xmm9), %26f(%xmm10), %27f(%xmm11), %28f(%xmm12), %29f(%xmm13), %30f(%xmm14), %31f(%xmm15), %6(%rdi), fibonacci
       movq %3any, %7(%rax)
-      movq %18any, %1any
-      subq %17(reuse=%18), %18any, $2
-      pcopy [(%19(%rdi), %17(reuse=%18))]
-      call %20(%rax), %21(%rcx), %22(%rdx), %23(%rsi), %24(%rdi), %25(%r8), %26(%r9), %27(%r10), %28(%r11), %19(%rdi), fibonacci
-      movq %16any, %20(%rax)
-      movq %31any, %3any
-      addq %30(reuse=%31), %31any, %16any
-      movq %29any, %30(reuse=%31)
-      jmp label1(%29any)
+      movq %34any, %1any
+      subq %33(reuse=%34), %34any, $2
+      pcopy [(%35(%rdi), %33(reuse=%34))]
+      call %36(%rax), %37(%rcx), %38(%rdx), %39(%rsi), %40(%rdi), %41(%r8), %42(%r9), %43(%r10), %44(%r11), %45f(%xmm0), %46f(%xmm1), %47f(%xmm2), %48f(%xmm3), %49f(%xmm4), %50f(%xmm5), %51f(%xmm6), %52f(%xmm7), %53f(%xmm8), %54f(%xmm9), %55f(%xmm10), %56f(%xmm11), %57f(%xmm12), %58f(%xmm13), %59f(%xmm14), %60f(%xmm15), %35(%rdi), fibonacci
+      movq %32any, %36(%rax)
+      movq %63any, %3any
+      addq %62(reuse=%63), %63any, %32any
+      movq %61any, %62(reuse=%63)
+      jmp label1(%61any)
     |}]
 
 let%expect_test "Nested loops code generation" =

@@ -231,7 +231,8 @@ module Liveness = struct
           (fun ~before ~after ->
             RegSet.(
               cardinal after.mapping > cardinal before.mapping
-              || cardinal after.used > cardinal before.used));
+              || cardinal after.used > cardinal before.used)
+            || RegMap.(cardinal after.dies > cardinal before.dies));
         skip_block = Fun.const false;
         get = IntHashtbl.find store;
         set = IntHashtbl.replace store;
@@ -529,11 +530,12 @@ struct
     let uid, w =
       match G.first zblock with
       | G.Entry -> (G.entry_uid, w)
-      | G.Label ((uid, _), info) -> (uid, RegSet.(union w (of_list info.args)))
+      | G.Label ((uid, _), info) ->
+        (uid, RegSet.(union w (filter M.matches (of_list info.args))))
     in
     let rec go instr_num w s = function
       | head, G.Tail (Instruction instr, tail) ->
-        let r = RegSet.diff (Target.uses instr) w in
+        let r = RegSet.(diff (filter M.matches (Target.uses instr)) w) in
         (* todo: just use RegSet.union r ? *)
         let w, s =
           RegSet.fold
@@ -559,10 +561,11 @@ struct
               head
           else head
         in
-        let w = RegSet.union w (Target.defs instr) in
+        let w = RegSet.(union w (filter M.matches (Target.defs instr))) in
         let next_defs =
           match tail with
-          | G.Tail (Instruction next, _) -> RegSet.cardinal (Target.defs next)
+          | G.Tail (Instruction next, _) ->
+            RegSet.(cardinal (filter M.matches (Target.defs next)))
           | Last _ -> 0
         in
         (* provide room for definitions of next instruction *)
@@ -575,7 +578,7 @@ struct
         go (instr_num + 1) w s (head, tail)
       | head, G.Last l ->
         let handle_instruction instr =
-          let r = RegSet.diff (Target.uses instr) w in
+          let r = RegSet.(diff (filter M.matches (Target.uses instr)) w) in
           let w, s =
             RegSet.fold
               (fun use (w, s) -> (RegSet.add use w, RegSet.add use s))
@@ -697,7 +700,8 @@ end
 
 module X86 (RegClass : RegClass with module Target = X86.Target) = struct
   module Matches = struct
-    let matches r = X86.Target.Reg.reg_class r = RegClass.reg_class
+    let matches r =
+      X86.Target.(equal_reg_class (Reg.reg_class r) RegClass.reg_class)
   end
   module NextUseDistances =
     NextUseDistances.Make (X86.Target) (X86.Cfg) (X86.Flow)
@@ -744,7 +748,8 @@ end
 
 module Arm (RegClass : RegClass with module Target = Arm.Target) = struct
   module Matches = struct
-    let matches r = Arm.Target.Reg.reg_class r = RegClass.reg_class
+    let matches r =
+      Arm.Target.(equal_reg_class (Reg.reg_class r) RegClass.reg_class)
   end
   module NextUseDistances =
     NextUseDistances.Make (Arm.Target) (Arm.Cfg) (Arm.Flow)
