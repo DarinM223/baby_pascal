@@ -239,7 +239,7 @@ label6(local=false)(35any):
     in
     Reconstruct.reconstruct
       (fun () -> state.select_state.fresh_vreg Int)
-      (Spill.RegSet.singleton reg)
+      reg
       (Spill.RegSet.of_list copies)
       def_blocks graph
   in

@@ -42,7 +42,7 @@ struct
     in
     go head
 
-  let reconstruct (fresh : unit -> G.Target.reg) (old_defs : Target.RegSet.t)
+  let reconstruct (fresh : unit -> G.Target.reg) (old_def : Target.reg)
       (cloned_defs : Target.RegSet.t) (def_blocks : G.uid list)
       (graph : G.graph) : G.graph =
     (* for every block in dominance frontier, place a phi with fresh definition *)
@@ -55,6 +55,7 @@ struct
             (df (Dom.position_of_uid uid)))
         def_blocks
     in
+    let phi_worklist = ref PhiSet.empty in
     let place_phi (phis, graph) block =
       let phi_def = fresh () in
       let (head, tail), graph = G.focus block graph in
@@ -62,6 +63,7 @@ struct
         match head with
         | First Entry -> failwith "dominance frontier is entry"
         | First (Label (l, info)) ->
+          phi_worklist := PhiSet.add (phi_def, block) !phi_worklist;
           G.First (Label (l, { info with args = phi_def :: info.args }))
         | _ -> failwith "zipper not at beginning of block"
       in
@@ -70,15 +72,14 @@ struct
     let phis, graph =
       List.fold_left place_phi (Target.RegSet.empty, graph) iter_df_bbs
     in
-    let all_defs = Target.RegSet.(union old_defs (union cloned_defs phis)) in
-    let phi_worklist = ref PhiSet.empty in
+    let all_defs = Target.RegSet.(add old_def (union cloned_defs phis)) in
     let blocks = G.reverse_postorder_dfs graph in
     let go_block graph block =
       let zblock = G.unzip block in
       let handle_instruction head instr =
         let go_use op =
           match Target.Reg.of_operand op with
-          | Some reg when Target.RegSet.mem reg old_defs ->
+          | Some reg when Target.equal_reg reg old_def ->
             let reaching_def, is_phi =
               compute_reaching_def all_defs graph head
             in

@@ -549,7 +549,6 @@ struct
         let head, { w; s } =
           limit ~add_spills state { w; s } uid instr_num head M.k
         in
-        let head = G.Head (head, Instruction instr) in
         (* add reloads for vars in r *)
         let head =
           if add_spills then
@@ -561,6 +560,7 @@ struct
               head
           else head
         in
+        let head = G.Head (head, Instruction instr) in
         let w = RegSet.(union w (filter M.matches (Target.defs instr))) in
         let next_defs =
           match tail with
@@ -573,7 +573,7 @@ struct
            uses don't matter when writing to result registers *)
         let head, { w; s } =
           limit ~add_spills state { w; s } uid (instr_num + 1) head
-            (M.k - next_defs)
+            (Int.max 0 (M.k - next_defs))
         in
         go (instr_num + 1) w s (head, tail)
       | head, G.Last l ->
@@ -728,22 +728,30 @@ module X86 (RegClass : RegClass with module Target = X86.Target) = struct
     let cfg = Spill'.spill ~args spill_state cfg in
     let module Reconstruct = Reconstruct.Make (X86.Target) (X86.Cfg) (Loop.Dom)
     in
-    let reconstruct_copies reg _ graph =
-      let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
-      let def_blocks =
-        List.map
-          (fun r ->
-            Deadcode.IntHashtbl.find spill_state.select_state.vreg_block
-              (X86.Target.index r))
-          (reg :: copies)
-      in
-      Reconstruct.reconstruct
-        (fun () -> spill_state.select_state.fresh_vreg Int)
-        (Spill'.RegSet.singleton reg)
-        (Spill'.RegSet.of_list copies)
-        def_blocks graph
+    let reconstruct_copies reg graph =
+      if not (Matches.matches reg) then graph
+      else begin
+        let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
+        let def_blocks =
+          List.map
+            (fun r ->
+              Deadcode.IntHashtbl.find spill_state.select_state.vreg_block
+                (X86.Target.index r))
+            (reg :: copies)
+        in
+        Format.printf "Reconstructing reg %a with copies %a\n" X86.Target.pp_reg
+          reg X86.Target.pp_regs copies;
+        Reconstruct.reconstruct
+          (fun () -> spill_state.select_state.fresh_vreg RegClass.reg_class)
+          reg
+          (Spill'.RegSet.of_list copies)
+          def_blocks graph
+      end
     in
-    Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
+    let reconstruct_regs =
+      X86.Target.RegSet.of_list (Spill'.RegHashtbl.keys_list spill_state.copies)
+    in
+    X86.Target.RegSet.fold reconstruct_copies reconstruct_regs cfg
 end
 
 module Arm (RegClass : RegClass with module Target = Arm.Target) = struct
@@ -776,7 +784,7 @@ module Arm (RegClass : RegClass with module Target = Arm.Target) = struct
     let cfg = Spill'.spill ~args spill_state cfg in
     let module Reconstruct = Reconstruct.Make (Arm.Target) (Arm.Cfg) (Loop.Dom)
     in
-    let reconstruct_copies reg _ graph =
+    let reconstruct_copies reg graph =
       let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
       let def_blocks =
         List.map
@@ -786,10 +794,13 @@ module Arm (RegClass : RegClass with module Target = Arm.Target) = struct
           (reg :: copies)
       in
       Reconstruct.reconstruct
-        (fun () -> spill_state.select_state.fresh_vreg Int)
-        (Spill'.RegSet.singleton reg)
+        (fun () -> spill_state.select_state.fresh_vreg RegClass.reg_class)
+        reg
         (Spill'.RegSet.of_list copies)
         def_blocks graph
     in
-    Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
+    let reconstruct_regs =
+      Arm.Target.RegSet.of_list (Spill'.RegHashtbl.keys_list spill_state.copies)
+    in
+    Arm.Target.RegSet.fold reconstruct_copies reconstruct_regs cfg
 end

@@ -279,13 +279,21 @@ module Select = struct
              Ast.pp_bop op
       end
     | Undag.Target.Return ops ->
+      let ops_classes = List.map reg_class_of_operand ops in
       let* ops = translate_operands ops in
-      begin match ops with
+      begin match List.combine ops_classes ops with
       | [] -> Cfg.Last (Cfg.Return (Target.return ~uses:[]))
-      | [ op ] ->
-        let rax = Target.(Reg (constrained Regs.rax (fresh_vreg Int))) in
-        Target.pcopy ~dests:[ rax ] ~srcs:[ op ]
-        @> Cfg.Last (Cfg.Return (Target.return ~uses:[ rax ]))
+      | [ (op_class, op) ] ->
+        begin match op_class with
+        | Int ->
+          let rax = Target.(Reg (constrained Regs.rax (fresh_vreg Int))) in
+          Target.pcopy ~dests:[ rax ] ~srcs:[ op ]
+          @> Cfg.Last (Cfg.Return (Target.return ~uses:[ rax ]))
+        | Float ->
+          let xmm0 = Target.(Reg (constrained Regs.xmm0 (fresh_vreg Float))) in
+          Target.pcopy ~dests:[ xmm0 ] ~srcs:[ op ]
+          @> Cfg.Last (Cfg.Return (Target.return ~uses:[ xmm0 ]))
+        end
       | _ -> failwith "can only return one thing currently"
       end
     | Undag.Target.Call (dest, f, args) ->
