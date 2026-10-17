@@ -20,9 +20,15 @@ let rec prepend_head head tail =
 let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
     (tmp2 : Target.physical_reg) (cfg : Cfg.graph) : Cfg.graph =
   let callee_save =
-    RegSet.of_list (List.map (fun p -> Target.Physical p) Regs.callee_save)
+    RegSet.(
+      union
+        (of_list (List.map (fun p -> Target.Physical p) Regs.int_callee_save))
+        (of_list (List.map (fun p -> Target.Physical p) Regs.float_callee_save)))
   in
-  let used_callee_saves = RegHashtbl.create (List.length Regs.callee_save) in
+  let used_callee_saves =
+    RegHashtbl.create
+      List.(length Regs.int_callee_save + length Regs.float_callee_save)
+  in
   let called_function = ref false in
   let record_reg reg =
     if RegSet.mem reg callee_save && not (RegHashtbl.mem used_callee_saves reg)
@@ -248,6 +254,7 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->
           go_tail tail
         | _ ->
+          if i.instr = "bl" then called_function := true;
           List.iter record_operand i.uses;
           List.iter record_operand i.defs;
           let tmps = ref [ tmp1; tmp2 ] in

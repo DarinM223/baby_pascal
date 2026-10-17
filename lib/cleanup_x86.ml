@@ -142,6 +142,7 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->
           go_tail tail
         | _ ->
+          if i.instr = "call" then called_function := true;
           List.iter record_operand i.uses;
           List.iter record_operand i.defs;
           i @> go_tail tail

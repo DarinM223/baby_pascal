@@ -80,7 +80,21 @@ module Select = struct
           else
             Target.StackSlot { relative_to_base = true; offset = (n - 7) * 8 }
       end
-    | Target.Float -> failwith "Float calling convention not supported yet"
+    | Target.Float ->
+      begin function
+        | 0 -> Target.(Reg (constrained Regs.d0 (fresh_vreg Float)))
+        | 1 -> Target.(Reg (constrained Regs.d1 (fresh_vreg Float)))
+        | 2 -> Target.(Reg (constrained Regs.d2 (fresh_vreg Float)))
+        | 3 -> Target.(Reg (constrained Regs.d3 (fresh_vreg Float)))
+        | 4 -> Target.(Reg (constrained Regs.d4 (fresh_vreg Float)))
+        | 5 -> Target.(Reg (constrained Regs.d5 (fresh_vreg Float)))
+        | 6 -> Target.(Reg (constrained Regs.d6 (fresh_vreg Float)))
+        | 7 -> Target.(Reg (constrained Regs.d7 (fresh_vreg Float)))
+        | n ->
+          if caller then new_stack_slot 8
+          else
+            Target.StackSlot { relative_to_base = true; offset = (n - 7) * 8 }
+      end
 
   let reuse_instr tmp dest instr =
     instr
@@ -216,6 +230,7 @@ module Select = struct
       end
     | Undag.Target.Call (dest, f, args) ->
       let open Target in
+      let dest_class = reg_class_of_operand dest in
       let dest = assign_vreg (reg_class_of_operand dest) dest in
       let* f = translate_operand f in
       let f =
@@ -223,14 +238,30 @@ module Select = struct
         | Label (l, []) -> l
         | _ -> failwith "call: expected function to be label"
       in
-      let* args = translate_operands args in
-      let dests =
-        List.(init (length args) (call_conv ~caller:true state Target.Int))
+      let float_args, int_args =
+        List.partition (fun op -> reg_class_of_operand op = Float) args
+      in
+      let* int_args = translate_operands int_args in
+      let* float_args = translate_operands float_args in
+      let int_dests =
+        List.(init (length int_args)) (call_conv ~caller:true state Target.Int)
+      in
+      let float_dests =
+        List.(init (length float_args))
+          (call_conv ~caller:true state Target.Float)
       in
       let clobbered =
-        List.map
-          (fun r -> Reg (constrained r (fresh_vreg Int)))
-          Regs.caller_save
+        let ints =
+          List.map
+            (fun r -> Reg (constrained r (fresh_vreg Int)))
+            Regs.int_caller_save
+        in
+        let floats =
+          List.map
+            (fun r -> Reg (constrained r (fresh_vreg Float)))
+            Regs.float_caller_save
+        in
+        ints @ floats
       in
       let x0 =
         List.find
@@ -241,17 +272,49 @@ module Select = struct
             | _ -> false)
           clobbered
       in
+      let d0 =
+        List.find
+          (function
+            | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = Regs.d0
+              ->
+              true
+            | _ -> false)
+          clobbered
+      in
       let call =
         instr "bl" ~defs:[] ~uses:[ Label (f, []) ]
         |> Target.modify_uses (fun ~uses ~num_hidden ->
-            (dests @ uses, num_hidden + List.length dests))
+            ( int_dests @ float_dests @ uses,
+              num_hidden + List.length int_dests + List.length float_dests ))
         |> Target.modify_defs (fun ~defs ~num_hidden ->
             (clobbered @ defs, num_hidden + List.length clobbered))
       in
-      with_clobber_regs
-        (Regs.caller_save |> List.map (fun r -> Physical r) |> RegSet.of_list)
-        (pcopy ~dests ~srcs:args)
-      @> call @> mov ~dest ~src:x0 @> k dest
+      let mov_instr =
+        match dest_class with
+        | Int -> Target.mov ~dest ~src:x0
+        | Float -> Target.mov ~dest ~src:d0
+      in
+      let int_pcopies rest =
+        if List.length int_dests > 0 then
+          with_clobber_regs
+            (Regs.int_caller_save
+            |> List.map (fun r -> Physical r)
+            |> RegSet.of_list)
+            (pcopy ~dests:int_dests ~srcs:int_args)
+          @> rest
+        else rest
+      in
+      let float_pcopies rest =
+        if List.length float_dests > 0 then
+          with_clobber_regs
+            (Regs.float_caller_save
+            |> List.map (fun r -> Physical r)
+            |> RegSet.of_list)
+            (pcopy ~dests:float_dests ~srcs:float_args)
+          @> rest
+        else rest
+      in
+      int_pcopies @@ float_pcopies @@ call @> mov_instr @> k dest
     | Undag.Target.Goto (l, args) ->
       let* args = translate_operands args in
       Cfg.Last (Cfg.Branch (Target.goto l args, l))

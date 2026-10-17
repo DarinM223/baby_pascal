@@ -121,7 +121,7 @@ module FreshGEP () : Normalize.Fresh = struct
   let fresh typ =
     incr c;
     (typ, ("__gep_tmp", !c))
-  let new_label () = failwith "Can't create label for getelementptr"
+  let new_label _ = failwith "Can't create label for getelementptr"
   let reset_names () = ()
   let reset_labels () = ()
 end

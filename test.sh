@@ -303,3 +303,19 @@ if [ -v AARCH ]; then
     exit 1
   fi
 fi
+
+dune exec compile -- -x86_64 examples/floatfibonacci.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "floatfibonacci compilation failed"
+    exit 1
+fi
+./build.sh floatfibonacci.pas
+./floatfibonacci.pas > floatfibonacci.pas.test
+if cmp --silent floatfibonacci.pas.test examples/floatfibonacci.pas.expected; then
+  echo "floatfibonacci test succeeded"
+else
+  echo "floatfibonacci test failed"
+  echo "Diff:"
+  diff floatfibonacci.pas.test examples/floatfibonacci.pas.expected
+  exit 1
+fi

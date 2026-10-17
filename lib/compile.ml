@@ -222,9 +222,23 @@ module Arm = struct
         let reg_class = Arm.Target.Int
         module Target = Arm.Target
       end in
+      let module FloatRegClass = struct
+        (* 32 registers - d20 register - d21 register *)
+        let k = 32 - 2
+        let reg_class = Arm.Target.Float
+        module Target = Arm.Target
+      end in
       let module ArmSpillInt = Spill.Arm (IntRegClass) in
-      let cfg = ArmSpillInt.spill_helper ~args (module Loop) state cfg in
-      let regs =
+      let module ArmSpillFloat = Spill.Arm (FloatRegClass) in
+      let int_args = List.filter ArmSpillInt.Matches.matches args in
+      let float_args = List.filter ArmSpillFloat.Matches.matches args in
+      let cfg =
+        ArmSpillInt.spill_helper ~args:int_args (module Loop) state cfg
+      in
+      let cfg =
+        ArmSpillFloat.spill_helper ~args:float_args (module Loop) state cfg
+      in
+      let int_regs =
         Arm.Regs.int_regs
         |> List.filter_map (fun ((_, _, reg) as r) ->
             if
@@ -236,16 +250,38 @@ module Arm = struct
             else None)
         |> Array.of_list
       in
+      let float_regs =
+        Arm.Regs.float_regs
+        |> List.filter_map (fun ((_, _, reg) as r) ->
+            if
+              Option.equal Arm.Target.equal_reg state.frame_pointer
+                (Some (Physical r))
+            then None
+            else if reg <> "d10" && reg <> "d11" then
+              Some (Arm.Target.Physical r)
+            else None)
+        |> Array.of_list
+      in
       let module Helper = Regalloc.ArmHelper (Loop) (IntRegClass) in
       let cfg =
-        Helper.regalloc ~args:(Arm.Target.RegSet.of_list args) ~regs state cfg
-          (fun _ -> ())
+        Helper.regalloc ~args:(Arm.Target.RegSet.of_list args)
+          ~regs:int_regs state cfg (fun _ -> ())
       in
       Format.printf "===================================\n";
-      Format.printf "%s after register allocation:\n" f;
+      Format.printf "%s after integer register allocation:\n" f;
       Format.printf "===================================\n";
       Format.printf "%a\n" Arm.Printer.pp_graph cfg;
-      let cfg = Arm.Sequentialize.sequentialize cfg in
+      let module Helper = Regalloc.ArmHelper (Loop) (FloatRegClass) in
+      let cfg =
+        Helper.regalloc ~args:(Arm.Target.RegSet.of_list float_args)
+          ~regs:float_regs state cfg (fun _ -> ())
+      in
+      Format.printf "===================================\n";
+      Format.printf "%s after float register allocation:\n" f;
+      Format.printf "===================================\n";
+      Format.printf "%a\n" Arm.Printer.pp_graph cfg;
+      let cfg = Arm.SequentializeInt.sequentialize cfg in
+      let cfg = Arm.SequentializeFloat.sequentialize cfg in
       let cfg = Cleanup_arm.cleanup state Arm.Regs.x10 Arm.Regs.x11 cfg in
       ((state.stack_offset, state.frame_pointer), cfg)
     in

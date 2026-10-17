@@ -553,7 +553,9 @@ struct
       Target.srcs instr
       |> List.find_map (fun op ->
           match Target.destruct_label op with
-          | Some (label, args) when dest_label = Some label -> Some args
+          | Some (label, args)
+            when Option.equal G.equal_label dest_label (Some label) ->
+            Some args
           | _ -> None)
       |> Option.value ~default:[]
     in
@@ -561,7 +563,8 @@ struct
       Target.map_uses
         (fun op ->
           match Target.destruct_label op with
-          | Some (label, _) when dest_label = Some label ->
+          | Some (label, _)
+            when Option.equal G.equal_label dest_label (Some label) ->
             Target.label label args
           | _ -> op)
         instr

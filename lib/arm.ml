@@ -309,20 +309,24 @@ module Target = struct
   let int_cond_mapping =
     Graph.Cond.
       [
-        (LT, "blt");
-        (LE, "ble");
-        (GT, "bgt");
-        (GE, "bge");
-        (EQ, "beq");
-        (NE, "bne");
+        (LT, "b.lt");
+        (LE, "b.le");
+        (GT, "b.gt");
+        (GE, "b.ge");
+        (EQ, "b.eq");
+        (NE, "b.ne");
       ]
-  let float_cond_mapping = [] (* todo: implement this *)
+  let float_cond_mapping = int_cond_mapping
 
   let cbranch ~args cond l1 l1args l2 l2args =
     let jmp = snd @@ List.find (fun (c, _) -> cond = c) int_cond_mapping in
     instr jmp ~uses:(Label (l1, l1args) :: Label (l2, l2args) :: args) ~defs:[]
   let return ~uses = instr "ret" ~uses ~defs:[]
-  let mov ~dest ~src = instr "mov" ~defs:[ dest ] ~uses:[ src ]
+  let mov ~dest ~src =
+    let reg_class_of op = Option.map Reg.reg_class (destruct_reg op) in
+    match (reg_class_of dest, reg_class_of src) with
+    | Some Float, _ | _, Some Float -> instr "fmov" ~defs:[ dest ] ~uses:[ src ]
+    | _ -> instr "mov" ~defs:[ dest ] ~uses:[ src ]
   let pcopy ~dests ~srcs = instr "pcopy" ~defs:dests ~uses:srcs
   let is_side_effectful _ = true
 end
@@ -360,7 +364,39 @@ module Regs = struct
   let x28 = (28, Target.Int, "x28")
   let x29 = (29, Target.Int, "x29")
   let x30 = (30, Target.Int, "x30")
-  let sp = (31, Target.Int, "sp")
+  let d0 = (31, Target.Int, "d0")
+  let d1 = (32, Target.Int, "d1")
+  let d2 = (33, Target.Int, "d2")
+  let d3 = (34, Target.Int, "d3")
+  let d4 = (35, Target.Int, "d4")
+  let d5 = (36, Target.Int, "d5")
+  let d6 = (37, Target.Int, "d6")
+  let d7 = (38, Target.Int, "d7")
+  let d8 = (39, Target.Int, "d8")
+  let d9 = (40, Target.Int, "d9")
+  let d10 = (41, Target.Int, "d10")
+  let d11 = (42, Target.Int, "d11")
+  let d12 = (43, Target.Int, "d12")
+  let d13 = (44, Target.Int, "d13")
+  let d14 = (45, Target.Int, "d14")
+  let d15 = (46, Target.Int, "d15")
+  let d16 = (47, Target.Int, "d16")
+  let d17 = (48, Target.Int, "d17")
+  let d18 = (49, Target.Int, "d18")
+  let d19 = (50, Target.Int, "d19")
+  let d20 = (51, Target.Int, "d20")
+  let d21 = (52, Target.Int, "d21")
+  let d22 = (53, Target.Int, "d22")
+  let d23 = (54, Target.Int, "d23")
+  let d24 = (55, Target.Int, "d24")
+  let d25 = (56, Target.Int, "d25")
+  let d26 = (57, Target.Int, "d26")
+  let d27 = (58, Target.Int, "d27")
+  let d28 = (59, Target.Int, "d28")
+  let d29 = (60, Target.Int, "d29")
+  let d30 = (61, Target.Int, "d30")
+  let d31 = (62, Target.Int, "d31")
+  let sp = (63, Target.Int, "sp")
 
   let int_regs =
     [
@@ -396,14 +432,51 @@ module Regs = struct
       x29;
       x30;
     ]
-  let caller_save = CCList.take 19 int_regs @ [ x30 ]
-  let callee_save =
+  let float_regs =
+    [
+      d0;
+      d1;
+      d2;
+      d3;
+      d4;
+      d5;
+      d6;
+      d7;
+      d8;
+      d9;
+      d10;
+      d11;
+      d12;
+      d13;
+      d14;
+      d15;
+      d16;
+      d17;
+      d18;
+      d19;
+      d20;
+      d21;
+      d22;
+      d23;
+      d24;
+      d25;
+      d26;
+      d27;
+      d28;
+      d29;
+      d30;
+      d31;
+    ]
+  let int_caller_save = CCList.take 19 int_regs @ [ x30 ]
+  let int_callee_save =
     List.filter
       (function
         | _, Target.Int, "x30" -> false
         | _ -> true)
       (CCList.drop 19 int_regs)
     @ [ sp ]
+  let float_caller_save = CCList.take 8 float_regs @ CCList.drop 16 float_regs
+  let float_callee_save = CCList.take 8 (CCList.drop 8 float_regs)
 end
 
 module Cfg = Graph.Make (Target)
@@ -539,13 +612,37 @@ module ExecfreqRequirements :
   let cond_mapping = Target.int_cond_mapping
   let exit = "exit"
 end
-module SeqpcopyRequirements :
+module SeqpcopyIntRequirements :
   Seqpcopy.Requirements with module Target = Target = struct
   module Target = Target
   let temp = Target.Reg (Target.Physical Regs.x10)
-  let is_pcopy = Target.is_pcopy
+  let is_pcopy instr =
+    Target.is_pcopy instr
+    && Target.RegSet.for_all
+         (fun reg -> Target.Reg.reg_class reg = Int)
+         (Target.uses instr)
+    && Target.RegSet.for_all
+         (fun reg -> Target.Reg.reg_class reg = Int)
+         (Target.defs instr)
   let mov = Target.mov
   let uses instr = List.map Target.to_colored instr.Target.uses
   let defs instr = List.map Target.to_colored instr.Target.defs
 end
-module Sequentialize = Seqpcopy.Make (Cfg) (SeqpcopyRequirements)
+module SeqpcopyFloatRequirements :
+  Seqpcopy.Requirements with module Target = Target = struct
+  module Target = Target
+  let temp = Target.Reg (Target.Physical Regs.d20)
+  let is_pcopy instr =
+    Target.is_pcopy instr
+    && Target.RegSet.for_all
+         (fun reg -> Target.Reg.reg_class reg = Float)
+         (Target.uses instr)
+    && Target.RegSet.for_all
+         (fun reg -> Target.Reg.reg_class reg = Float)
+         (Target.defs instr)
+  let mov = Target.mov
+  let uses instr = List.map Target.to_colored instr.Target.uses
+  let defs instr = List.map Target.to_colored instr.Target.defs
+end
+module SequentializeInt = Seqpcopy.Make (Cfg) (SeqpcopyIntRequirements)
+module SequentializeFloat = Seqpcopy.Make (Cfg) (SeqpcopyFloatRequirements)
