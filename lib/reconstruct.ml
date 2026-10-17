@@ -42,6 +42,8 @@ struct
     in
     go head
 
+  (* todo: this implementation adds phis to every block but not always the corresponding jump args.
+     after this the phi args and jump args may become mismatched. this should be fixed. *)
   let reconstruct (fresh : unit -> G.Target.reg) (old_def : Target.reg)
       (cloned_defs : Target.RegSet.t) (def_blocks : G.uid list)
       (graph : G.graph) : G.graph =
@@ -55,7 +57,6 @@ struct
             (df (Dom.position_of_uid uid)))
         def_blocks
     in
-    let phi_worklist = ref PhiSet.empty in
     let place_phi (phis, graph) block =
       let phi_def = fresh () in
       let (head, tail), graph = G.focus block graph in
@@ -63,7 +64,6 @@ struct
         match head with
         | First Entry -> failwith "dominance frontier is entry"
         | First (Label (l, info)) ->
-          phi_worklist := PhiSet.add (phi_def, block) !phi_worklist;
           G.First (Label (l, { info with args = phi_def :: info.args }))
         | _ -> failwith "zipper not at beginning of block"
       in
@@ -73,6 +73,7 @@ struct
       List.fold_left place_phi (Target.RegSet.empty, graph) iter_df_bbs
     in
     let all_defs = Target.RegSet.(add old_def (union cloned_defs phis)) in
+    let phi_worklist = ref PhiSet.empty in
     let blocks = G.reverse_postorder_dfs graph in
     let go_block graph block =
       let zblock = G.unzip block in

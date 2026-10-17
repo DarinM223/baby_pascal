@@ -277,7 +277,7 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
              ( ({ instr; uses = _ :: _ :: first_use :: uses; defs; _ } as i),
                l1,
                l2 ))
-        when List.exists (fun (_, i) -> i = instr) Target.cond_mapping ->
+        when List.exists (fun (_, i) -> i = instr) Target.int_cond_mapping ->
         List.iter record_operand (first_use :: uses);
         List.iter record_operand defs;
         let tail, _ =

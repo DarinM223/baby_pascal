@@ -306,7 +306,7 @@ module Target = struct
       clobber_regs = RegSet.empty;
     }
   let goto l ops = instr "b" ~defs:[] ~uses:[ Label (l, ops) ]
-  let cond_mapping =
+  let int_cond_mapping =
     Graph.Cond.
       [
         (LT, "blt");
@@ -316,9 +316,10 @@ module Target = struct
         (EQ, "beq");
         (NE, "bne");
       ]
+  let float_cond_mapping = [] (* todo: implement this *)
 
   let cbranch ~args cond l1 l1args l2 l2args =
-    let jmp = snd @@ List.find (fun (c, _) -> cond = c) cond_mapping in
+    let jmp = snd @@ List.find (fun (c, _) -> cond = c) int_cond_mapping in
     instr jmp ~uses:(Label (l1, l1args) :: Label (l2, l2args) :: args) ~defs:[]
   let return ~uses = instr "ret" ~uses ~defs:[]
   let mov ~dest ~src = instr "mov" ~defs:[ dest ] ~uses:[ src ]
@@ -535,7 +536,7 @@ module ExecfreqRequirements :
   let uses = fun i -> i.Target.uses
   let call = "bl"
   let ret = "ret"
-  let cond_mapping = Target.cond_mapping
+  let cond_mapping = Target.int_cond_mapping
   let exit = "exit"
 end
 module SeqpcopyRequirements :

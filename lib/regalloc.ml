@@ -604,7 +604,8 @@ struct
             end
             else arg :: args
           | _ -> arg :: args)
-        (List.combine args phis) []
+        (Utils.combine_drop args phis)
+        []
     in
     let last =
       match last with

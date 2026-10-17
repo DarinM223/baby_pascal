@@ -8,8 +8,8 @@ module RegHashtbl = CCHashtbl.Make (X86.Target.Reg)
 let align_stack_offset called_function offset =
   if called_function && offset mod 16 = 0 then offset + 8 else offset
 
-let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
-    (cfg : Cfg.graph) : Cfg.graph =
+let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
+    (tmp_float : Target.physical_reg) (cfg : Cfg.graph) : Cfg.graph =
   let callee_save =
     RegSet.of_list (List.map (fun p -> Target.Physical p) Regs.callee_save)
   in
@@ -106,7 +106,7 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
         | Label (_, info) -> info.args
       in
       let tail =
-        List.fold_left lower_immediate_jump f (List.combine args phis)
+        List.fold_left lower_immediate_jump f (Utils.combine_drop args phis)
       in
       (tail, X86.Target.Label (l', args))
     | op -> (f, op)
@@ -124,8 +124,8 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
          uses = [ (Imm _ as src) ];
          _;
         } ->
-          Target.mov ~dest:(Reg (Physical tmp)) ~src
-          @> { i with uses = [ Reg (Physical tmp) ] }
+          Target.mov ~dest:(Reg (Physical tmp_int)) ~src
+          @> { i with uses = [ Reg (Physical tmp_int) ] }
           @> go_tail tail
         (* lower moves with two memory operands *)
         | {
@@ -134,8 +134,8 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
          uses = [ ((MemAddr _ | StackSlot _) as src) ];
          _;
         } ->
-          Target.mov ~dest:(Reg (Physical tmp)) ~src
-          @> Target.mov ~dest ~src:(Reg (Physical tmp))
+          Target.mov ~dest:(Reg (Physical tmp_int)) ~src
+          @> Target.mov ~dest ~src:(Reg (Physical tmp_int))
           @> go_tail tail
         (* remove redundant moves *)
         | { Target.instr = "movq"; defs = [ dest ]; uses = [ src ]; _ }
@@ -152,15 +152,32 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
              ( ({ instr; uses = _ :: _ :: first_use :: uses; defs; _ } as i),
                l1,
                l2 ))
-        when List.exists (fun (_, i) -> i = instr) Target.cond_mapping ->
+        when List.exists (fun (_, i) -> i = instr) Target.int_cond_mapping ->
         List.iter record_operand (first_use :: uses);
         List.iter record_operand defs;
         let tail, _ =
           X86.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
         in
         tail
-        @@ Target.mov ~dest:(Reg (Physical tmp)) ~src:first_use
-        @> Target.instr "cmp" ~defs:[ Reg (Physical tmp) ] ~uses
+        @@ Target.mov ~dest:(Reg (Physical tmp_int)) ~src:first_use
+        @> Target.instr "cmp" ~defs:[ Reg (Physical tmp_int) ] ~uses
+        @> Target.instr instr ~defs:[] ~uses:[ Label (l1, []) ]
+        @> Cfg.Last (Branch (Target.goto l2 [], l2))
+        (* todo: will have to distinguish between floats and unsigned ints once those are supported *)
+      | Cfg.Last
+          (CBranch
+             ( ({ instr; uses = _ :: _ :: first_use :: uses; defs; _ } as i),
+               l1,
+               l2 ))
+        when List.exists (fun (_, i) -> i = instr) Target.float_cond_mapping ->
+        List.iter record_operand (first_use :: uses);
+        List.iter record_operand defs;
+        let tail, _ =
+          X86.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
+        in
+        tail
+        @@ Target.mov ~dest:(Reg (Physical tmp_float)) ~src:first_use
+        @> Target.instr "ucomisd" ~defs:[ Reg (Physical tmp_float) ] ~uses
         @> Target.instr instr ~defs:[] ~uses:[ Label (l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last (CBranch _) ->

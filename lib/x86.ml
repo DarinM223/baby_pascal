@@ -288,17 +288,40 @@ module Target = struct
       clobber_regs = RegSet.empty;
     }
   let goto l ops = instr "jmp" ~defs:[] ~uses:[ Label (l, ops) ]
-  let cond_mapping =
+  let int_cond_mapping =
     Graph.Cond.
       [
         (LT, "jl"); (LE, "jle"); (GT, "jg"); (GE, "jge"); (EQ, "jz"); (NE, "jnz");
       ]
 
+  (* Actually unsigned int condition mapping but float operands use it as well *)
+  let float_cond_mapping =
+    Graph.Cond.
+      [
+        (LT, "jb"); (LE, "jbe"); (GT, "ja"); (GE, "jae"); (EQ, "jz"); (NE, "jnz");
+      ]
+
   let cbranch ~args cond l1 l1args l2 l2args =
-    let jmp = snd @@ List.find (fun (c, _) -> cond = c) cond_mapping in
+    let mapping =
+      if
+        List.exists
+          (function
+            | Reg reg when Reg.reg_class reg = Float -> true
+            | _ -> false)
+          args
+      then float_cond_mapping
+      else int_cond_mapping
+    in
+    let jmp = snd @@ List.find (fun (c, _) -> cond = c) mapping in
     instr jmp ~uses:(Label (l1, l1args) :: Label (l2, l2args) :: args) ~defs:[]
   let return ~uses = instr "ret" ~uses ~defs:[]
-  let mov ~dest ~src = instr "movq" ~defs:[ dest ] ~uses:[ src ]
+  let mov ~dest ~src =
+    let reg_class_of op = Option.map Reg.reg_class (destruct_reg op) in
+    match (reg_class_of dest, reg_class_of src) with
+    | Some Float, _ | _, Some Float ->
+      instr "movsd" ~defs:[ dest ] ~uses:[ src ]
+    | _ -> instr "movq" ~defs:[ dest ] ~uses:[ src ]
+
   let pcopy ~dests ~srcs = instr "pcopy" ~defs:dests ~uses:srcs
   let is_side_effectful _ = true
 end
@@ -511,16 +534,40 @@ module ExecfreqRequirements :
   let uses = fun i -> i.Target.uses
   let call = "call"
   let ret = "ret"
-  let cond_mapping = Target.cond_mapping
+  let cond_mapping = Target.int_cond_mapping
   let exit = "exit"
 end
-module SeqpcopyRequirements :
+module SeqpcopyIntRequirements :
   Seqpcopy.Requirements with module Target = Target = struct
   module Target = Target
   let temp = Target.Reg (Target.Physical Regs.r10)
-  let is_pcopy = Target.is_pcopy
+  let is_pcopy instr =
+    Target.is_pcopy instr
+    && Target.RegSet.for_all
+         (fun reg -> Target.Reg.reg_class reg = Int)
+         (Target.uses instr)
+    && Target.RegSet.for_all
+         (fun reg -> Target.Reg.reg_class reg = Int)
+         (Target.defs instr)
   let mov = Target.mov
   let uses instr = List.map Target.to_colored instr.Target.uses
   let defs instr = List.map Target.to_colored instr.Target.defs
 end
-module Sequentialize = Seqpcopy.Make (Cfg) (SeqpcopyRequirements)
+module SeqpcopyFloatRequirements :
+  Seqpcopy.Requirements with module Target = Target = struct
+  module Target = Target
+  let temp = Target.Reg (Target.Physical Regs.xmm10)
+  let is_pcopy instr =
+    Target.is_pcopy instr
+    && Target.RegSet.for_all
+         (fun reg -> Target.Reg.reg_class reg = Float)
+         (Target.uses instr)
+    && Target.RegSet.for_all
+         (fun reg -> Target.Reg.reg_class reg = Float)
+         (Target.defs instr)
+  let mov = Target.mov
+  let uses instr = List.map Target.to_colored instr.Target.uses
+  let defs instr = List.map Target.to_colored instr.Target.defs
+end
+module SequentializeInt = Seqpcopy.Make (Cfg) (SeqpcopyIntRequirements)
+module SequentializeFloat = Seqpcopy.Make (Cfg) (SeqpcopyFloatRequirements)

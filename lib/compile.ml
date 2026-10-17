@@ -182,8 +182,9 @@ module X86 = struct
       Format.printf "%s after float register allocation:\n" f;
       Format.printf "===================================\n";
       Format.printf "%a\n" X86.Printer.pp_graph cfg;
-      let cfg = X86.Sequentialize.sequentialize cfg in
-      let cfg = Cleanup_x86.cleanup state X86.Regs.r10 cfg in
+      let cfg = X86.SequentializeInt.sequentialize cfg in
+      let cfg = X86.SequentializeFloat.sequentialize cfg in
+      let cfg = Cleanup_x86.cleanup state X86.Regs.r10 X86.Regs.xmm10 cfg in
       ((state.stack_offset, state.frame_pointer), cfg)
     in
     compile_shared lower_isa program

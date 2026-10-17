@@ -2,7 +2,8 @@ open Alcotest
 open Baby_pascal
 
 let test_simple_x86 () =
-  let module Sequentialize = Seqpcopy.Make (X86.Cfg) (X86.SeqpcopyRequirements)
+  let module Sequentialize =
+    Seqpcopy.Make (X86.Cfg) (X86.SeqpcopyIntRequirements)
   in
   let reg1 =
     X86.Target.Reg
@@ -34,7 +35,7 @@ let test_simple_x86 () =
     @@ focus_entry empty
   in
   let cfg = Sequentialize.sequentialize cfg in
-  let temp = X86.SeqpcopyRequirements.temp in
+  let temp = X86.SeqpcopyIntRequirements.temp in
   let expected =
     let open X86.Cfg in
     let open X86.Target in

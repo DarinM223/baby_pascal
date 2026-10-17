@@ -228,7 +228,7 @@ let test_pcopy_instr ~regs head =
     Seqpcopy.Make
       (X86.Cfg)
       (struct
-        include X86.SeqpcopyRequirements
+        include X86.SeqpcopyIntRequirements
         let temp = Target.Reg (Physical dummy_reg)
       end) in
   let rec expand_pcopies tail = function
