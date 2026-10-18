@@ -139,7 +139,7 @@ module Select = struct
                     Target.pp_operand)
                  mapping
           end
-      | Undag.Target.Label (l, args) ->
+      | Undag.Target.Label (_, l, args) ->
         fun k ->
           translate_operands args (fun args -> k (Target.Label (l, args)))
     and translate_operands l k =

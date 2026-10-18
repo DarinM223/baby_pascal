@@ -41,7 +41,7 @@ struct
     let changed = ref false in
     let go_use operand =
       match Target.destruct_label operand with
-      | Some (((uid, _) as l), args) ->
+      | Some (l_typ, ((uid, _) as l), args) ->
         begin try
           let block_args = lookup_args uid in
           let args' =
@@ -50,8 +50,8 @@ struct
               (List.combine block_args args)
           in
           if args' <> args then changed := true;
-          Target.label l args'
-        with Not_found -> Target.label l args
+          Target.label l_typ l args'
+        with Not_found -> Target.label l_typ l args
         end
       | _ -> operand
     in

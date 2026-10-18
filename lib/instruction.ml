@@ -2,15 +2,15 @@ module type Operand = sig
   type label [@@deriving show, eq]
   type 'a operand [@@deriving show, eq]
   type 'a operands = 'a operand list [@@deriving show, eq]
-  val label : label -> 'a operands -> 'a operand
-  val destruct_label : 'a operand -> (label * 'a operands) option
+  val label : Ast.typ -> label -> 'a operands -> 'a operand
+  val destruct_label : 'a operand -> (Ast.typ * label * 'a operands) option
   val is_tombstone : 'a operand -> bool
 end
 
 module type Target = sig
   include Graph.Target
-  val label : label -> operands -> operand
-  val destruct_label : operand -> (label * operands) option
+  val label : Ast.typ -> label -> operands -> operand
+  val destruct_label : operand -> (Ast.typ * label * operands) option
   val is_tombstone : operand -> bool
   val srcs : instr -> operands
   val dests : instr -> operands
@@ -50,9 +50,9 @@ module Make (T : Operand) = struct
 
   let srcs = function
     | Call (_, o1, o2) -> o1 :: o2
-    | Goto (l, args) -> [ T.label l args ]
+    | Goto (l, args) -> [ T.label TVoid l args ]
     | Cbranch (o1, o2, _, l1, l1args, l2, l2args) ->
-      [ T.label l1 l1args; T.label l2 l2args; o1; o2 ]
+      [ T.label TVoid l1 l1args; T.label TVoid l2 l2args; o1; o2 ]
     | Return o -> o
     | Assign (_, o) | Uop (_, _, o) | Load (_, o) -> [ o ]
     | Bop (_, _, o1, o2) | Store (o1, o2) -> [ o1; o2 ]
@@ -79,18 +79,18 @@ module Make (T : Operand) = struct
       let acc, s = List.fold_left_map f acc s in
       (acc, Call (d, sf, s))
     | Goto (l, args) ->
-      let acc, label = f acc (T.label l args) in
+      let acc, label = f acc (T.label TVoid l args) in
       begin match T.destruct_label label with
-      | Some (l, args) -> (acc, Goto (l, args))
+      | Some (_, l, args) -> (acc, Goto (l, args))
       | _ -> failwith "map_uses: goto label transformed into different operand"
       end
     | Cbranch (o1, o2, c, l1, l1args, l2, l2args) ->
       let acc, o1 = f acc o1 in
       let acc, o2 = f acc o2 in
-      let acc, ol1 = f acc (T.label l1 l1args) in
-      let acc, ol2 = f acc (T.label l2 l2args) in
+      let acc, ol1 = f acc (T.label TVoid l1 l1args) in
+      let acc, ol2 = f acc (T.label TVoid l2 l2args) in
       begin match (T.destruct_label ol1, T.destruct_label ol2) with
-      | Some (l1, l1args), Some (l2, l2args) ->
+      | Some (_, l1, l1args), Some (_, l2, l2args) ->
         (acc, Cbranch (o1, o2, c, l1, l1args, l2, l2args))
       | _ ->
         failwith "map_uses: cbranch label transformed into different operand"

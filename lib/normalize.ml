@@ -46,12 +46,12 @@ module Target = struct
     type 'a t =
       | Const of int
       | Reg of reg
-      | Label of label * 'a ts
+      | Label of Ast.typ * label * 'a ts
     and 'a ts = 'a t list [@@deriving eq]
     let rec pp pp_instr fmt = function
       | Const c -> Format.fprintf fmt "$%d" c
       | Reg r -> Format.fprintf fmt "%%%a" pp_reg r
-      | Label (l, args) ->
+      | Label (_, l, args) ->
         Format.fprintf fmt "%a(%a)" pp_label l
           (Format.pp_print_list ~pp_sep:Utils.pp_sep (pp pp_instr))
           args
@@ -59,9 +59,9 @@ module Target = struct
     and pp_ts pp_instr = Format.pp_print_list ~pp_sep:Utils.pp_sep (pp pp_instr)
 
     and show_ts pp_instr = Format.asprintf "%a" (pp_ts pp_instr)
-    let label l ops = Label (l, ops)
+    let label typ l ops = Label (typ, l, ops)
     let destruct_label = function
-      | Label (l, ops) -> Some (l, ops)
+      | Label (typ, l, ops) -> Some (typ, l, ops)
       | _ -> None
     let tombstone = Reg (Ast.TVoid, Name.tombstone)
     let is_tombstone = function
@@ -97,7 +97,7 @@ module Target = struct
 
   let rec regset_of_operand = function
     | Const _ -> RegSet.empty
-    | Label (_, args) ->
+    | Label (_, _, args) ->
       args
       |> List.filter (fun n -> not (is_tombstone n))
       |> List.fold_left
@@ -171,7 +171,7 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
       let id = Name.label (snd (fresh TDouble)) in
       globals :=
         { id; typ = TDouble; value = Initialized (ConstDouble d) } :: !globals;
-      k (Target.Label ((-1, id), []))
+      k (Target.Label (TDouble, (-1, id), []))
     | Var v -> k (Target.reg (fst exp) v)
     | Uop (uop, e) ->
       let* e = go_expr e in
@@ -207,7 +207,9 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
       fun zgraph ->
         Cfg.instruction (Target.bop bop ~src1:e1 ~src2:e2 ~dest:tmp)
         @@ rest @@ zgraph
-    | Call (f, es) -> go_call ~typ:(fst exp) (Target.Label ((-1, f), [])) es k
+    | Call (f, es) ->
+      let f_typ = Ast.TFunction (List.map fst es, Some (fst exp)) in
+      go_call ~typ:(fst exp) (Target.Label (f_typ, (-1, f), [])) es k
     | Deref e ->
       let* e = go_expr e in
       let tmp = Target.Reg (fresh (fst exp)) in
@@ -330,7 +332,9 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
       fun zgraph ->
         Cfg.label begin_label @@ branch_cond @@ Cfg.label t @@ body
         @@ Cfg.branch begin_label @@ zgraph
-    | Call (f, es) -> go_call (Target.Label ((-1, f), [])) es Fun.(const id)
+    | Call (f, es) ->
+      let f_typ = Ast.TFunction (List.map fst es, None) in
+      go_call (Target.Label (f_typ, (-1, f), [])) es Fun.(const id)
     | Alloca (x, ty, size) ->
       Cfg.instruction (Target.Alloca (Target.reg (TPointer ty) x, size))
   in

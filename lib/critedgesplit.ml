@@ -1,8 +1,8 @@
 module type Requirements = sig
   module Target : Graph.Target
-  val label : Target.label -> Target.operand list -> Target.operand
+  val label : Ast.typ -> Target.label -> Target.operand list -> Target.operand
   val destruct_label :
-    Target.operand -> (Target.label * Target.operand list) option
+    Target.operand -> (Ast.typ * Target.label * Target.operand list) option
   val fold_uses :
     ('a -> Target.operand -> 'a * Target.operand) ->
     'a ->
@@ -40,7 +40,7 @@ struct
             Requirements.fold_uses
               (fun cfg op ->
                 match Requirements.destruct_label op with
-                | Some (l, ops)
+                | Some (l_typ, l, ops)
                   when (G.equal_label l l1 || G.equal_label l l2)
                        && List.length
                             Extra.(predecessors (position_of_label (Some l)))
@@ -58,7 +58,7 @@ struct
                   let tail = G.(Last (Branch (G.Target.goto l ops, l))) in
                   let block = G.zip (head, tail) in
                   let cfg = G.Blocks.insert block cfg in
-                  (cfg, Requirements.label l' [])
+                  (cfg, Requirements.label l_typ l' [])
                 | _ -> (cfg, op))
               cfg instr
           in

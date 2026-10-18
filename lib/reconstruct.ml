@@ -132,9 +132,9 @@ struct
           in
           let go_use op =
             match Target.destruct_label op with
-            | Some (((uid, _) as l), ops)
+            | Some (l_typ, ((uid, _) as l), ops)
               when uid = phi_block_uid && List.(length ops <> length args) ->
-              Target.(label l (Reg.to_operand reaching_def :: ops))
+              Target.(label l_typ l (Reg.to_operand reaching_def :: ops))
             | _ -> op
           in
           let last =

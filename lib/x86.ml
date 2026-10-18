@@ -107,9 +107,9 @@ module Target = struct
   let is_memaddr = function
     | MemAddr _ -> true
     | _ -> false
-  let label label args = Label (label, args)
+  let label _ label args = Label (label, args)
   let destruct_label = function
-    | Label (l, args) -> Some (l, args)
+    | Label (l, args) -> Some (Ast.TVoid, l, args)
     | _ -> None
   let rec fold_reg_operand (f : 'a -> reg -> 'a * reg) (acc : 'a) = function
     | Reg r ->

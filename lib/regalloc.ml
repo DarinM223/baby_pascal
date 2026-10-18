@@ -553,7 +553,7 @@ struct
       Target.srcs instr
       |> List.find_map (fun op ->
           match Target.destruct_label op with
-          | Some (label, args)
+          | Some (_, label, args)
             when Option.equal G.equal_label dest_label (Some label) ->
             Some args
           | _ -> None)
@@ -563,9 +563,9 @@ struct
       Target.map_uses
         (fun op ->
           match Target.destruct_label op with
-          | Some (label, _)
+          | Some (_, label, _)
             when Option.equal G.equal_label dest_label (Some label) ->
-            Target.label label args
+            Target.label TVoid label args
           | _ -> op)
         instr
     in
@@ -919,7 +919,7 @@ struct
       List.iter
         (fun op ->
           match Target.destruct_label op with
-          | Some (succ, args) ->
+          | Some (_, succ, args) ->
             List.iteri
               (fun i op ->
                 match Target.destruct_reg op with
@@ -1061,8 +1061,8 @@ struct
       let rewrite_edge instr =
         let add_phi_arg op =
           match Target.destruct_label op with
-          | Some (l, ops) when phi_block_label = Some l ->
-            Target.label l (Target.reg v :: ops)
+          | Some (typ, l, ops) when phi_block_label = Some l ->
+            Target.label typ l (Target.reg v :: ops)
           | _ -> op
         in
         Target.map_uses add_phi_arg instr
