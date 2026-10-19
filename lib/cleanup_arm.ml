@@ -40,7 +40,7 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
     | MemAddr { base; index; _ } ->
       record_reg base;
       record_reg index
-    | Label (_, args) -> List.iter record_operand args
+    | Label (_, _, args) -> List.iter record_operand args
     | _ -> ()
   in
   (* loads and stores can't have sp as an operand so use temporaries in that case *)
@@ -167,7 +167,7 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
   in
   (* convert jump arguments that are immediates to moves *)
   let lower_jump_label ls f = function
-    | Arm.Target.Label (l', args)
+    | Arm.Target.Label (clz, l', args)
       when List.exists (fun l -> X86.Target.equal_label l' l) ls ->
       let phis =
         match Arm.Cfg.(firstt (fst (fst (focus (idd (Some l')) cfg)))) with
@@ -177,7 +177,7 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
       let tail =
         List.fold_left lower_immediate_jump f (List.combine args phis)
       in
-      (tail, Arm.Target.Label (l', args))
+      (tail, Arm.Target.Label (clz, l', args))
     | op -> (f, op)
   in
   let go_block cfg block =
@@ -281,6 +281,27 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
       (* lower cmp instructions into cmp + j* *)
       | Cfg.Last
           (CBranch
+             ( ({
+                  instr;
+                  uses = Label (Float, _, _) :: _ :: first_use :: uses;
+                  defs;
+                  _;
+                } as i),
+               l1,
+               l2 ))
+        when List.exists (fun (_, i) -> i = instr) Target.int_cond_mapping ->
+        List.iter record_operand (first_use :: uses);
+        List.iter record_operand defs;
+        let tail, _ =
+          Arm.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
+        in
+        tail
+        @@ Target.mov ~dest:(Reg (Physical tmp1)) ~src:first_use
+        @> Target.instr "fcmp" ~defs:[ Reg (Physical tmp1) ] ~uses
+        @> Target.instr instr ~defs:[] ~uses:[ Label (Float, l1, []) ]
+        @> Cfg.Last (Branch (Target.goto l2 [], l2))
+      | Cfg.Last
+          (CBranch
              ( ({ instr; uses = _ :: _ :: first_use :: uses; defs; _ } as i),
                l1,
                l2 ))
@@ -293,7 +314,7 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
         tail
         @@ Target.mov ~dest:(Reg (Physical tmp1)) ~src:first_use
         @> Target.instr "cmp" ~defs:[ Reg (Physical tmp1) ] ~uses
-        @> Target.instr instr ~defs:[] ~uses:[ Label (l1, []) ]
+        @> Target.instr instr ~defs:[] ~uses:[ Label (Int, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last (CBranch _) ->
         failwith "cleanup_arm: invalid conditional branch"

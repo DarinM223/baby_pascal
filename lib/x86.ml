@@ -75,7 +75,7 @@ module Target = struct
                 stack pointer) instead of the current stack pointer *)
         offset : int;
       }
-    | Label of label * operand list
+    | Label of reg_class * label * operand list
   [@@deriving eq]
   let rec pp_operand' pp_reg fmt = function
     | Imm i -> Format.fprintf fmt "$%d" i
@@ -93,8 +93,8 @@ module Target = struct
         (Format.pp_print_option pp_reg)
         base pp_reg index scale
     | StackSlot { offset; _ } -> Format.fprintf fmt "%d(%%rsp)" offset
-    | Label (l, []) -> Format.fprintf fmt "%s" (snd l)
-    | Label (l, args) ->
+    | Label (_, l, []) -> Format.fprintf fmt "%s" (snd l)
+    | Label (_, l, args) ->
       Format.fprintf fmt "%s(%a)" (snd l)
         (Format.pp_print_list ~pp_sep:Utils.pp_sep (pp_operand' pp_reg))
         args
@@ -107,9 +107,16 @@ module Target = struct
   let is_memaddr = function
     | MemAddr _ -> true
     | _ -> false
-  let label _ label args = Label (label, args)
+  let label typ label args =
+    let clz =
+      match typ with
+      | Ast.TDouble -> Float
+      | _ -> Int
+    in
+    Label (clz, label, args)
   let destruct_label = function
-    | Label (l, args) -> Some (Ast.TVoid, l, args)
+    | Label (Float, l, args) -> Some (Ast.TDouble, l, args)
+    | Label (Int, l, args) -> Some (Ast.TInteger, l, args)
     | _ -> None
   let rec fold_reg_operand (f : 'a -> reg -> 'a * reg) (acc : 'a) = function
     | Reg r ->
@@ -123,16 +130,17 @@ module Target = struct
       in
       let acc, index = f acc index in
       (acc, MemAddr { addr with base; index })
-    | Label (l, ops) ->
+    | Label (clz, l, ops) ->
       let acc, ops = List.fold_left_map (fold_reg_operand f) acc ops in
-      (acc, Label (l, ops))
+      (acc, Label (clz, l, ops))
     | (Imm _ | StackSlot _) as op -> (acc, op)
   let rec subst_reg_operand subst_reg = function
     | Reg r -> Reg (subst_reg r)
     | MemAddr ({ base : reg option; index : reg; _ } as addr) ->
       MemAddr
         { addr with base = Option.map subst_reg base; index = subst_reg index }
-    | Label (l, ops) -> Label (l, List.map (subst_reg_operand subst_reg) ops)
+    | Label (clz, l, ops) ->
+      Label (clz, l, List.map (subst_reg_operand subst_reg) ops)
     | (Imm _ | StackSlot _) as op -> op
   let to_colored =
     let to_colored_reg = function
@@ -287,7 +295,7 @@ module Target = struct
       hidden_uses = 0;
       clobber_regs = RegSet.empty;
     }
-  let goto l ops = instr "jmp" ~defs:[] ~uses:[ Label (l, ops) ]
+  let goto l ops = instr "jmp" ~defs:[] ~uses:[ Label (Int, l, ops) ]
   let int_cond_mapping =
     Graph.Cond.
       [
@@ -302,18 +310,19 @@ module Target = struct
       ]
 
   let cbranch ~args cond l1 l1args l2 l2args =
-    let mapping =
-      if
-        List.exists
-          (function
-            | Reg reg when Reg.reg_class reg = Float -> true
-            | _ -> false)
-          args
-      then float_cond_mapping
-      else int_cond_mapping
+    let is_float =
+      List.exists
+        (function
+          | Reg reg when Reg.reg_class reg = Float -> true
+          | _ -> false)
+        args
     in
+    let clz = if is_float then Float else Int in
+    let mapping = if is_float then float_cond_mapping else int_cond_mapping in
     let jmp = snd @@ List.find (fun (c, _) -> cond = c) mapping in
-    instr jmp ~uses:(Label (l1, l1args) :: Label (l2, l2args) :: args) ~defs:[]
+    instr jmp
+      ~uses:(Label (clz, l1, l1args) :: Label (clz, l2, l2args) :: args)
+      ~defs:[]
   let return ~uses = instr "ret" ~uses ~defs:[]
   let mov ~dest ~src =
     let reg_class_of op = Option.map Reg.reg_class (destruct_reg op) in
@@ -471,7 +480,7 @@ module Writer = struct
           (Target.StackSlot
              { relative_to_base = false; offset = offset + stack_offset })
       end
-    | Label (l, _) -> Format.fprintf fmt "%s" (snd l)
+    | Label (_, l, _) -> Format.fprintf fmt "%s" (snd l)
     | op -> Target.pp_operand' pp_reg fmt op
   let pp_instr state fmt i =
     let pp_operands =

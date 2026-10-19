@@ -563,9 +563,9 @@ struct
       Target.map_uses
         (fun op ->
           match Target.destruct_label op with
-          | Some (_, label, _)
+          | Some (typ, label, _)
             when Option.equal G.equal_label dest_label (Some label) ->
-            Target.label TVoid label args
+            Target.label typ label args
           | _ -> op)
         instr
     in

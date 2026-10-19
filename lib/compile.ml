@@ -257,7 +257,7 @@ module Arm = struct
               Option.equal Arm.Target.equal_reg state.frame_pointer
                 (Some (Physical r))
             then None
-            else if reg <> "d10" && reg <> "d11" then
+            else if reg <> "d20" && reg <> "d21" then
               Some (Arm.Target.Physical r)
             else None)
         |> Array.of_list

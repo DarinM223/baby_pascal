@@ -25,7 +25,7 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
     | MemAddr { base; index; _ } ->
       Option.iter record_reg base;
       record_reg index
-    | Label (_, args) -> List.iter record_operand args
+    | Label (_, _, args) -> List.iter record_operand args
     | _ -> ()
   in
   let restore tail =
@@ -98,7 +98,7 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
   in
   (* convert jump arguments that are immediates to moves *)
   let lower_jump_label ls f = function
-    | X86.Target.Label (l', args)
+    | X86.Target.Label (clz, l', args)
       when List.exists (fun l -> X86.Target.equal_label l' l) ls ->
       let phis =
         match X86.Cfg.(firstt (fst (fst (focus (idd (Some l')) cfg)))) with
@@ -108,7 +108,7 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
       let tail =
         List.fold_left lower_immediate_jump f (Utils.combine_drop args phis)
       in
-      (tail, X86.Target.Label (l', args))
+      (tail, X86.Target.Label (clz, l', args))
     | op -> (f, op)
   in
   let go_block cfg block =
@@ -147,7 +147,28 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
           List.iter record_operand i.defs;
           i @> go_tail tail
         end
-      (* lower cmp instructions into cmp + j* *)
+        (* lower cmp instructions into cmp + j* *)
+      | Cfg.Last
+          (CBranch
+             ( ({
+                  instr;
+                  uses = Label (Float, _, _) :: _ :: first_use :: uses;
+                  defs;
+                  _;
+                } as i),
+               l1,
+               l2 ))
+        when List.exists (fun (_, i) -> i = instr) Target.float_cond_mapping ->
+        List.iter record_operand (first_use :: uses);
+        List.iter record_operand defs;
+        let tail, _ =
+          X86.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
+        in
+        tail
+        @@ Target.mov ~dest:(Reg (Physical tmp_float)) ~src:first_use
+        @> Target.instr "ucomisd" ~defs:[ Reg (Physical tmp_float) ] ~uses
+        @> Target.instr instr ~defs:[] ~uses:[ Label (Float, l1, []) ]
+        @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last
           (CBranch
              ( ({ instr; uses = _ :: _ :: first_use :: uses; defs; _ } as i),
@@ -162,27 +183,12 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
         tail
         @@ Target.mov ~dest:(Reg (Physical tmp_int)) ~src:first_use
         @> Target.instr "cmp" ~defs:[ Reg (Physical tmp_int) ] ~uses
-        @> Target.instr instr ~defs:[] ~uses:[ Label (l1, []) ]
+        @> Target.instr instr ~defs:[] ~uses:[ Label (Int, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
-        (* todo: will have to distinguish between floats and unsigned ints once those are supported *)
-      | Cfg.Last
-          (CBranch
-             ( ({ instr; uses = _ :: _ :: first_use :: uses; defs; _ } as i),
-               l1,
-               l2 ))
-        when List.exists (fun (_, i) -> i = instr) Target.float_cond_mapping ->
-        List.iter record_operand (first_use :: uses);
-        List.iter record_operand defs;
-        let tail, _ =
-          X86.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
-        in
-        tail
-        @@ Target.mov ~dest:(Reg (Physical tmp_float)) ~src:first_use
-        @> Target.instr "ucomisd" ~defs:[ Reg (Physical tmp_float) ] ~uses
-        @> Target.instr instr ~defs:[] ~uses:[ Label (l1, []) ]
-        @> Cfg.Last (Branch (Target.goto l2 [], l2))
-      | Cfg.Last (CBranch _) ->
-        failwith "cleanup_x86: invalid conditional branch"
+      | Cfg.Last (CBranch _) as tail ->
+        failwith
+        @@ Format.asprintf "cleanup_x86: invalid conditional branch: %a"
+             X86.Cfg.pp_tail tail
       | Cfg.Last (Branch (i, l)) ->
         List.iter record_operand i.uses;
         List.iter record_operand i.defs;

@@ -59,18 +59,21 @@ module Select = struct
   module G = X86.Cfg
   module State = State
 
-  let reg_class_of_operand : Undag.Target.operand -> Target.reg_class = function
-    | Undag.Target.Reg (Ast.TDouble, _) -> Target.Float
-    | Reg _ -> Target.Int
-    | Label _ ->
-      Target.Float (* todo: this is a hack, add types to labels directly *)
+  let rec reg_class_of_operand : Undag.Target.operand -> Target.reg_class =
+    let reg_class_of_type = function
+      | Ast.TDouble -> Target.Float
+      | _ -> Target.Int
+    in
+    function
+    | Undag.Target.Reg (typ, _) -> reg_class_of_type typ
+    | Label (typ, _, _) -> reg_class_of_type typ
     | Instr instr ->
       let reg_class =
         fst
         @@ Undag.Target.fold_defs
-             (fun acc -> function
-               | Reg (TDouble, _) as def -> (Target.Float, def)
-               | def -> (acc, def))
+             (fun acc op ->
+               if reg_class_of_operand op = Float then (Target.Float, op)
+               else (acc, op))
              Target.Int instr
       in
       reg_class
@@ -150,9 +153,9 @@ module Select = struct
                     Target.pp_operand)
                  mapping Undag.Target.pp_instr instruction
           end
-      | Undag.Target.Label (_, l, args) ->
+      | Undag.Target.Label (typ, l, args) ->
         fun k ->
-          translate_operands args (fun args -> k (Target.Label (l, args)))
+          translate_operands args (fun args -> k (Target.label typ l args))
     and translate_operands l k =
       let rec go acc l k =
         match l with
@@ -310,9 +313,9 @@ module Select = struct
       let dest_class = reg_class_of_operand dest in
       let dest = assign_vreg dest_class dest in
       let* f = translate_operand f in
-      let f =
+      let f_typ, f =
         match f with
-        | Label (l, []) -> l
+        | Label (typ, l, []) -> (typ, l)
         | _ -> failwith "call: expected function to be label"
       in
       let float_args, int_args =
@@ -359,7 +362,7 @@ module Select = struct
           clobbered
       in
       let call =
-        instr "call" ~defs:[] ~uses:[ Label (f, []) ]
+        instr "call" ~defs:[] ~uses:[ Label (f_typ, f, []) ]
         |> Target.modify_uses (fun ~uses ~num_hidden ->
             ( int_dests @ float_dests @ uses,
               num_hidden + List.length int_dests + List.length float_dests ))

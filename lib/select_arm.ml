@@ -59,10 +59,25 @@ module Select = struct
   module G = Arm.Cfg
   module State = State
 
-  let reg_class_of_operand : Undag.Target.operand -> Target.reg_class = function
-    | Undag.Target.Reg (Ast.TInteger, _) -> Target.Int
-    | Reg (TDouble, _) -> Target.Float
-    | _ -> Target.Int
+  let rec reg_class_of_operand : Undag.Target.operand -> Target.reg_class =
+    let reg_class_of_type = function
+      | Ast.TDouble -> Target.Float
+      | _ -> Target.Int
+    in
+    function
+    | Undag.Target.Reg (typ, _) -> reg_class_of_type typ
+    | Label (typ, _, _) -> reg_class_of_type typ
+    | Instr instr ->
+      let reg_class =
+        fst
+        @@ Undag.Target.fold_defs
+             (fun acc op ->
+               if reg_class_of_operand op = Float then (Target.Float, op)
+               else (acc, op))
+             Target.Int instr
+      in
+      reg_class
+    | Const _ -> Int
 
   let call_conv ~caller { State.fresh_vreg; new_stack_slot; _ } = function
     | Target.Int ->
@@ -139,9 +154,9 @@ module Select = struct
                     Target.pp_operand)
                  mapping
           end
-      | Undag.Target.Label (_, l, args) ->
+      | Undag.Target.Label (typ, l, args) ->
         fun k ->
-          translate_operands args (fun args -> k (Target.Label (l, args)))
+          translate_operands args (fun args -> k (Target.label typ l args))
     and translate_operands l k =
       let rec go acc l k =
         match l with
@@ -233,9 +248,9 @@ module Select = struct
       let dest_class = reg_class_of_operand dest in
       let dest = assign_vreg (reg_class_of_operand dest) dest in
       let* f = translate_operand f in
-      let f =
+      let f_typ, f =
         match f with
-        | Label (l, []) -> l
+        | Label (typ, l, []) -> (typ, l)
         | _ -> failwith "call: expected function to be label"
       in
       let float_args, int_args =
@@ -282,7 +297,7 @@ module Select = struct
           clobbered
       in
       let call =
-        instr "bl" ~defs:[] ~uses:[ Label (f, []) ]
+        instr "bl" ~defs:[] ~uses:[ Label (f_typ, f, []) ]
         |> Target.modify_uses (fun ~uses ~num_hidden ->
             ( int_dests @ float_dests @ uses,
               num_hidden + List.length int_dests + List.length float_dests ))
@@ -440,25 +455,25 @@ let%expect_test "Fibonacci code generation" =
   [%expect
     {|
       pcopy [(1any, 0(%x0))]
-      ble label2, label3, 1any, #1
-    label1(local=false)(51any):
-      pcopy [(52(%x0), 51any)]
-      ret 52(%x0)
+      b.le label2, label3, 1any, #1
+    label1(local=false)(99any):
+      pcopy [(100(%x0), 99any)]
+      ret 100(%x0)
     label2(local=false)():
       mov 2any, 1any
       b label1(2any)
     label3(local=false)():
       sub 4any, 1any, #1
       pcopy [(5(%x0), 4any)]
-      bl 6(%x0), 7(%x1), 8(%x2), 9(%x3), 10(%x4), 11(%x5), 12(%x6), 13(%x7), 14(%x8), 15(%x9), 16(%x10), 17(%x11), 18(%x12), 19(%x13), 20(%x14), 21(%x15), 22(%x16), 23(%x17), 24(%x18), 25(%x30), 5(%x0), fibonacci
+      bl 6(%x0), 7(%x1), 8(%x2), 9(%x3), 10(%x4), 11(%x5), 12(%x6), 13(%x7), 14(%x8), 15(%x9), 16(%x10), 17(%x11), 18(%x12), 19(%x13), 20(%x14), 21(%x15), 22(%x16), 23(%x17), 24(%x18), 25(%x30), 26f(%d0), 27f(%d1), 28f(%d2), 29f(%d3), 30f(%d4), 31f(%d5), 32f(%d6), 33f(%d7), 34f(%d16), 35f(%d17), 36f(%d18), 37f(%d19), 38f(%d20), 39f(%d21), 40f(%d22), 41f(%d23), 42f(%d24), 43f(%d25), 44f(%d26), 45f(%d27), 46f(%d28), 47f(%d29), 48f(%d30), 49f(%d31), 5(%x0), fibonacci
       mov 3any, 6(%x0)
-      sub 27any, 1any, #2
-      pcopy [(28(%x0), 27any)]
-      bl 29(%x0), 30(%x1), 31(%x2), 32(%x3), 33(%x4), 34(%x5), 35(%x6), 36(%x7), 37(%x8), 38(%x9), 39(%x10), 40(%x11), 41(%x12), 42(%x13), 43(%x14), 44(%x15), 45(%x16), 46(%x17), 47(%x18), 48(%x30), 28(%x0), fibonacci
-      mov 26any, 29(%x0)
-      add 50any, 3any, 26any
-      mov 49any, 50any
-      b label1(49any)
+      sub 51any, 1any, #2
+      pcopy [(52(%x0), 51any)]
+      bl 53(%x0), 54(%x1), 55(%x2), 56(%x3), 57(%x4), 58(%x5), 59(%x6), 60(%x7), 61(%x8), 62(%x9), 63(%x10), 64(%x11), 65(%x12), 66(%x13), 67(%x14), 68(%x15), 69(%x16), 70(%x17), 71(%x18), 72(%x30), 73f(%d0), 74f(%d1), 75f(%d2), 76f(%d3), 77f(%d4), 78f(%d5), 79f(%d6), 80f(%d7), 81f(%d16), 82f(%d17), 83f(%d18), 84f(%d19), 85f(%d20), 86f(%d21), 87f(%d22), 88f(%d23), 89f(%d24), 90f(%d25), 91f(%d26), 92f(%d27), 93f(%d28), 94f(%d29), 95f(%d30), 96f(%d31), 52(%x0), fibonacci
+      mov 50any, 53(%x0)
+      add 98any, 3any, 50any
+      mov 97any, 98any
+      b label1(97any)
     |}]
 
 let%expect_test "Nested loops code generation" =
@@ -472,12 +487,12 @@ let%expect_test "Nested loops code generation" =
     label1(local=false)():
       exit
     label2(local=false)(1any):
-      blt label3, label1, 1any, #100
+      b.lt label3, label1, 1any, #100
     label3(local=false)():
       mov 2any, 1any
       b label4(1any, 2any)
     label4(local=false)(3any, 4any):
-      blt label5, label2(3any), 4any, #100
+      b.lt label5, label2(3any), 4any, #100
     label5(local=false)():
       add 6any, 3any, #1
       mov 5any, 6any
