@@ -189,9 +189,9 @@ module Select = struct
       @> k dest
     | Undag.Target.Bop (dest, bop, src1, src2) ->
       let open Target in
-      let dest = assign_vreg Int dest in
       let src1_class = reg_class_of_operand src1 in
       let src2_class = reg_class_of_operand src2 in
+      let dest = assign_vreg src1_class dest in
       let* src1 = translate_operand src1 in
       let* src2 = translate_operand src2 in
       let mk_bop i = instr i ~defs:[ dest ] ~uses:[ src1; src2 ] @> k dest in
@@ -214,19 +214,27 @@ module Select = struct
                    (Format.pp_print_list Target.pp_operand)
                    dests)
       in
-      begin match bop with
-      | Ast.Add -> mk_bop "add"
-      | Ast.Sub -> mk_bop "sub"
-      | Ast.Mul -> mk_bop "mul"
-      | Ast.Div -> mk_bop "sdiv" (* signed because we used idiv in X86 *)
-      | Ast.Eq -> reuse_cond (instr_of_cond Eq)
-      | Ast.Neq -> reuse_cond (instr_of_cond Ne)
-      | Ast.Lt -> reuse_cond (instr_of_cond Lt)
-      | Ast.Le -> reuse_cond (instr_of_cond Le)
-      | Ast.Gt -> reuse_cond (instr_of_cond Gt)
-      | Ast.Ge -> reuse_cond (instr_of_cond Ge)
-      | Ast.And -> mk_bop "and"
-      | Ast.Or -> mk_bop "orr"
+      begin match (src1_class, bop) with
+      | Int, Ast.Add -> mk_bop "add"
+      | Float, Ast.Add -> mk_bop "fadd"
+      | Int, Ast.Sub -> mk_bop "sub"
+      | Float, Ast.Sub -> mk_bop "fsub"
+      | Int, Ast.Mul -> mk_bop "mul"
+      | Float, Ast.Mul -> mk_bop "fmul"
+      | Int, Ast.Div -> mk_bop "sdiv" (* signed because we used idiv in X86 *)
+      | Float, Ast.Div -> mk_bop "fdiv"
+      | Int, Ast.Eq -> reuse_cond (instr_of_cond Eq)
+      | Int, Ast.Neq -> reuse_cond (instr_of_cond Ne)
+      | Int, Ast.Lt -> reuse_cond (instr_of_cond Lt)
+      | Int, Ast.Le -> reuse_cond (instr_of_cond Le)
+      | Int, Ast.Gt -> reuse_cond (instr_of_cond Gt)
+      | Int, Ast.Ge -> reuse_cond (instr_of_cond Ge)
+      | Int, Ast.And -> mk_bop "and"
+      | Int, Ast.Or -> mk_bop "orr"
+      | Float, op ->
+        failwith
+        @@ Format.asprintf "Floating point operator for %a not implemented yet"
+             Ast.pp_bop op
       end
     | Undag.Target.Return ops ->
       let* ops = translate_operands ops in

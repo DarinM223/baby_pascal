@@ -17,8 +17,9 @@ let rec prepend_head head tail =
   | Cfg.Head (head, i) -> prepend_head head (Cfg.Tail (i, tail))
   | Cfg.First _ -> tail
 
-let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
-    (tmp2 : Target.physical_reg) (cfg : Cfg.graph) : Cfg.graph =
+let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
+    (int_tmp2 : Target.physical_reg) (float_tmp1 : Target.physical_reg)
+    (float_tmp2 : Target.physical_reg) (cfg : Cfg.graph) : Cfg.graph =
   let callee_save =
     RegSet.(
       union
@@ -43,11 +44,27 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
     | Label (_, _, args) -> List.iter record_operand args
     | _ -> ()
   in
+  let reg_class_of_operand = function
+    | Target.Imm _ -> Target.Int
+    | Reg reg -> Target.Reg.reg_class reg
+    | Label (clz, _, _) -> clz
+    | _ -> Int
+  in
+  let tmp1 op =
+    match reg_class_of_operand op with
+    | Float -> float_tmp1
+    | Int -> int_tmp1
+  in
+  let tmp2 op =
+    match reg_class_of_operand op with
+    | Float -> float_tmp2
+    | Int -> int_tmp2
+  in
   (* loads and stores can't have sp as an operand so use temporaries in that case *)
   let store ~dest ~src =
     let move_to_tmp t =
-      Target.mov ~dest:(Reg (Physical tmp1)) ~src
-      @> Target.instr "str" ~defs:[] ~uses:[ Reg (Physical tmp1); dest ]
+      Target.mov ~dest:(Reg (Physical (tmp1 src))) ~src
+      @> Target.instr "str" ~defs:[] ~uses:[ Reg (Physical (tmp1 src)); dest ]
       @> t
     in
     match src with
@@ -62,8 +79,8 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
     | Target.Reg (Physical phys) when Target.equal_physical_reg phys Arm.Regs.sp
       ->
       fun t ->
-        Target.instr "ldr" ~defs:[ Reg (Physical tmp1) ] ~uses:[ src ]
-        @> Target.mov ~dest ~src:(Reg (Physical tmp1))
+        Target.instr "ldr" ~defs:[ Reg (Physical (tmp1 src)) ] ~uses:[ src ]
+        @> Target.mov ~dest ~src:(Reg (Physical (tmp1 src)))
         @> t
     | _ -> fun t -> Target.instr "ldr" ~defs:[ dest ] ~uses:[ src ] @> t
   in
@@ -185,15 +202,17 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
     let move_immediates_to_temps src1 src2 ~modify ~no_imms =
       begin match (src1, src2) with
       | (Target.Imm _ as src1), (Target.Imm _ as src2) ->
-        Target.mov ~dest:(Reg (Physical tmp1)) ~src:src1
-        @> Target.mov ~dest:(Reg (Physical tmp2)) ~src:src2
-        @> modify (Target.Reg (Physical tmp1)) (Target.Reg (Physical tmp2))
+        Target.mov ~dest:(Reg (Physical (tmp1 src1))) ~src:src1
+        @> Target.mov ~dest:(Reg (Physical (tmp2 src2))) ~src:src2
+        @> modify
+             (Target.Reg (Physical (tmp1 src1)))
+             (Target.Reg (Physical (tmp2 src2)))
       | (Imm _ as src1), src2 ->
-        Target.mov ~dest:(Reg (Physical tmp1)) ~src:src1
-        @> modify (Target.Reg (Physical tmp1)) src2
+        Target.mov ~dest:(Reg (Physical (tmp1 src1))) ~src:src1
+        @> modify (Target.Reg (Physical (tmp1 src1))) src2
       | src1, (Imm _ as src2) ->
-        Target.mov ~dest:(Reg (Physical tmp1)) ~src:src2
-        @> modify src1 (Target.Reg (Physical tmp1))
+        Target.mov ~dest:(Reg (Physical (tmp1 src2))) ~src:src2
+        @> modify src1 (Target.Reg (Physical (tmp1 src2)))
       | _ -> no_imms src1 src2
       end
     in
@@ -230,8 +249,8 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
          uses = [ ((MemAddr _ | StackSlot _) as src) ];
          _;
         } ->
-          Target.mov ~dest:(Reg (Physical tmp1)) ~src
-          @> Target.mov ~dest ~src:(Reg (Physical tmp1))
+          Target.mov ~dest:(Reg (Physical (tmp1 src))) ~src
+          @> Target.mov ~dest ~src:(Reg (Physical (tmp1 src)))
           @> go_tail tail
         (* lower move with destination memory operand into store *)
         | {
@@ -257,7 +276,7 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
           if i.instr = "bl" then called_function := true;
           List.iter record_operand i.uses;
           List.iter record_operand i.defs;
-          let tmps = ref [ tmp1; tmp2 ] in
+          let tmps = ref [ int_tmp1; int_tmp2 ] in
           (* All memory operands as uses should be moved into temporaries *)
           let head, i =
             Target.fold_uses
@@ -296,8 +315,8 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
           Arm.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
         in
         tail
-        @@ Target.mov ~dest:(Reg (Physical tmp1)) ~src:first_use
-        @> Target.instr "fcmp" ~defs:[ Reg (Physical tmp1) ] ~uses
+        @@ Target.mov ~dest:(Reg (Physical float_tmp1)) ~src:first_use
+        @> Target.instr "fcmp" ~defs:[ Reg (Physical float_tmp1) ] ~uses
         @> Target.instr instr ~defs:[] ~uses:[ Label (Float, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last
@@ -312,8 +331,8 @@ let cleanup (state : Select_arm.State.t) (tmp1 : Target.physical_reg)
           Arm.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
         in
         tail
-        @@ Target.mov ~dest:(Reg (Physical tmp1)) ~src:first_use
-        @> Target.instr "cmp" ~defs:[ Reg (Physical tmp1) ] ~uses
+        @@ Target.mov ~dest:(Reg (Physical int_tmp1)) ~src:first_use
+        @> Target.instr "cmp" ~defs:[ Reg (Physical int_tmp1) ] ~uses
         @> Target.instr instr ~defs:[] ~uses:[ Label (Int, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last (CBranch _) ->
@@ -360,7 +379,7 @@ let%expect_test "Add with memory operands gets lowered into loads" =
     @@ focus_entry empty
   in
   let state = Select_arm.State.init () in
-  let cfg = cleanup state Arm.Regs.x10 Arm.Regs.x11 cfg in
+  let cfg = Arm.Regs.(cleanup state x10 x11 d20 d21 cfg) in
   Format.printf "%a" Arm.Printer.pp_graph cfg;
   [%expect
     {|

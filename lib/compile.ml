@@ -282,7 +282,7 @@ module Arm = struct
       Format.printf "%a\n" Arm.Printer.pp_graph cfg;
       let cfg = Arm.SequentializeInt.sequentialize cfg in
       let cfg = Arm.SequentializeFloat.sequentialize cfg in
-      let cfg = Cleanup_arm.cleanup state Arm.Regs.x10 Arm.Regs.x11 cfg in
+      let cfg = Arm.Regs.(Cleanup_arm.cleanup state x10 x11 d20 d21 cfg) in
       ((state.stack_offset, state.frame_pointer), cfg)
     in
     compile_shared lower_isa program
