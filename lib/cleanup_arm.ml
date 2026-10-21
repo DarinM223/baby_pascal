@@ -216,6 +216,16 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
       | _ -> no_imms src1 src2
       end
     in
+    let lower_cmp cmp tmp1 uses rest =
+      begin match uses with
+      | [ (Target.Label _ as op) ] ->
+        load ~dest:(Reg (Physical (tmp2 op))) ~src:op
+        @@ Target.instr cmp ~defs:[ Reg (Physical tmp1) ]
+             ~uses:[ Reg (Physical (tmp2 op)) ]
+        @> rest
+      | _ -> Target.instr cmp ~defs:[ Reg (Physical tmp1) ] ~uses @> rest
+      end
+    in
     let rec go_tail = function
       | Cfg.Tail (Instruction i, tail) ->
         begin match i with
@@ -272,24 +282,38 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
         | { Target.instr = "mov"; defs = [ dest ]; uses = [ src ]; _ }
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->
           go_tail tail
-        | _ ->
-          if i.instr = "bl" then called_function := true;
+        | { Target.instr = "bl"; _ } ->
+          called_function := true;
           List.iter record_operand i.uses;
           List.iter record_operand i.defs;
-          let tmps = ref [ int_tmp1; int_tmp2 ] in
-          (* All memory operands as uses should be moved into temporaries *)
+          prepend_head (Cfg.Head (head, Instruction i)) (go_tail tail)
+        | _ ->
+          List.iter record_operand i.uses;
+          List.iter record_operand i.defs;
+          let int_tmps = ref [ int_tmp1; int_tmp2 ] in
+          let float_tmps = ref [ float_tmp1; float_tmp2 ] in
+          let take_tmps tmps =
+            match !tmps with
+            | tmp :: tmps' ->
+              tmps := tmps';
+              Target.Reg (Physical tmp)
+            | _ -> failwith "cleanup_arm: more than two memory operands as uses"
+          in
           let head, i =
             Target.fold_uses
               (fun head -> function
+                (* All memory operands as uses should be moved into temporaries *)
                 | (StackSlot _ | MemAddr _) as src ->
+                  let dest = take_tmps int_tmps in
+                  (append_tail head (load ~dest ~src (Last Exit)), dest)
+                (* All label operands as uses should be moved into temporaries
+                   Instructions that expect a label operand like "bl" should
+                   be handled separately *)
+                | Label (clz, _, _) as src ->
                   let dest =
-                    match !tmps with
-                    | tmp :: tmps' ->
-                      tmps := tmps';
-                      Target.Reg (Physical tmp)
-                    | _ ->
-                      failwith
-                        "cleanup_arm: more than two memory operands as uses"
+                    match clz with
+                    | Int -> take_tmps int_tmps
+                    | Float -> take_tmps float_tmps
                   in
                   (append_tail head (load ~dest ~src (Last Exit)), dest)
                 | op -> (head, op))
@@ -316,8 +340,8 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
         in
         tail
         @@ Target.mov ~dest:(Reg (Physical float_tmp1)) ~src:first_use
-        @> Target.instr "fcmp" ~defs:[ Reg (Physical float_tmp1) ] ~uses
-        @> Target.instr instr ~defs:[] ~uses:[ Label (Float, l1, []) ]
+        @> lower_cmp "fcmp" float_tmp1 uses
+        @@ Target.instr instr ~defs:[] ~uses:[ Label (Float, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last
           (CBranch
@@ -332,8 +356,8 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
         in
         tail
         @@ Target.mov ~dest:(Reg (Physical int_tmp1)) ~src:first_use
-        @> Target.instr "cmp" ~defs:[ Reg (Physical int_tmp1) ] ~uses
-        @> Target.instr instr ~defs:[] ~uses:[ Label (Int, l1, []) ]
+        @> lower_cmp "cmp" int_tmp1 uses
+        @@ Target.instr instr ~defs:[] ~uses:[ Label (Int, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last (CBranch _) ->
         failwith "cleanup_arm: invalid conditional branch"

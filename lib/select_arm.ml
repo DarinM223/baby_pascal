@@ -237,18 +237,21 @@ module Select = struct
              Ast.pp_bop op
       end
     | Undag.Target.Return ops ->
+      let ops_classes = List.map reg_class_of_operand ops in
       let* ops = translate_operands ops in
-      begin match ops with
+      let handle_op (op_class, op) n k =
+        let reg = call_conv ~caller:true state op_class n in
+        Target.pcopy ~dests:[ reg ] ~srcs:[ op ] @> k reg
+      in
+      begin match List.combine ops_classes ops with
       | [] -> Cfg.Last (Cfg.Return (Target.return ~uses:[]))
       | [ op ] ->
-        let x0 = Target.(Reg (constrained Regs.x0 (fresh_vreg Int))) in
-        Target.pcopy ~dests:[ x0 ] ~srcs:[ op ]
-        @> Cfg.Last (Cfg.Return (Target.return ~uses:[ x0 ]))
+        let* r = handle_op op 0 in
+        Cfg.Last (Cfg.Return (Target.return ~uses:[ r ]))
       | [ op1; op2 ] ->
-        let x0 = Target.(Reg (constrained Regs.x0 (fresh_vreg Int))) in
-        let x1 = Target.(Reg (constrained Regs.x1 (fresh_vreg Int))) in
-        Target.pcopy ~dests:[ x0; x1 ] ~srcs:[ op1; op2 ]
-        @> Cfg.Last (Cfg.Return (Target.return ~uses:[ x0; x1 ]))
+        let* r1 = handle_op op1 0 in
+        let* r2 = handle_op op2 1 in
+        Cfg.Last (Cfg.Return (Target.return ~uses:[ r1; r2 ]))
       | _ -> failwith "can only return two things currently"
       end
     | Undag.Target.Call (dest, f, args) ->
