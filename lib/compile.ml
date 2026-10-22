@@ -212,7 +212,7 @@ module Arm = struct
       Format.printf "===================================\n";
       Format.printf "%s's cfg after codegen:\n" f;
       Format.printf "===================================\n";
-      Format.printf "%a\n" Arm.Cfg.pp_graph cfg;
+      Format.printf "%a\n" Arm.Printer.pp_graph cfg;
       let extra = Arm.Cfg.precalculate_edges cfg in
       let module Dom = Dominator.Make (Arm.Cfg) ((val extra)) in
       let module Loop = Loopnesting.Make (Arm.Cfg) (Dom) in
@@ -238,6 +238,10 @@ module Arm = struct
       let cfg =
         ArmSpillFloat.spill_helper ~args:float_args (module Loop) state cfg
       in
+      Format.printf "===================================\n";
+      Format.printf "%s after spilling:\n" f;
+      Format.printf "===================================\n";
+      Format.printf "%a\n" Arm.Printer.pp_graph cfg;
       let int_regs =
         Arm.Regs.int_regs
         |> List.filter_map (fun ((_, _, reg) as r) ->

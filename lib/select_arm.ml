@@ -170,7 +170,8 @@ module Select = struct
     match instruction with
     | Undag.Target.Assign (dest, src) ->
       let open Target in
-      let dest = assign_vreg Int dest in
+      let dest_class = reg_class_of_operand dest in
+      let dest = assign_vreg dest_class dest in
       let* src = translate_operand src in
       mov ~dest ~src @> k dest
     (* todo: could be done if we could statically check if a Not is for an integer or boolean *)
