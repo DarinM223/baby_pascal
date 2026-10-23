@@ -108,11 +108,17 @@ module NextUseDistances = struct
         let l = block_lengths.(a.block_pos) in
         let num_instructions = block_num_instructions.(a.block_pos) in
         let handle_use acc r =
-          (IntMap.add (Target.index r) (l + num_instructions - a.count) acc, r)
+          ( IntMap.add (Target.index r) (l + num_instructions - a.count - 1) acc,
+            r )
         in
         let distances, _ = Target.fold_reg_uses handle_use a.distances i in
+        (* Don't include distances <= 0, which treats it as infinite distance *)
         a.distances_per_instruction.(num_instructions - 1 - a.count) <-
-          distances;
+          IntMap.filter_map
+            (fun _ d ->
+              let d = d - (num_instructions - 1 - a.count) in
+              if d <= 0 then None else Some d)
+            distances;
         { a with distances; count = a.count + 1 }
       in
       let first_in a _ = { a with count = 0 } in
@@ -154,6 +160,10 @@ module NextUseDistances = struct
         at_block = (fun uid -> (fact.get uid).distances);
         at_instruction =
           (fun uid instr_num ->
+            (* Format.printf "Distances per instruction: %a\n"
+              (Format.pp_print_list ~pp_sep:Utils.pp_sep
+                 (IntMap.pp Format.pp_print_int))
+              (Array.to_list (fact.get uid).distances_per_instruction); *)
             (fact.get uid).distances_per_instruction.(instr_num));
       }
   end
@@ -312,7 +322,13 @@ module Liveness = struct
           (fun uid ->
             (calc_live_out G.(last @@ fst @@ focus uid graph)).mapping);
         used_in_block = (fun uid -> (fact.get uid).used);
-        dies = (fun uid reg -> RegMap.find_opt reg (fact.get uid).dies);
+        dies =
+          (fun uid reg ->
+            (* Logs.debug (fun m ->
+                m "Dies for block %d: %a\n" uid
+                  (RegMap.pp Target.pp_reg Format.pp_print_int)
+                  (fact.get uid).dies); *)
+            RegMap.find_opt reg (fact.get uid).dies);
         max_register_pressure =
           (fun uid -> (fact.get uid).max_register_pressure);
       }
@@ -483,8 +499,8 @@ struct
       RegHashtbl.add state.copies v v';
       Target.mov ~dest:(Target.reg v') ~src:slot
     with Not_found ->
-      failwith
-      @@ Format.asprintf "Couldn't find spill slot for %a" Target.pp_reg v
+      Logs.debug (fun m -> m "Couldn't find spill slot for %a" Target.pp_reg v);
+      raise Not_found
 
   let limit ~add_spills (state : spill_state) ({ w; s } : min_state)
       (block_uid : G.uid) (instr_num : int) (head : G.head) (m : int) :
@@ -494,12 +510,15 @@ struct
         let pp_print_tuple fmt (a, b) =
           Format.fprintf fmt "%d -> %a" a (Format.pp_print_option CCInt.pp) b
         in
-        m "Distances: %a\n"
+        m "Distances at %d: %a\n" instr_num
           Format.(pp_print_list ~pp_sep:Utils.pp_sep pp_print_tuple)
           (List.map
              (fun v -> (Target.index v, IntMap.find_opt (Target.index v) dists))
              (RegSet.elements w)));
     let w = List.sort (compare dists) (RegSet.elements w) in
+    Logs.debug (fun m -> m "W: %a\n" Target.pp_regs w);
+    Logs.debug (fun m -> m "S: %a\n" (RegSet.pp Target.pp_reg) s);
+    Logs.debug (fun m' -> m' "M: %d\n" m);
     let head, s =
       List.fold_left
         (fun (head, s) v ->
@@ -535,7 +554,9 @@ struct
     in
     let rec go instr_num w s = function
       | head, G.Tail (Instruction instr, tail) ->
+        Logs.debug (fun m -> m "Instr: %a\n" Target.pp_instr instr);
         let r = RegSet.(diff (filter M.matches (Target.uses instr)) w) in
+        Logs.debug (fun m -> m "R: %a\n" (RegSet.pp Target.pp_reg) r);
         (* todo: just use RegSet.union r ? *)
         let w, s =
           RegSet.fold
@@ -555,7 +576,12 @@ struct
             RegSet.fold
               (fun var head ->
                 Logs.debug (fun m -> m "Reloading %a\n" Target.pp_reg var);
-                G.Head (head, Instruction (reload state var)))
+                (* todo: look into why it tries to reload variables that haven't been spilled
+                   could be because of r being calculated incorrectly *)
+                try
+                  let instr = reload state var in
+                  G.Head (head, Instruction instr)
+                with Not_found -> head)
               (RegSet.filter is_valid_vreg r)
               head
           else head
