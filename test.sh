@@ -304,36 +304,172 @@ if [ -v AARCH ]; then
   fi
 fi
 
-dune exec compile -- -x86_64 examples/floatfibonacci.pas &> /dev/null
+dune exec compile -- -x86_64 examples/fibonacci_float.pas &> /dev/null
 if [ $? -ne 0 ]; then
-    echo "floatfibonacci compilation failed"
+    echo "fibonacci_float compilation failed"
     exit 1
 fi
-./build.sh floatfibonacci.pas
-./floatfibonacci.pas > floatfibonacci.pas.test
-if cmp --silent floatfibonacci.pas.test examples/floatfibonacci.pas.expected; then
-  echo "floatfibonacci test succeeded"
+./build.sh fibonacci_float.pas
+./fibonacci_float.pas > fibonacci_float.pas.test
+if cmp --silent fibonacci_float.pas.test examples/fibonacci_float.pas.expected; then
+  echo "fibonacci_float test succeeded"
 else
-  echo "floatfibonacci test failed"
+  echo "fibonacci_float test failed"
   echo "Diff:"
-  diff floatfibonacci.pas.test examples/floatfibonacci.pas.expected
+  diff fibonacci_float.pas.test examples/fibonacci_float.pas.expected
   exit 1
 fi
 
 if [ -v AARCH ]; then
-  dune exec compile -- -aarch64 examples/floatfibonacci.pas &> /dev/null
+  dune exec compile -- -aarch64 examples/fibonacci_float.pas &> /dev/null
   if [ $? -ne 0 ]; then
-      echo "floatfibonacci compilation failed"
+      echo "fibonacci_float compilation failed"
       exit 1
   fi
-  ./build-aarch.sh floatfibonacci.pas
-  ./run-aarch.sh floatfibonacci.pas > floatfibonacci.pas.test
-  if cmp --silent floatfibonacci.pas.test examples/floatfibonacci.pas.expected; then
-    echo "floatfibonacci test succeeded"
+  ./build-aarch.sh fibonacci_float.pas
+  ./run-aarch.sh fibonacci_float.pas > fibonacci_float.pas.test
+  if cmp --silent fibonacci_float.pas.test examples/fibonacci_float.pas.expected; then
+    echo "fibonacci_float test succeeded"
   else
-    echo "floatfibonacci test failed"
+    echo "fibonacci_float test failed"
     echo "Diff:"
-    diff floatfibonacci.pas.test examples/floatfibonacci.pas.expected
+    diff fibonacci_float.pas.test examples/fibonacci_float.pas.expected
+    exit 1
+  fi
+fi
+
+dune exec compile -- -x86_64 examples/gcd_float.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "gcd_float compilation failed"
+    exit 1
+fi
+./build.sh gcd_float.pas
+./gcd_float.pas > gcd_float.pas.test
+if cmp --silent gcd_float.pas.test examples/gcd_float.pas.expected; then
+  echo "gcd_float test succeeded"
+else
+  echo "gcd_float test failed"
+  echo "Diff:"
+  diff gcd_float.pas.test examples/gcd_float.pas.expected
+  exit 1
+fi
+
+if [ -v AARCH ]; then
+  dune exec compile -- -arm64 examples/gcd_float.pas &> /dev/null
+  if [ $? -ne 0 ]; then
+      echo "gcd_float compilation failed"
+      exit 1
+  fi
+  ./build-aarch.sh gcd_float.pas
+  ./run-aarch.sh gcd_float.pas > gcd_float.pas.test
+  if cmp --silent gcd_float.pas.test examples/gcd_float.pas.expected; then
+    echo "gcd_float test succeeded"
+  else
+    echo "gcd_float test failed"
+    echo "Diff:"
+    diff gcd_float.pas.test examples/gcd_float.pas.expected
+    exit 1
+  fi
+fi
+
+dune exec compile -- -x86_64 examples/factorial_float.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "factorial_float compilation failed"
+    exit 1
+fi
+./build.sh factorial_float.pas
+./factorial_float.pas > factorial_float.pas.test
+if cmp --silent factorial_float.pas.test examples/factorial_float.pas.expected; then
+  echo "factorial_float test succeeded"
+else
+  echo "factorial_float test failed"
+  echo "Diff:"
+  diff factorial_float.pas.test examples/factorial_float.pas.expected
+  exit 1
+fi
+
+if [ -v AARCH ]; then
+  dune exec compile -- -arm examples/factorial_float.pas &> /dev/null
+  if [ $? -ne 0 ]; then
+      echo "factorial_float compilation failed"
+      exit 1
+  fi
+  ./build-aarch.sh factorial_float.pas
+  ./run-aarch.sh factorial_float.pas > factorial_float.pas.test
+  if cmp --silent factorial_float.pas.test examples/factorial_float.pas.expected; then
+    echo "factorial_float test succeeded"
+  else
+    echo "factorial_float test failed"
+    echo "Diff:"
+    diff factorial_float.pas.test examples/factorial_float.pas.expected
+    exit 1
+  fi
+fi
+
+dune exec compile -- -x86_64 examples/collatz_float.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "collatz_float compilation failed"
+    exit 1
+fi
+./build.sh collatz_float.pas
+./collatz_float.pas > collatz_float.pas.test
+if cmp --silent collatz_float.pas.test examples/collatz_float.pas.expected; then
+  echo "collatz_float test succeeded"
+else
+  echo "collatz_float test failed"
+  echo "Diff:"
+  diff collatz_float.pas.test examples/collatz_float.pas.expected
+  exit 1
+fi
+
+if [ -v AARCH ]; then
+  dune exec compile -- -aarch64 examples/collatz_float.pas &> /dev/null
+  if [ $? -ne 0 ]; then
+      echo "collatz_float compilation failed"
+      exit 1
+  fi
+  ./build-aarch.sh collatz_float.pas
+  ./run-aarch.sh collatz_float.pas > collatz_float.pas.test
+  if cmp --silent collatz_float.pas.test examples/collatz_float.pas.expected; then
+    echo "collatz_float test succeeded"
+  else
+    echo "collatz_float test failed"
+    echo "Diff:"
+    diff collatz_float.pas.test examples/collatz_float.pas.expected
+    exit 1
+  fi
+fi
+
+dune exec compile -- -x86_64 examples/isprime_float.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "isprime_float compilation failed"
+    exit 1
+fi
+./build.sh isprime_float.pas
+./isprime_float.pas > isprime_float.pas.test
+if cmp --silent isprime_float.pas.test examples/isprime_float.pas.expected; then
+  echo "isprime_float test succeeded"
+else
+  echo "isprime_float test failed"
+  echo "Diff:"
+  diff isprime_float.pas.test examples/isprime_float.pas.expected
+  exit 1
+fi
+
+if [ -v AARCH ]; then
+  dune exec compile -- -aarch64 examples/isprime_float.pas &> /dev/null
+  if [ $? -ne 0 ]; then
+      echo "isprime_float compilation failed"
+      exit 1
+  fi
+  ./build-aarch.sh isprime_float.pas
+  ./run-aarch.sh isprime_float.pas > isprime_float.pas.test
+  if cmp --silent isprime_float.pas.test examples/isprime_float.pas.expected; then
+    echo "isprime_float test succeeded"
+  else
+    echo "isprime_float test failed"
+    echo "Diff:"
+    diff isprime_float.pas.test examples/isprime_float.pas.expected
     exit 1
   fi
 fi

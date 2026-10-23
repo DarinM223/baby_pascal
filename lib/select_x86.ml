@@ -129,7 +129,10 @@ module Select = struct
         (fun t -> t)
     in
     mov ~dest:tmp1 ~src:src1 @> inject
-    @@ reuse_instr tmp1 tmp2 (instr "cmp" ~defs:[] ~uses:[ src2 ])
+    @@ reuse_instr tmp1 tmp2
+         (match src1_class with
+         | Int -> instr "cmp" ~defs:[] ~uses:[ src2 ]
+         | Float -> instr "ucomisd" ~defs:[] ~uses:[ src2 ])
     @> setters (k (List.map (fun (_, _, dest) -> dest) args))
 
   let rec select ({ State.fresh_vreg; mapping; _ } as state)
@@ -237,6 +240,7 @@ module Select = struct
              (RegSet.of_list Regs.[ Physical rax; Physical rdx ])
              (pcopy ~dests:[ tmp1 ] ~srcs:[ src1 ])
         @> mul @> mov ~dest ~src:tmp4 @> k dest
+      | Float, Ast.Mul -> reuse_bop "mulsd"
       | Int, Ast.Div ->
         let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int)) in
         let tmp2 = Reg (fresh_vreg Int) in
@@ -265,6 +269,7 @@ module Select = struct
              (RegSet.of_list Regs.[ Physical rax; Physical rdx ])
              (pcopy ~dests:[ tmp1 ] ~srcs:[ src1 ])
         @> cqto @> div @> mov ~dest ~src:tmp5 @> k dest
+      | Float, Ast.Div -> reuse_bop "divsd"
       | Int, Ast.And ->
         (* todo: change to use bitwise and since we use that in value numbering *)
         let tmp = Reg (fresh_vreg Int) in
@@ -401,6 +406,7 @@ module Select = struct
       let src2_class = reg_class_of_operand src2 in
       let* src1 = translate_operand src1 in
       let* src2 = translate_operand src2 in
+      let l1args_class = List.map reg_class_of_operand l1args in
       let* l1args = translate_operands l1args in
       let* l2args = translate_operands l2args in
       (* handle cbranches with the same label but different arguments *)
@@ -409,24 +415,28 @@ module Select = struct
         && not (List.equal Target.equal_operand l1args l2args)
       then
         let cmov arg1 _arg2 dest =
-          Target.instr ~defs:[ dest ] ~uses:[ arg1 ]
-            (match cond with
-            | Graph.Cond.LT -> "cmovl"
-            | LE -> "cmovle"
-            | GT -> "cmovg"
-            | GE -> "cmovge"
-            | EQ -> "cmove"
-            | NE -> "cmovne")
+          match Target.(Option.map Reg.reg_class (destruct_reg dest)) with
+          | Some Int ->
+            Target.instr ~defs:[ dest ] ~uses:[ arg1 ]
+              (match cond with
+              | Graph.Cond.LT -> "cmovl"
+              | LE -> "cmovle"
+              | GT -> "cmovg"
+              | GE -> "cmovge"
+              | EQ -> "cmove"
+              | NE -> "cmovne")
+          | Some Float -> failwith "Float conditional moves not handled yet"
+          | None -> failwith "Unknown register class for conditional move"
         in
         reuse_cond fresh_vreg src1_class src1 src2_class src2
           (fun () ->
             let open Target in
             let args =
               List.map
-                (fun (arg1, arg2) ->
-                  let dest = Reg (fresh_vreg Int) in
+                (fun ((arg1_class, arg1), arg2) ->
+                  let dest = Reg (fresh_vreg arg1_class) in
                   (arg1, arg2, dest))
-                (List.combine l1args l2args)
+                (List.combine (List.combine l1args_class l1args) l2args)
             in
             ( args,
               List.fold_right
