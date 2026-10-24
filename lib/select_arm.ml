@@ -19,7 +19,7 @@ module State = struct
   let init () =
     let vreg_block = IntHashtbl.create Utils.hashtbl_size in
     let mapping = NameHashtbl.create Utils.hashtbl_size in
-    let c = ref (-1) in
+    let c = ref Regs.start_virtual_counter in
     let rec r =
       {
         fresh_vreg =
@@ -466,26 +466,26 @@ let%expect_test "Fibonacci code generation" =
   Format.printf "%a" Arm.Printer.pp_graph cfg;
   [%expect
     {|
-      pcopy [(1any, 0(%x0))]
-      b.le label2, label3, 1any, #1
-    label1(local=false)(99any):
-      pcopy [(100(%x0), 99any)]
-      ret 100(%x0)
+      pcopy [(65any, 64(%x0))]
+      b.le label2, label3, 65any, #1
+    label1(local=false)(163any):
+      pcopy [(164(%x0), 163any)]
+      ret 164(%x0)
     label2(local=false)():
-      mov 2any, 1any
-      b label1(2any)
+      mov 66any, 65any
+      b label1(66any)
     label3(local=false)():
-      sub 4any, 1any, #1
-      pcopy [(5(%x0), 4any)]
-      bl 6(%x0), 7(%x1), 8(%x2), 9(%x3), 10(%x4), 11(%x5), 12(%x6), 13(%x7), 14(%x8), 15(%x9), 16(%x10), 17(%x11), 18(%x12), 19(%x13), 20(%x14), 21(%x15), 22(%x16), 23(%x17), 24(%x18), 25(%x30), 26f(%d0), 27f(%d1), 28f(%d2), 29f(%d3), 30f(%d4), 31f(%d5), 32f(%d6), 33f(%d7), 34f(%d16), 35f(%d17), 36f(%d18), 37f(%d19), 38f(%d20), 39f(%d21), 40f(%d22), 41f(%d23), 42f(%d24), 43f(%d25), 44f(%d26), 45f(%d27), 46f(%d28), 47f(%d29), 48f(%d30), 49f(%d31), 5(%x0), fibonacci
-      mov 3any, 6(%x0)
-      sub 51any, 1any, #2
-      pcopy [(52(%x0), 51any)]
-      bl 53(%x0), 54(%x1), 55(%x2), 56(%x3), 57(%x4), 58(%x5), 59(%x6), 60(%x7), 61(%x8), 62(%x9), 63(%x10), 64(%x11), 65(%x12), 66(%x13), 67(%x14), 68(%x15), 69(%x16), 70(%x17), 71(%x18), 72(%x30), 73f(%d0), 74f(%d1), 75f(%d2), 76f(%d3), 77f(%d4), 78f(%d5), 79f(%d6), 80f(%d7), 81f(%d16), 82f(%d17), 83f(%d18), 84f(%d19), 85f(%d20), 86f(%d21), 87f(%d22), 88f(%d23), 89f(%d24), 90f(%d25), 91f(%d26), 92f(%d27), 93f(%d28), 94f(%d29), 95f(%d30), 96f(%d31), 52(%x0), fibonacci
-      mov 50any, 53(%x0)
-      add 98any, 3any, 50any
-      mov 97any, 98any
-      b label1(97any)
+      sub 68any, 65any, #1
+      pcopy [(69(%x0), 68any)]
+      bl 70(%x0), 71(%x1), 72(%x2), 73(%x3), 74(%x4), 75(%x5), 76(%x6), 77(%x7), 78(%x8), 79(%x9), 80(%x10), 81(%x11), 82(%x12), 83(%x13), 84(%x14), 85(%x15), 86(%x16), 87(%x17), 88(%x18), 89(%x30), 90f(%d0), 91f(%d1), 92f(%d2), 93f(%d3), 94f(%d4), 95f(%d5), 96f(%d6), 97f(%d7), 98f(%d16), 99f(%d17), 100f(%d18), 101f(%d19), 102f(%d20), 103f(%d21), 104f(%d22), 105f(%d23), 106f(%d24), 107f(%d25), 108f(%d26), 109f(%d27), 110f(%d28), 111f(%d29), 112f(%d30), 113f(%d31), 69(%x0), fibonacci
+      mov 67any, 70(%x0)
+      sub 115any, 65any, #2
+      pcopy [(116(%x0), 115any)]
+      bl 117(%x0), 118(%x1), 119(%x2), 120(%x3), 121(%x4), 122(%x5), 123(%x6), 124(%x7), 125(%x8), 126(%x9), 127(%x10), 128(%x11), 129(%x12), 130(%x13), 131(%x14), 132(%x15), 133(%x16), 134(%x17), 135(%x18), 136(%x30), 137f(%d0), 138f(%d1), 139f(%d2), 140f(%d3), 141f(%d4), 142f(%d5), 143f(%d6), 144f(%d7), 145f(%d16), 146f(%d17), 147f(%d18), 148f(%d19), 149f(%d20), 150f(%d21), 151f(%d22), 152f(%d23), 153f(%d24), 154f(%d25), 155f(%d26), 156f(%d27), 157f(%d28), 158f(%d29), 159f(%d30), 160f(%d31), 116(%x0), fibonacci
+      mov 114any, 117(%x0)
+      add 162any, 67any, 114any
+      mov 161any, 162any
+      b label1(161any)
     |}]
 
 let%expect_test "Nested loops code generation" =
@@ -494,25 +494,25 @@ let%expect_test "Nested loops code generation" =
   Format.printf "%a" Arm.Printer.pp_graph cfg;
   [%expect
     {|
-      mov 0any, #0
+      mov 64any, #0
       b label6
     label1(local=false)():
       exit
-    label2(local=false)(1any):
-      b.lt label3, label1, 1any, #100
+    label2(local=false)(65any):
+      b.lt label3, label1, 65any, #100
     label3(local=false)():
-      mov 2any, 1any
-      b label4(1any, 2any)
-    label4(local=false)(3any, 4any):
-      b.lt label5, label2(3any), 4any, #100
+      mov 66any, 65any
+      b label4(65any, 66any)
+    label4(local=false)(67any, 68any):
+      b.lt label5, label2(67any), 68any, #100
     label5(local=false)():
-      add 6any, 3any, #1
-      mov 5any, 6any
-      add 8any, 4any, #1
-      mov 7any, 8any
-      b label4(5any, 7any)
+      add 70any, 67any, #1
+      mov 69any, 70any
+      add 72any, 68any, #1
+      mov 71any, 72any
+      b label4(69any, 71any)
     label6(local=false)():
-      b label2(0any)
+      b label2(64any)
     |}]
 
 let%expect_test "CBranch with both labels the same with different arguments" =
@@ -522,18 +522,18 @@ let%expect_test "CBranch with both labels the same with different arguments" =
   Format.printf "%a" Arm.Printer.pp_graph cfg;
   [%expect
     {|
-      mov 0any, #3
-      mov 1any, #2
-      mov 2any, #1
-      mov 3any, #0
+      mov 64any, #3
+      mov 65any, #2
+      mov 66any, #1
+      mov 67any, #0
       b label1
     label1(local=false)():
-      mov 4any, 3any
-      cmp 5(reuse=%4), 4any, 2any
-      csel 6any, #1, 3any, eq
-      csel 7any, 2any, #2, eq
-      csel 8any, 1any, 0any, eq
-      b label2(6any, 7any, 8any)
-    label2(local=false)(9any, 10any, 11any):
+      mov 68any, 67any
+      cmp 69(reuse=%68), 68any, 66any
+      csel 70any, #1, 67any, eq
+      csel 71any, 66any, #2, eq
+      csel 72any, 65any, 64any, eq
+      b label2(70any, 71any, 72any)
+    label2(local=false)(73any, 74any, 75any):
       exit
     |}]

@@ -19,7 +19,7 @@ module State = struct
   let init () =
     let vreg_block = IntHashtbl.create Utils.hashtbl_size in
     let mapping = NameHashtbl.create Utils.hashtbl_size in
-    let c = ref (-1) in
+    let c = ref Regs.start_virtual_counter in
     let rec r =
       {
         fresh_vreg =
@@ -515,29 +515,29 @@ let%expect_test "Fibonacci code generation" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      pcopy [(%1any, %0(%rdi))]
-      jle label2, label3, %1any, $1
-    label1(local=false)(64any):
-      pcopy [(%65(%rax), %64any)]
-      ret %65(%rax)
+      pcopy [(%33any, %32(%rdi))]
+      jle label2, label3, %33any, $1
+    label1(local=false)(96any):
+      pcopy [(%97(%rax), %96any)]
+      ret %97(%rax)
     label2(local=false)():
-      movq %2any, %1any
-      jmp label1(%2any)
+      movq %34any, %33any
+      jmp label1(%34any)
     label3(local=false)():
-      movq %5any, %1any
-      subq %4(reuse=%5), %5any, $1
-      pcopy [(%6(%rdi), %4(reuse=%5))]
-      call %7(%rax), %8(%rcx), %9(%rdx), %10(%rsi), %11(%rdi), %12(%r8), %13(%r9), %14(%r10), %15(%r11), %16f(%xmm0), %17f(%xmm1), %18f(%xmm2), %19f(%xmm3), %20f(%xmm4), %21f(%xmm5), %22f(%xmm6), %23f(%xmm7), %24f(%xmm8), %25f(%xmm9), %26f(%xmm10), %27f(%xmm11), %28f(%xmm12), %29f(%xmm13), %30f(%xmm14), %31f(%xmm15), %6(%rdi), fibonacci
-      movq %3any, %7(%rax)
-      movq %34any, %1any
-      subq %33(reuse=%34), %34any, $2
-      pcopy [(%35(%rdi), %33(reuse=%34))]
-      call %36(%rax), %37(%rcx), %38(%rdx), %39(%rsi), %40(%rdi), %41(%r8), %42(%r9), %43(%r10), %44(%r11), %45f(%xmm0), %46f(%xmm1), %47f(%xmm2), %48f(%xmm3), %49f(%xmm4), %50f(%xmm5), %51f(%xmm6), %52f(%xmm7), %53f(%xmm8), %54f(%xmm9), %55f(%xmm10), %56f(%xmm11), %57f(%xmm12), %58f(%xmm13), %59f(%xmm14), %60f(%xmm15), %35(%rdi), fibonacci
-      movq %32any, %36(%rax)
-      movq %63any, %3any
-      addq %62(reuse=%63), %63any, %32any
-      movq %61any, %62(reuse=%63)
-      jmp label1(%61any)
+      movq %37any, %33any
+      subq %36(reuse=%37), %37any, $1
+      pcopy [(%38(%rdi), %36(reuse=%37))]
+      call %39(%rax), %40(%rcx), %41(%rdx), %42(%rsi), %43(%rdi), %44(%r8), %45(%r9), %46(%r10), %47(%r11), %48f(%xmm0), %49f(%xmm1), %50f(%xmm2), %51f(%xmm3), %52f(%xmm4), %53f(%xmm5), %54f(%xmm6), %55f(%xmm7), %56f(%xmm8), %57f(%xmm9), %58f(%xmm10), %59f(%xmm11), %60f(%xmm12), %61f(%xmm13), %62f(%xmm14), %63f(%xmm15), %38(%rdi), fibonacci
+      movq %35any, %39(%rax)
+      movq %66any, %33any
+      subq %65(reuse=%66), %66any, $2
+      pcopy [(%67(%rdi), %65(reuse=%66))]
+      call %68(%rax), %69(%rcx), %70(%rdx), %71(%rsi), %72(%rdi), %73(%r8), %74(%r9), %75(%r10), %76(%r11), %77f(%xmm0), %78f(%xmm1), %79f(%xmm2), %80f(%xmm3), %81f(%xmm4), %82f(%xmm5), %83f(%xmm6), %84f(%xmm7), %85f(%xmm8), %86f(%xmm9), %87f(%xmm10), %88f(%xmm11), %89f(%xmm12), %90f(%xmm13), %91f(%xmm14), %92f(%xmm15), %67(%rdi), fibonacci
+      movq %64any, %68(%rax)
+      movq %95any, %35any
+      addq %94(reuse=%95), %95any, %64any
+      movq %93any, %94(reuse=%95)
+      jmp label1(%93any)
     |}]
 
 let%expect_test "Nested loops code generation" =
@@ -546,27 +546,27 @@ let%expect_test "Nested loops code generation" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      movq %0any, $0
+      movq %32any, $0
       jmp label6
     label1(local=false)():
       exit
-    label2(local=false)(1any):
-      jl label3, label1, %1any, $100
+    label2(local=false)(33any):
+      jl label3, label1, %33any, $100
     label3(local=false)():
-      movq %2any, %1any
-      jmp label4(%1any, %2any)
-    label4(local=false)(3any, 4any):
-      jl label5, label2(%3any), %4any, $100
+      movq %34any, %33any
+      jmp label4(%33any, %34any)
+    label4(local=false)(35any, 36any):
+      jl label5, label2(%35any), %36any, $100
     label5(local=false)():
-      movq %7any, %3any
-      addq %6(reuse=%7), %7any, $1
-      movq %5any, %6(reuse=%7)
-      movq %10any, %4any
-      addq %9(reuse=%10), %10any, $1
-      movq %8any, %9(reuse=%10)
-      jmp label4(%5any, %8any)
+      movq %39any, %35any
+      addq %38(reuse=%39), %39any, $1
+      movq %37any, %38(reuse=%39)
+      movq %42any, %36any
+      addq %41(reuse=%42), %42any, $1
+      movq %40any, %41(reuse=%42)
+      jmp label4(%37any, %40any)
     label6(local=false)():
-      jmp label2(%0any)
+      jmp label2(%32any)
     |}]
 
 let%expect_test "CBranch with both labels the same with different arguments" =
@@ -576,21 +576,21 @@ let%expect_test "CBranch with both labels the same with different arguments" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      movq %0any, $3
-      movq %1any, $2
-      movq %2any, $1
-      movq %3any, $0
+      movq %32any, $3
+      movq %33any, $2
+      movq %34any, $1
+      movq %35any, $0
       jmp label1
     label1(local=false)():
-      movq %4any, %3any
-      movq %6any, %3any
-      movq %7any, $2
-      movq %8any, %0any
-      cmp %5(reuse=%4), %4any, %2any
-      cmove %6any, $1
-      cmove %7any, %2any
-      cmove %8any, %1any
-      jmp label2(%6any, %7any, %8any)
-    label2(local=false)(9any, 10any, 11any):
+      movq %36any, %35any
+      movq %38any, %35any
+      movq %39any, $2
+      movq %40any, %32any
+      cmp %37(reuse=%36), %36any, %34any
+      cmove %38any, $1
+      cmove %39any, %34any
+      cmove %40any, %33any
+      jmp label2(%38any, %39any, %40any)
+    label2(local=false)(41any, 42any, 43any):
       exit
   |}]

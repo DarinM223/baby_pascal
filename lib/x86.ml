@@ -336,40 +336,49 @@ module Target = struct
 end
 
 module Regs = struct
-  (* todo: handle overlapping subregisters *)
-  let rax = (0, Target.Int, "rax")
-  let rbx = (1, Target.Int, "rbx")
-  let rcx = (2, Target.Int, "rcx")
-  let rdx = (3, Target.Int, "rdx")
-  let rsi = (4, Target.Int, "rsi")
-  let rdi = (5, Target.Int, "rdi")
-  let rsp = (6, Target.Int, "rsp")
-  let rbp = (7, Target.Int, "rbp")
-  let r8 = (8, Target.Int, "r8")
-  let r9 = (9, Target.Int, "r9")
-  let r10 = (10, Target.Int, "r10")
-  let r11 = (11, Target.Int, "r11")
-  let r12 = (12, Target.Int, "r12")
-  let r13 = (13, Target.Int, "r13")
-  let r14 = (14, Target.Int, "r14")
-  let r15 = (15, Target.Int, "r15")
+  open struct
+    let counter = ref (-1)
+    let new_reg clz s =
+      incr counter;
+      (!counter, clz, s)
+  end
 
-  let xmm0 = (16, Target.Float, "xmm0")
-  let xmm1 = (17, Target.Float, "xmm1")
-  let xmm2 = (18, Target.Float, "xmm2")
-  let xmm3 = (19, Target.Float, "xmm3")
-  let xmm4 = (20, Target.Float, "xmm4")
-  let xmm5 = (21, Target.Float, "xmm5")
-  let xmm6 = (22, Target.Float, "xmm6")
-  let xmm7 = (23, Target.Float, "xmm7")
-  let xmm8 = (24, Target.Float, "xmm8")
-  let xmm9 = (25, Target.Float, "xmm9")
-  let xmm10 = (26, Target.Float, "xmm10")
-  let xmm11 = (27, Target.Float, "xmm11")
-  let xmm12 = (28, Target.Float, "xmm12")
-  let xmm13 = (29, Target.Float, "xmm13")
-  let xmm14 = (30, Target.Float, "xmm14")
-  let xmm15 = (31, Target.Float, "xmm15")
+  (* todo: handle overlapping subregisters *)
+  let rax = new_reg Target.Int "rax"
+  let rbx = new_reg Target.Int "rbx"
+  let rcx = new_reg Target.Int "rcx"
+  let rdx = new_reg Target.Int "rdx"
+  let rsi = new_reg Target.Int "rsi"
+  let rdi = new_reg Target.Int "rdi"
+  let rsp = new_reg Target.Int "rsp"
+  let rbp = new_reg Target.Int "rbp"
+  let r8 = new_reg Target.Int "r8"
+  let r9 = new_reg Target.Int "r9"
+  let r10 = new_reg Target.Int "r10"
+  let r11 = new_reg Target.Int "r11"
+  let r12 = new_reg Target.Int "r12"
+  let r13 = new_reg Target.Int "r13"
+  let r14 = new_reg Target.Int "r14"
+  let r15 = new_reg Target.Int "r15"
+
+  let xmm0 = new_reg Target.Float "xmm0"
+  let xmm1 = new_reg Target.Float "xmm1"
+  let xmm2 = new_reg Target.Float "xmm2"
+  let xmm3 = new_reg Target.Float "xmm3"
+  let xmm4 = new_reg Target.Float "xmm4"
+  let xmm5 = new_reg Target.Float "xmm5"
+  let xmm6 = new_reg Target.Float "xmm6"
+  let xmm7 = new_reg Target.Float "xmm7"
+  let xmm8 = new_reg Target.Float "xmm8"
+  let xmm9 = new_reg Target.Float "xmm9"
+  let xmm10 = new_reg Target.Float "xmm10"
+  let xmm11 = new_reg Target.Float "xmm11"
+  let xmm12 = new_reg Target.Float "xmm12"
+  let xmm13 = new_reg Target.Float "xmm13"
+  let xmm14 = new_reg Target.Float "xmm14"
+  let xmm15 = new_reg Target.Float "xmm15"
+
+  let start_virtual_counter = !counter
 
   let caller_save = [ rax; rcx; rdx; rsi; rdi; r8; r9; r10; r11 ]
   let callee_save = [ r12; r13; r14; r15; rbx; rsp; rbp ]
