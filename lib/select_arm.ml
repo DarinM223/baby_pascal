@@ -131,7 +131,10 @@ module Select = struct
         (fun t -> t)
     in
     mov ~dest:tmp1 ~src:src1 @> inject
-    @@ reuse_instr tmp1 tmp2 (instr "cmp" ~defs:[] ~uses:[ src2 ])
+    @@ reuse_instr tmp1 tmp2
+         (match src1_class with
+         | Int -> instr "cmp" ~defs:[] ~uses:[ src2 ]
+         | Float -> instr "fcmp" ~defs:[] ~uses:[ src2 ])
     @> setters (k (List.map (fun (_, _, dest) -> dest) args))
 
   let rec select ({ State.fresh_vreg; mapping; _ } as state)
@@ -350,6 +353,7 @@ module Select = struct
       let src2_class = reg_class_of_operand src2 in
       let* src1 = translate_operand src1 in
       let* src2 = translate_operand src2 in
+      let l1args_class = List.map reg_class_of_operand l1args in
       let* l1args = translate_operands l1args in
       let* l2args = translate_operands l2args in
       (* handle cbranches with the same label but different arguments *)
@@ -367,18 +371,24 @@ module Select = struct
           | NE -> Ne
         in
         let instr_of_cond code arg tmp dest =
-          Target.instr "csel" ~defs:[ dest ]
-            ~uses:[ arg; tmp; Target.ConditionCode code ]
+          match Target.(Option.map Reg.reg_class (destruct_reg dest)) with
+          | Some Int ->
+            Target.instr "csel" ~defs:[ dest ]
+              ~uses:[ arg; tmp; Target.ConditionCode code ]
+          | Some Float ->
+            Target.instr "fcsel" ~defs:[ dest ]
+              ~uses:[ arg; tmp; Target.ConditionCode code ]
+          | None -> failwith "Unknown register class for conditional move"
         in
         reuse_cond fresh_vreg src1_class src1 src2_class src2
           (fun () ->
             let open Target in
             let args =
               List.map
-                (fun (arg1, arg2) ->
-                  let dest = Reg (fresh_vreg Int) in
+                (fun ((arg1_class, arg1), arg2) ->
+                  let dest = Reg (fresh_vreg arg1_class) in
                   (arg1, arg2, dest))
-                (List.combine l1args l2args)
+                (List.combine (List.combine l1args_class l1args) l2args)
             in
             (args, fun t -> t))
           (fun dests -> Cfg.Last (Cfg.Branch (Target.goto l1 dests, l1)))

@@ -198,7 +198,8 @@ module Liveness = struct
     module RegMap = Target.RegMap
     module State = struct
       type t = {
-        mapping : RegSet.t;
+        live_in : RegSet.t;
+        live_out : RegSet.t;
         max_register_pressure : int;
         used : RegSet.t;
         dies : int RegMap.t;
@@ -217,7 +218,8 @@ module Liveness = struct
       {
         Flow.init_info =
           {
-            State.mapping = RegSet.empty;
+            State.live_in = RegSet.empty;
+            live_out = RegSet.empty;
             used = RegSet.empty;
             max_register_pressure = 0;
             dies = RegMap.empty;
@@ -225,22 +227,25 @@ module Liveness = struct
           };
         add_info =
           (fun a b ->
-            let mapping = RegSet.union a.mapping b.mapping in
+            let live_in = RegSet.union a.live_in b.live_in in
+            let live_out = RegSet.union a.live_out b.live_out in
+            (* Updated live out could have more variables so remove those from dies *)
+            let dies =
+              RegSet.fold RegMap.remove live_out
+                RegMap.(union (fun _ a b -> Some (min a b)) a.dies b.dies)
+            in
             {
               a with
-              mapping;
+              live_in;
+              live_out;
               used = RegSet.union a.used b.used;
-              (* Updated mapping could set more variables as live out so remove those from dies *)
-              dies =
-                RegSet.fold
-                  (fun reg acc -> RegMap.remove reg acc)
-                  mapping
-                  RegMap.(union (fun _ _ b -> Some b) a.dies b.dies);
+              dies;
             });
         changed =
           (fun ~before ~after ->
             RegSet.(
-              cardinal after.mapping > cardinal before.mapping
+              cardinal after.live_in > cardinal before.live_in
+              || cardinal after.live_out > cardinal before.live_out
               || cardinal after.used > cardinal before.used)
             || RegMap.(cardinal after.dies > cardinal before.dies));
         skip_block = Fun.const false;
@@ -251,12 +256,12 @@ module Liveness = struct
       let fact = fact () in
       let uses instr = RegSet.filter Requirements.matches (Target.uses instr) in
       let defs instr = RegSet.filter Requirements.matches (Target.defs instr) in
-      let update_mapping mapping a =
+      let update_live_in live_in a =
         {
           a with
-          mapping;
+          live_in;
           State.max_register_pressure =
-            max a.State.max_register_pressure (RegSet.cardinal mapping);
+            max a.State.max_register_pressure (RegSet.cardinal live_in);
         }
       in
       let update_dead uses (a : State.t) =
@@ -265,13 +270,14 @@ module Liveness = struct
           RegSet.fold
             (fun dead acc ->
               if RegMap.mem dead acc then acc else RegMap.add dead a.count acc)
-            (RegSet.diff uses a.mapping)
+            (RegSet.diff uses a.live_in)
             a.dies
         in
         { a with dies }
       in
       let finish_dead (a : State.t) =
-        { a with dies = RegMap.map (fun off -> a.count - 1 - off) a.dies }
+        let dies = RegMap.map (fun off -> a.count - 1 - off) a.dies in
+        { a with dies }
       in
       let first_in (a : State.t) = function
         | G.Entry -> finish_dead a
@@ -279,27 +285,31 @@ module Liveness = struct
           let uses = RegSet.(filter Requirements.matches (of_list info.args)) in
           let a = update_dead uses a in
           finish_dead
-          @@ update_mapping RegSet.(diff a.mapping (of_list info.args)) a
+          @@ update_live_in RegSet.(diff a.live_in (of_list info.args)) a
       in
       let handle_instruction instr (a : State.t) =
         let instr_uses = uses instr in
         let instr_defs = defs instr in
         let a = update_dead instr_uses a in
         let a = update_dead instr_defs a in
-        update_mapping
-          RegSet.(union instr_uses (diff a.mapping instr_defs))
+        update_live_in
+          RegSet.(union instr_uses (diff a.live_in instr_defs))
           { a with used = RegSet.union instr_uses a.used; count = a.count + 1 }
       in
       let calc_live_out = function
         | G.Exit -> fact.init_info
         | Branch (instr, (uid, _)) ->
-          handle_instruction instr
-          @@ update_mapping (fact.get uid).mapping fact.init_info
+          let a = update_live_in (fact.get uid).live_in fact.init_info in
+          let a = { a with live_out = a.live_in } in
+          handle_instruction instr a
         | CBranch (instr, (uid1, _), (uid2, _)) ->
-          handle_instruction instr
-          @@ update_mapping
-               (RegSet.union (fact.get uid1).mapping (fact.get uid2).mapping)
-          @@ fact.init_info
+          let a =
+            update_live_in
+              (RegSet.union (fact.get uid1).live_in (fact.get uid2).live_in)
+              fact.init_info
+          in
+          let a = { a with live_out = a.live_in } in
+          handle_instruction instr a
         | Return instr -> handle_instruction instr fact.init_info
       in
       let analysis =
@@ -314,13 +324,16 @@ module Liveness = struct
       {
         live_in =
           (fun uid ->
-            try (fact.get uid).mapping
+            try (fact.get uid).live_in
             with Not_found ->
               failwith
               @@ Format.sprintf "Live in block for uid %d not found" uid);
         live_out =
           (fun uid ->
-            (calc_live_out G.(last @@ fst @@ focus uid graph)).mapping);
+            try (fact.get uid).live_out
+            with Not_found ->
+              failwith
+              @@ Format.sprintf "Live out block for uid %d not found" uid);
         used_in_block = (fun uid -> (fact.get uid).used);
         dies =
           (fun uid reg ->

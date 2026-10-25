@@ -1,8 +1,14 @@
 var printInteger : (integer): void;
+var printDouble : (double): void;
 
 function hello(a: integer, b: integer, c: integer, d: integer, e: integer, f: integer, g: integer, h: integer) : integer;
 begin
   hello := a + b + c + d + e + f + (h - g);
+end
+
+function doublehello(a: double, b: double, c: double, d: double, e: double, f: double, g: double, h: double) : double;
+begin
+  doublehello := a + b + c + d + e + f + (h - g);
 end
 
 function world(a: integer) : integer;
@@ -32,6 +38,9 @@ begin
   // 1 + 2 + 3 + 4 + 5 + 6 + 1 (8 - 7 instead of 7 - 8)
   // Should print "Result: 22"
   printInteger(hello(1, 2, 3, 4, 5, 6, 7, 8));
+  // 1 + 2 + 3 + 4 + 5 + 6 + 1 (8 - 7 instead of 7 - 8)
+  // Should print "Result: 22.000000"
+  printDouble(doublehello(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0));
   // Should print "Result: 36"
   printInteger(world(8));
   // Should print "Result: 7"
