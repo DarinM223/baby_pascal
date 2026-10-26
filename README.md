@@ -75,8 +75,8 @@ AARCH=1 ./test.sh
 - [x] Lower parallel moves
 - [ ] Comprehensive IR fuzz testing
 - [ ] Add string literals to language
-- [ ] Add floats to language
-- [ ] Test spilling and register allocation with multiple register classes
+- [x] Add floats to language
+- [x] Test spilling and register allocation with multiple register classes
 - [x] Add arrays to language
 - [x] Add structs to language
 - [ ] Autovectorization

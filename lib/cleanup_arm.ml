@@ -61,6 +61,16 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
     | Int -> int_tmp2
   in
   (* loads and stores can't have sp as an operand so use temporaries in that case *)
+  let load ~dest ~src =
+    match dest with
+    | Target.Reg (Physical phys) when Target.equal_physical_reg phys Arm.Regs.sp
+      ->
+      fun t ->
+        Target.instr "ldr" ~defs:[ Reg (Physical (tmp1 src)) ] ~uses:[ src ]
+        @> Target.mov ~dest ~src:(Reg (Physical (tmp1 src)))
+        @> t
+    | _ -> fun t -> Target.instr "ldr" ~defs:[ dest ] ~uses:[ src ] @> t
+  in
   let store ~dest ~src =
     let move_to_tmp t =
       Target.mov ~dest:(Reg (Physical (tmp1 src))) ~src
@@ -72,17 +82,12 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
     | Target.Reg (Physical phys) when Target.equal_physical_reg phys Arm.Regs.sp
       ->
       move_to_tmp
-    | _ -> fun t -> Target.instr "str" ~defs:[] ~uses:[ src; dest ] @> t
-  in
-  let load ~dest ~src =
-    match dest with
-    | Target.Reg (Physical phys) when Target.equal_physical_reg phys Arm.Regs.sp
-      ->
+    | Target.MemAddr _ | Target.Label _ ->
       fun t ->
         Target.instr "ldr" ~defs:[ Reg (Physical (tmp1 src)) ] ~uses:[ src ]
-        @> Target.mov ~dest ~src:(Reg (Physical (tmp1 src)))
+        @> Target.instr "str" ~defs:[] ~uses:[ Reg (Physical (tmp1 src)); dest ]
         @> t
-    | _ -> fun t -> Target.instr "ldr" ~defs:[ dest ] ~uses:[ src ] @> t
+    | _ -> fun t -> Target.instr "str" ~defs:[] ~uses:[ src; dest ] @> t
   in
   let restore tail =
     let aligned_stack_offset =

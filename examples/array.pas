@@ -1,14 +1,15 @@
 var printInteger : (integer): void;
+var printDouble : (double): void;
 
-function sumnums() : integer;
+function sumnums() : double;
 begin
-    array := [0; 5];
-    array[0] := 1;
-    array[1] := 2;
-    array[2] := 3;
-    array[3] := 4;
-    array[4] := 5;
-    sum := 0;
+    array := [0.0; 5];
+    array[0] := 1.0;
+    array[1] := 2.0;
+    array[2] := 3.0;
+    array[3] := 4.0;
+    array[4] := 5.0;
+    sum := 0.0;
     i := 0;
     while i < 5 do
     begin
@@ -55,7 +56,7 @@ end
 begin
     result := sumnums();
     // Should print "Result: 15"
-    printInteger(result);
+    printDouble(result);
     result2 := multi();
     // Should print "Result: 136"
     printInteger(result2);

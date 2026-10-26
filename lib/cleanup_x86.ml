@@ -130,12 +130,21 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
         (* lower moves with two memory operands *)
         | {
          Target.instr = "movq";
-         defs = [ ((MemAddr _ | StackSlot _) as dest) ];
-         uses = [ ((MemAddr _ | StackSlot _) as src) ];
+         defs = [ ((MemAddr _ | StackSlot _ | Label _) as dest) ];
+         uses = [ ((MemAddr _ | StackSlot _ | Label _) as src) ];
          _;
         } ->
           Target.mov ~dest:(Reg (Physical tmp_int)) ~src
           @> Target.mov ~dest ~src:(Reg (Physical tmp_int))
+          @> go_tail tail
+        | {
+         Target.instr = "movsd";
+         defs = [ ((MemAddr _ | StackSlot _ | Label _) as dest) ];
+         uses = [ ((MemAddr _ | StackSlot _ | Label _) as src) ];
+         _;
+        } ->
+          Target.mov ~dest:(Reg (Physical tmp_float)) ~src
+          @> Target.mov ~dest ~src:(Reg (Physical tmp_float))
           @> go_tail tail
         (* remove redundant moves *)
         | { Target.instr = "movq"; defs = [ dest ]; uses = [ src ]; _ }
