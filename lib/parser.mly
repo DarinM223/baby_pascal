@@ -1,10 +1,11 @@
-%token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN LBRACK RBRACK LBRACE RBRACE COMMA DOT
+%token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN LBRACK RBRACK LBRACE RBRACE COMMA DOT AMPER
 %token PLUS MINUS TIMES DIV NOT AND OR LT LE GT GE
 %token VAR
 %token TRUE FALSE
 %token FUNCTION PROCEDURE BEGIN END IF THEN ELSE WHILE DO ALLOCA
-%token INTEGER BOOLEAN VOID DOUBLE
+%token INTEGER BOOLEAN VOID DOUBLE CHAR
 %token<string> IDENT
+%token<string> STRING
 %token<int> INT
 %token<float> FLOAT
 %token EOF
@@ -44,6 +45,7 @@ typ:
 | BOOLEAN {Ast.TBoolean}
 | DOUBLE {Ast.TDouble}
 | VOID {Ast.TVoid}
+| CHAR {Ast.TChar}
 | TIMES t = typ {Ast.TPointer t}
 
 decl:
@@ -81,6 +83,7 @@ rvalue:
 
 expr:
 | LPAREN e = expr RPAREN {e}
+| AMPER e = expr {Ast.Addrof e}
 | TIMES e = expr {Ast.Deref e}
 | LBRACK init = expr SEMI size = INT RBRACK {Ast.Array (init, size)}
 | lhs = expr LBRACK rhs = expr RBRACK {Ast.ArrayIndex (lhs, rhs)}
@@ -104,3 +107,4 @@ expr:
 | FALSE {Ast.Bool false}
 | f = FLOAT {Ast.Double f}
 | i = INT {Ast.Int i}
+| s = STRING {Ast.String s}

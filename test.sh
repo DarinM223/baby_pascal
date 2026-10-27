@@ -473,3 +473,37 @@ if [ -v AARCH ]; then
     exit 1
   fi
 fi
+
+dune exec compile -- -x86_64 examples/string.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "string compilation failed"
+    exit 1
+fi
+./build.sh string.pas
+./string.pas > string.pas.test
+if cmp --silent string.pas.test examples/string.pas.expected; then
+  echo "string test succeeded"
+else
+  echo "string test failed"
+  echo "Diff:"
+  diff string.pas.test examples/string.pas.expected
+  exit 1
+fi
+
+if [ -v AARCH ]; then
+  dune exec compile -- -aarch64 examples/string.pas &> /dev/null
+  if [ $? -ne 0 ]; then
+      echo "string compilation failed"
+      exit 1
+  fi
+  ./build-aarch.sh string.pas
+  ./run-aarch.sh string.pas > string.pas.test
+  if cmp --silent string.pas.test examples/string.pas.expected; then
+    echo "string test succeeded"
+  else
+    echo "string test failed"
+    echo "Diff:"
+    diff string.pas.test examples/string.pas.expected
+    exit 1
+  fi
+fi

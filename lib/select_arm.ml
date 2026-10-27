@@ -171,6 +171,12 @@ module Select = struct
       go [] l k
     in
     match instruction with
+    | Undag.Target.Assign (dest, (Label (Ast.TArray _, _, _) as src)) ->
+      let open Target in
+      let dest_class = reg_class_of_operand dest in
+      let dest = assign_vreg dest_class dest in
+      let* src = translate_operand src in
+      instr "adr" ~defs:[ dest ] ~uses:[ src ] @> k dest
     | Undag.Target.Assign (dest, src) ->
       let open Target in
       let dest_class = reg_class_of_operand dest in

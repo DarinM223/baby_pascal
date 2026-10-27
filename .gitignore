@@ -17,3 +17,4 @@ _build/
 /gcd_float.pas
 /collatz_float.pas
 /isprime_float.pas
+/string.pas

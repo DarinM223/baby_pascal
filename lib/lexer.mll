@@ -9,6 +9,7 @@ let id = ['a'-'z' 'A'-'Z' '_'] ['a'-'z' 'A'-'Z' '0'-'9' '_']*
 rule token = parse
 | white { token lexbuf }
 | newline { Lexing.new_line lexbuf; token lexbuf }
+| '"' { read_string (Buffer.create 16) lexbuf }
 | "//" { comment lexbuf }
 | ':' {COLON}
 | '.' {DOT}
@@ -19,6 +20,7 @@ rule token = parse
 | ']' {RBRACK}
 | '{' {LBRACE}
 | '}' {RBRACE}
+| '&' {AMPER}
 | ":=" {ASSIGN}
 | '=' {EQUALS}
 | "<>" {NEQUALS}
@@ -36,6 +38,7 @@ rule token = parse
 | "integer" {INTEGER}
 | "boolean" {BOOLEAN}
 | "double" {DOUBLE}
+| "char" {CHAR}
 | "true" {TRUE}
 | "false" {FALSE}
 | "void" {VOID}
@@ -59,3 +62,13 @@ rule token = parse
 and comment = parse
 | newline { Lexing.new_line lexbuf; token lexbuf }
 | _ { comment lexbuf }
+and read_string buf = parse
+  | '"'                         { STRING (Buffer.contents buf) }
+  | '\\' '"'                    { Buffer.add_char buf '"'; read_string buf lexbuf }
+  | '\\' '\\'                   { Buffer.add_char buf '\\'; read_string buf lexbuf }
+  | '\\' 'n'                    { Buffer.add_char buf '\n'; read_string buf lexbuf }
+  | '\\' 't'                    { Buffer.add_char buf '\t'; read_string buf lexbuf }
+  | [^ '"' '\\' '\n']+ as text  { Buffer.add_string buf text; read_string buf lexbuf }
+  | '\n'                        { failwith "newline in string" }
+  | eof                         { failwith "unterminated string" }
+  | _                           { failwith "invalid escape sequence" }
