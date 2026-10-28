@@ -2,15 +2,20 @@
 
 void printInteger(int num)
 {
-    printf("Result: %d\n", num);
+    printf("%d", num);
 }
 
 void printDouble(double num)
 {
-    printf("Result: %f\n", num);
+    printf("%f", num);
+}
+
+void printChar(char ch)
+{
+    printf("%c", ch);
 }
 
 void printString(char *str)
 {
-    printf("Result: %s\n", str);
+    printf("%s", str);
 }

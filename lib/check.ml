@@ -5,6 +5,7 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
   | Int i -> (TInteger, Typed.Int i)
   | Bool b -> (TBoolean, Bool b)
   | Double d -> (TDouble, Double d)
+  | Char c -> (TChar, Char c)
   | String s -> (TArray (TChar, String.length s), String s)
   | Var v ->
     begin try (M.find v venv, Var v)
@@ -41,7 +42,7 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
              pp_typ TBoolean pp_typ r_typ);
       (TBoolean, Bop (bop, l_expr, r_expr))
     | Eq | Neq | Lt | Le | Gt | Ge ->
-      if l_typ <> TInteger && l_typ <> TDouble then
+      if l_typ <> TInteger && l_typ <> TDouble && l_typ <> TChar then
         failwith
           (Format.asprintf
              "Left expression is different, expected %a or %a got %a" pp_typ

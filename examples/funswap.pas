@@ -1,4 +1,5 @@
 var printInteger : (integer): void;
+var printChar : (char): void;
 
 function bar(x : integer, y : integer) : integer;
 begin
@@ -28,9 +29,11 @@ end
 
 begin
     result := foo(3, 4);
-    // Should print "Result: 7"
+    // Should print "7"
     printInteger(result);
+    printChar('\n');
     result2 := hello(1, 2, 3);
-    // Should print "Result: 39"
+    // Should print "39"
     printInteger(result2);
+    printChar('\n');
 end

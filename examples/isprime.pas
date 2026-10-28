@@ -1,4 +1,5 @@
 var printInteger : (integer): void;
+var printChar : (char): void;
 
 function is_prime(n : integer) : integer;
 begin
@@ -32,6 +33,8 @@ end
 begin
   // Should print 0 (not prime)
   printInteger(is_prime(9));
+  printChar('\n');
   // Should print 1 (prime)
   printInteger(is_prime(17));
+  printChar('\n');
 end

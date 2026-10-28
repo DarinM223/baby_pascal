@@ -75,6 +75,7 @@ struct
     | Int of int
     | Bool of bool
     | Double of float
+    | Char of char
     | Var of string
     | String of string
     | Array of expr * int

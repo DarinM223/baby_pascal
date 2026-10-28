@@ -165,6 +165,7 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
       Cfg.nodes =
     match snd exp with
     | Ast.Typed.Int i -> k (Target.Const i)
+    | Char c -> k (Target.Const (int_of_char c))
     | Bool b -> k (Target.Const (if b then 1 else 0))
     | Double d ->
       (* emit global float constant, and return label to it *)

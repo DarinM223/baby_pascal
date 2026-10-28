@@ -20,6 +20,6 @@ end
 
 begin
   // The GCD of 54 and 24 is 6
-  // Should print "Result: 6"
+  // Should print "6"
   printInteger(gcd(54, 24));
 end

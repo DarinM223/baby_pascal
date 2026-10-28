@@ -10,6 +10,7 @@ rule token = parse
 | white { token lexbuf }
 | newline { Lexing.new_line lexbuf; token lexbuf }
 | '"' { read_string (Buffer.create 16) lexbuf }
+| '\'' { read_char lexbuf }
 | "//" { comment lexbuf }
 | ':' {COLON}
 | '.' {DOT}
@@ -72,3 +73,14 @@ and read_string buf = parse
   | '\n'                        { failwith "newline in string" }
   | eof                         { failwith "unterminated string" }
   | _                           { failwith "invalid escape sequence" }
+and read_char = parse
+  | '\\' '\'' { finish_char '\'' lexbuf }
+  | '\\' '\\' { finish_char '\\' lexbuf }
+  | '\\' 'n'  { finish_char '\n' lexbuf }
+  | '\\' 't'  { finish_char '\t' lexbuf }
+  | '\n'      { failwith "newline in character literal" }
+  | eof       { failwith "unterminated character literal" }
+  | _ as c    { finish_char c lexbuf }
+and finish_char c = parse
+  | '\'' { CHAR_LIT c }
+  | _    { failwith "character literal can only contain one character" }

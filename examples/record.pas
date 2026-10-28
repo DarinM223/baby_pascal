@@ -23,6 +23,6 @@ end
 
 begin
     result := sumfields();
-    // Should print "Result: 150"
+    // Should print "150"
     printInteger(result);
 end

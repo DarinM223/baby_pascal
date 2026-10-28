@@ -8,6 +8,7 @@
 %token<string> STRING
 %token<int> INT
 %token<float> FLOAT
+%token<char> CHAR_LIT
 %token EOF
 
 %left AND OR
@@ -106,5 +107,6 @@ expr:
 | TRUE {Ast.Bool true}
 | FALSE {Ast.Bool false}
 | f = FLOAT {Ast.Double f}
+| c = CHAR_LIT {Ast.Char c}
 | i = INT {Ast.Int i}
 | s = STRING {Ast.String s}

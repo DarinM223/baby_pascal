@@ -20,6 +20,6 @@ begin
 end
 
 begin
-  // Should print "Result: 120.0000"
+  // Should print "120.000000"
   printDouble(factorial(5.0));
 end

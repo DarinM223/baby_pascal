@@ -100,7 +100,7 @@ let write_global out { Ast.id; typ; value } =
   | Ast.Initialized (ConstInt i) ->
     Format.fprintf out ".data\n%s: .quad %d\n" id i
   | Ast.Initialized (ConstString s) ->
-    Format.fprintf out ".data\n%s: .asciz \"%s\"\n" id s
+    Format.fprintf out ".data\n%s: .asciz \"%s\"\n" id (String.escaped s)
   | Ast.Initialized (ConstArray _a) ->
     (* todo: recursively lower elements inside of an array
            so an array of arrays or strings would have the elements

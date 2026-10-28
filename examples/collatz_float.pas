@@ -24,6 +24,6 @@ end
 
 begin
   // Sequence for 6: 6 -> 3 -> 10 -> 5 -> 16 -> 8 -> 4 -> 2 -> 1 (8 steps)
-  // Should print "Result: 8.00000"
+  // Should print "8.000000"
   printDouble(collatz_steps(6.0));
 end
