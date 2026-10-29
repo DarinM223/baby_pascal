@@ -1,5 +1,9 @@
 let compile_shared lower_isa program =
   let program = Check.check_program program in
+  Format.printf "===================================\n";
+  Format.printf "Initial ast:\n";
+  Format.printf "===================================\n";
+  Format.printf "%a\n" (Ast.pp_program Ast.Typed.pp_stmt) program;
   let module F = Normalize.Fresh () in
   let program =
     let open Ast in

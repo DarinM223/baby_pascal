@@ -15,7 +15,9 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
   | Array (init_expr, size) ->
     let init_expr = check_expr venv fenv init_expr in
     (TArray (fst init_expr, size), Array (init_expr, size))
-  | Uop (_, e) -> check_expr venv fenv e
+  | Uop (uop, e) ->
+    let ((typ, _) as e) = check_expr venv fenv e in
+    (typ, Uop (uop, e))
   | Bop (bop, l, r) ->
     let ((l_typ, _) as l_expr) = check_expr venv fenv l in
     let ((r_typ, _) as r_expr) = check_expr venv fenv r in

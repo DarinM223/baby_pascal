@@ -6,7 +6,16 @@ module RegHashtbl = CCHashtbl.Make (X86.Target.Reg)
 
 (** aligns stack offset to multiple of 16 if a function is called *)
 let align_stack_offset called_function offset =
-  if called_function && offset mod 16 = 0 then offset + 8 else offset
+  (* (n + 15) & ~15 to round up to the next multiple of 16,
+     the stack is already misaligned by 8,
+     returns the new offset (still not counting the 8 bytes pushed at the start) *)
+  if called_function then begin
+    let offset' = ((offset + 8 + 15) land lnot 15) - 8 in
+    Logs.debug (fun m ->
+        m "aligning stack initial offset: %d final offset: %d\n" offset offset');
+    offset'
+  end
+  else offset
 
 let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
     (tmp_float : Target.physical_reg) (cfg : Cfg.graph) : Cfg.graph =

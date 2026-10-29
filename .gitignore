@@ -18,3 +18,4 @@ _build/
 /collatz_float.pas
 /isprime_float.pas
 /string.pas
+/game.pas
