@@ -35,6 +35,7 @@ rule token = parse
 | "var" {VAR}
 | "integer" {INTEGER}
 | "boolean" {BOOLEAN}
+| "double" {DOUBLE}
 | "true" {TRUE}
 | "false" {FALSE}
 | "void" {VOID}
@@ -51,6 +52,7 @@ rule token = parse
 | "and" {AND}
 | "or" {OR}
 | ['0'-'9']+ as i { INT (int_of_string i) }
+| ['0'-'9']+ ("." ['0'-'9']*)? (['e' 'E'] ['+' '-']? ['0'-'9']+)? as f {FLOAT (float_of_string f)}
 | id as i {IDENT i}
 | _ as c { print_char c; token lexbuf }
 | eof { EOF }

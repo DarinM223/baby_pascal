@@ -179,18 +179,20 @@ let rename_variables (module Dom : Dominator.S with type label = Cfg.label)
           (function
             | Reg reg -> Reg (replace_use reg)
             (* ignore global labels *)
-            | Label (((-1, _) as l), args) -> Label (l, args)
-            | Label (((uid, _) as l), args) -> begin
+            | Label (typ, ((-1, _) as l), args) -> Label (typ, l, args)
+            | Label (typ, ((uid, _) as l), args) -> begin
               let first =
                 if Some l = label then first
                 else Cfg.first @@ fst @@ Cfg.focus uid graph
               in
               match first with
-              | Cfg.Entry -> Label (l, args)
+              | Cfg.Entry -> Label (typ, l, args)
               | Cfg.Label (_, args') ->
                 (* handle call instructions to pass block parameters *)
                 Label
-                  (l, List.map (fun n -> Target.Reg (replace_use n)) args'.args)
+                  ( typ,
+                    l,
+                    List.map (fun n -> Target.Reg (replace_use n)) args'.args )
               end
             | op -> op)
           instr

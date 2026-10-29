@@ -19,7 +19,7 @@ module State = struct
   let init () =
     let vreg_block = IntHashtbl.create Utils.hashtbl_size in
     let mapping = NameHashtbl.create Utils.hashtbl_size in
-    let c = ref (-1) in
+    let c = ref Regs.start_virtual_counter in
     let rec r =
       {
         fresh_vreg =
@@ -59,9 +59,25 @@ module Select = struct
   module G = X86.Cfg
   module State = State
 
-  let reg_class_of_operand : Undag.Target.operand -> Target.reg_class = function
-    | Undag.Target.Reg (Ast.TInteger, _) -> Target.Int
-    | _ -> Target.Int
+  let rec reg_class_of_operand : Undag.Target.operand -> Target.reg_class =
+    let reg_class_of_type = function
+      | Ast.TDouble -> Target.Float
+      | _ -> Target.Int
+    in
+    function
+    | Undag.Target.Reg (typ, _) -> reg_class_of_type typ
+    | Label (typ, _, _) -> reg_class_of_type typ
+    | Instr instr ->
+      let reg_class =
+        fst
+        @@ Undag.Target.fold_defs
+             (fun acc op ->
+               if reg_class_of_operand op = Float then (Target.Float, op)
+               else (acc, op))
+             Target.Int instr
+      in
+      reg_class
+    | Const _ -> Int
 
   let call_conv ~caller { State.fresh_vreg; new_stack_slot; _ } = function
     | Target.Int ->
@@ -77,7 +93,21 @@ module Select = struct
           else
             Target.StackSlot { relative_to_base = true; offset = (n - 5) * 8 }
       end
-    | Target.Float -> failwith "Float calling convention not supported yet"
+    | Target.Float ->
+      begin function
+        | 0 -> Target.(Reg (constrained Regs.xmm0 (fresh_vreg Float)))
+        | 1 -> Target.(Reg (constrained Regs.xmm1 (fresh_vreg Float)))
+        | 2 -> Target.(Reg (constrained Regs.xmm2 (fresh_vreg Float)))
+        | 3 -> Target.(Reg (constrained Regs.xmm3 (fresh_vreg Float)))
+        | 4 -> Target.(Reg (constrained Regs.xmm4 (fresh_vreg Float)))
+        | 5 -> Target.(Reg (constrained Regs.xmm5 (fresh_vreg Float)))
+        | 6 -> Target.(Reg (constrained Regs.xmm6 (fresh_vreg Float)))
+        | 7 -> Target.(Reg (constrained Regs.xmm7 (fresh_vreg Float)))
+        | n ->
+          if caller then new_stack_slot 8
+          else
+            Target.StackSlot { relative_to_base = true; offset = (n - 7) * 8 }
+      end
 
   let reuse_instr tmp dest instr =
     instr
@@ -99,7 +129,10 @@ module Select = struct
         (fun t -> t)
     in
     mov ~dest:tmp1 ~src:src1 @> inject
-    @@ reuse_instr tmp1 tmp2 (instr "cmp" ~defs:[] ~uses:[ src2 ])
+    @@ reuse_instr tmp1 tmp2
+         (match src1_class with
+         | Int -> instr "cmp" ~defs:[] ~uses:[ src2 ]
+         | Float -> instr "ucomisd" ~defs:[] ~uses:[ src2 ])
     @> setters (k (List.map (fun (_, _, dest) -> dest) args))
 
   let rec select ({ State.fresh_vreg; mapping; _ } as state)
@@ -123,9 +156,9 @@ module Select = struct
                     Target.pp_operand)
                  mapping Undag.Target.pp_instr instruction
           end
-      | Undag.Target.Label (l, args) ->
+      | Undag.Target.Label (typ, l, args) ->
         fun k ->
-          translate_operands args (fun args -> k (Target.Label (l, args)))
+          translate_operands args (fun args -> k (Target.label typ l args))
     and translate_operands l k =
       let rec go acc l k =
         match l with
@@ -139,13 +172,15 @@ module Select = struct
     match instruction with
     | Undag.Target.Assign (dest, src) ->
       let open Target in
-      let dest = assign_vreg Int dest in
+      let dest_class = reg_class_of_operand dest in
+      let dest = assign_vreg dest_class dest in
       let* src = translate_operand src in
       mov ~dest ~src @> k dest
     | Undag.Target.Uop (dest, Not, src) ->
+      let src_class = reg_class_of_operand src in
       let open Target in
-      let dest = assign_vreg Int dest in
-      let tmp = Reg (fresh_vreg Int) in
+      let dest = assign_vreg src_class dest in
+      let tmp = Reg (fresh_vreg src_class) in
       let* src = translate_operand src in
       mov ~dest:tmp ~src:(Imm 0)
       @> instr "testq" ~defs:[] ~uses:[ src; src ]
@@ -153,13 +188,13 @@ module Select = struct
       @> k dest
     | Undag.Target.Bop (dest, bop, src1, src2) ->
       let open Target in
-      let dest = assign_vreg Int dest in
       let src1_class = reg_class_of_operand src1 in
       let src2_class = reg_class_of_operand src2 in
+      let dest = assign_vreg src1_class dest in
       let* src1 = translate_operand src1 in
       let* src2 = translate_operand src2 in
       let reuse_bop i =
-        let tmp = Reg (fresh_vreg Int) in
+        let tmp = Reg (fresh_vreg src1_class) in
         mov ~dest:tmp ~src:src1
         @> reuse_instr tmp dest (instr i ~defs:[] ~uses:[ src2 ])
         @> k dest
@@ -182,10 +217,12 @@ module Select = struct
                    (Format.pp_print_list Target.pp_operand)
                    dests)
       in
-      begin match bop with
-      | Ast.Add -> reuse_bop "addq"
-      | Ast.Sub -> reuse_bop "subq"
-      | Ast.Mul ->
+      begin match (src1_class, bop) with
+      | Int, Ast.Add -> reuse_bop "addq"
+      | Float, Ast.Add -> reuse_bop "addsd"
+      | Int, Ast.Sub -> reuse_bop "subq"
+      | Float, Ast.Sub -> reuse_bop "subsd"
+      | Int, Ast.Mul ->
         let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int)) in
         let tmp2 = Reg (fresh_vreg Int) in
         let tmp3 = Reg (constrained Regs.rdx (fresh_vreg Int)) in
@@ -203,7 +240,8 @@ module Select = struct
              (RegSet.of_list Regs.[ Physical rax; Physical rdx ])
              (pcopy ~dests:[ tmp1 ] ~srcs:[ src1 ])
         @> mul @> mov ~dest ~src:tmp4 @> k dest
-      | Ast.Div ->
+      | Float, Ast.Mul -> reuse_bop "mulsd"
+      | Int, Ast.Div ->
         let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int)) in
         let tmp2 = Reg (fresh_vreg Int) in
         let tmp3 = Reg (constrained Regs.rdx (fresh_vreg Int)) in
@@ -231,54 +269,84 @@ module Select = struct
              (RegSet.of_list Regs.[ Physical rax; Physical rdx ])
              (pcopy ~dests:[ tmp1 ] ~srcs:[ src1 ])
         @> cqto @> div @> mov ~dest ~src:tmp5 @> k dest
-      | Ast.And ->
+      | Float, Ast.Div -> reuse_bop "divsd"
+      | Int, Ast.And ->
         (* todo: change to use bitwise and since we use that in value numbering *)
         let tmp = Reg (fresh_vreg Int) in
         mov ~dest:tmp ~src:src1
         @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
         @> reuse_instr tmp dest (instr "cmovnz" ~defs:[] ~uses:[ src2 ])
         @> k dest
-      | Ast.Or ->
+      | Int, Ast.Or ->
         (* todo: change to use bitwise or since we use that in value numbering *)
         let tmp = Reg (fresh_vreg Int) in
         mov ~dest:tmp ~src:src1
         @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
         @> reuse_instr tmp dest (instr "cmovz" ~defs:[] ~uses:[ src2 ])
         @> k dest
-      | Ast.Eq -> reuse_cond (instr_of_cond "setz")
-      | Ast.Neq -> reuse_cond (instr_of_cond "setnz")
-      | Ast.Lt -> reuse_cond (instr_of_cond "setl")
-      | Ast.Le -> reuse_cond (instr_of_cond "setle")
-      | Ast.Gt -> reuse_cond (instr_of_cond "setg")
-      | Ast.Ge -> reuse_cond (instr_of_cond "setge")
+      | Int, Ast.Eq -> reuse_cond (instr_of_cond "setz")
+      | Int, Ast.Neq -> reuse_cond (instr_of_cond "setnz")
+      | Int, Ast.Lt -> reuse_cond (instr_of_cond "setl")
+      | Int, Ast.Le -> reuse_cond (instr_of_cond "setle")
+      | Int, Ast.Gt -> reuse_cond (instr_of_cond "setg")
+      | Int, Ast.Ge -> reuse_cond (instr_of_cond "setge")
+      | Float, op ->
+        failwith
+        @@ Format.asprintf "Floating point operator for %a not implemented yet"
+             Ast.pp_bop op
       end
     | Undag.Target.Return ops ->
+      let ops_classes = List.map reg_class_of_operand ops in
       let* ops = translate_operands ops in
-      begin match ops with
+      begin match List.combine ops_classes ops with
       | [] -> Cfg.Last (Cfg.Return (Target.return ~uses:[]))
-      | [ op ] ->
-        let rax = Target.(Reg (constrained Regs.rax (fresh_vreg Int))) in
-        Target.pcopy ~dests:[ rax ] ~srcs:[ op ]
-        @> Cfg.Last (Cfg.Return (Target.return ~uses:[ rax ]))
+      | [ (op_class, op) ] ->
+        begin match op_class with
+        | Int ->
+          let rax = Target.(Reg (constrained Regs.rax (fresh_vreg Int))) in
+          Target.pcopy ~dests:[ rax ] ~srcs:[ op ]
+          @> Cfg.Last (Cfg.Return (Target.return ~uses:[ rax ]))
+        | Float ->
+          let xmm0 = Target.(Reg (constrained Regs.xmm0 (fresh_vreg Float))) in
+          Target.pcopy ~dests:[ xmm0 ] ~srcs:[ op ]
+          @> Cfg.Last (Cfg.Return (Target.return ~uses:[ xmm0 ]))
+        end
       | _ -> failwith "can only return one thing currently"
       end
     | Undag.Target.Call (dest, f, args) ->
       let open Target in
-      let dest = assign_vreg (reg_class_of_operand dest) dest in
+      let dest_class = reg_class_of_operand dest in
+      let dest = assign_vreg dest_class dest in
       let* f = translate_operand f in
-      let f =
+      let f_typ, f =
         match f with
-        | Label (l, []) -> l
+        | Label (typ, l, []) -> (typ, l)
         | _ -> failwith "call: expected function to be label"
       in
-      let* args = translate_operands args in
-      let dests =
-        List.(init (length args) (call_conv ~caller:true state Target.Int))
+      let float_args, int_args =
+        List.partition (fun op -> reg_class_of_operand op = Float) args
+      in
+      let* int_args = translate_operands int_args in
+      let* float_args = translate_operands float_args in
+      let int_dests =
+        List.(init (length int_args)) (call_conv ~caller:true state Target.Int)
+      in
+      let float_dests =
+        List.(init (length float_args))
+          (call_conv ~caller:true state Target.Float)
       in
       let clobbered =
-        List.map
-          (fun r -> Reg (constrained r (fresh_vreg Int)))
-          Regs.caller_save
+        let ints =
+          List.map
+            (fun r -> Reg (constrained r (fresh_vreg Int)))
+            Regs.caller_save
+        in
+        let floats =
+          List.map
+            (fun r -> Reg (constrained r (fresh_vreg Float)))
+            Regs.float_regs
+        in
+        ints @ floats
       in
       let rax =
         List.find
@@ -289,17 +357,47 @@ module Select = struct
             | _ -> false)
           clobbered
       in
+      let xmm0 =
+        List.find
+          (function
+            | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = Regs.xmm0
+              ->
+              true
+            | _ -> false)
+          clobbered
+      in
       let call =
-        instr "call" ~defs:[] ~uses:[ Label (f, []) ]
+        instr "call" ~defs:[] ~uses:[ Label (f_typ, f, []) ]
         |> Target.modify_uses (fun ~uses ~num_hidden ->
-            (dests @ uses, num_hidden + List.length dests))
+            ( int_dests @ float_dests @ uses,
+              num_hidden + List.length int_dests + List.length float_dests ))
         |> Target.modify_defs (fun ~defs ~num_hidden ->
             (clobbered @ defs, num_hidden + List.length clobbered))
       in
-      with_clobber_regs
-        (Regs.caller_save |> List.map (fun r -> Physical r) |> RegSet.of_list)
-        (pcopy ~dests ~srcs:args)
-      @> call @> mov ~dest ~src:rax @> k dest
+      let mov_instr =
+        match dest_class with
+        | Int -> Target.mov ~dest ~src:rax
+        | Float -> Target.mov ~dest ~src:xmm0
+      in
+      let int_pcopies rest =
+        if List.length int_dests > 0 then
+          with_clobber_regs
+            (Regs.caller_save
+            |> List.map (fun r -> Physical r)
+            |> RegSet.of_list)
+            (pcopy ~dests:int_dests ~srcs:int_args)
+          @> rest
+        else rest
+      in
+      let float_pcopies rest =
+        if List.length float_dests > 0 then
+          with_clobber_regs
+            (Regs.float_regs |> List.map (fun r -> Physical r) |> RegSet.of_list)
+            (pcopy ~dests:float_dests ~srcs:float_args)
+          @> rest
+        else rest
+      in
+      int_pcopies @@ float_pcopies @@ call @> mov_instr @> k dest
     | Undag.Target.Goto (l, args) ->
       let* args = translate_operands args in
       Cfg.Last (Cfg.Branch (Target.goto l args, l))
@@ -308,6 +406,7 @@ module Select = struct
       let src2_class = reg_class_of_operand src2 in
       let* src1 = translate_operand src1 in
       let* src2 = translate_operand src2 in
+      let l1args_class = List.map reg_class_of_operand l1args in
       let* l1args = translate_operands l1args in
       let* l2args = translate_operands l2args in
       (* handle cbranches with the same label but different arguments *)
@@ -316,24 +415,28 @@ module Select = struct
         && not (List.equal Target.equal_operand l1args l2args)
       then
         let cmov arg1 _arg2 dest =
-          Target.instr ~defs:[ dest ] ~uses:[ arg1 ]
-            (match cond with
-            | Graph.Cond.LT -> "cmovl"
-            | LE -> "cmovle"
-            | GT -> "cmovg"
-            | GE -> "cmovge"
-            | EQ -> "cmove"
-            | NE -> "cmovne")
+          match Target.(Option.map Reg.reg_class (destruct_reg dest)) with
+          | Some Int ->
+            Target.instr ~defs:[ dest ] ~uses:[ arg1 ]
+              (match cond with
+              | Graph.Cond.LT -> "cmovl"
+              | LE -> "cmovle"
+              | GT -> "cmovg"
+              | GE -> "cmovge"
+              | EQ -> "cmove"
+              | NE -> "cmovne")
+          | Some Float -> failwith "Float conditional moves not handled yet"
+          | None -> failwith "Unknown register class for conditional move"
         in
         reuse_cond fresh_vreg src1_class src1 src2_class src2
           (fun () ->
             let open Target in
             let args =
               List.map
-                (fun (arg1, arg2) ->
-                  let dest = Reg (fresh_vreg Int) in
+                (fun ((arg1_class, arg1), arg2) ->
+                  let dest = Reg (fresh_vreg arg1_class) in
                   (arg1, arg2, dest))
-                (List.combine l1args l2args)
+                (List.combine (List.combine l1args_class l1args) l2args)
             in
             ( args,
               List.fold_right
@@ -412,29 +515,29 @@ let%expect_test "Fibonacci code generation" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      pcopy [(%1any, %0(%rdi))]
-      jle label2, label3, %1any, $1
-    label1(local=false)(32any):
-      pcopy [(%33(%rax), %32any)]
-      ret %33(%rax)
+      pcopy [(%33any, %32(%rdi))]
+      jle label2, label3, %33any, $1
+    label1(local=false)(96any):
+      pcopy [(%97(%rax), %96any)]
+      ret %97(%rax)
     label2(local=false)():
-      movq %2any, %1any
-      jmp label1(%2any)
+      movq %34any, %33any
+      jmp label1(%34any)
     label3(local=false)():
-      movq %5any, %1any
-      subq %4(reuse=%5), %5any, $1
-      pcopy [(%6(%rdi), %4(reuse=%5))]
-      call %7(%rax), %8(%rcx), %9(%rdx), %10(%rsi), %11(%rdi), %12(%r8), %13(%r9), %14(%r10), %15(%r11), %6(%rdi), fibonacci
-      movq %3any, %7(%rax)
-      movq %18any, %1any
-      subq %17(reuse=%18), %18any, $2
-      pcopy [(%19(%rdi), %17(reuse=%18))]
-      call %20(%rax), %21(%rcx), %22(%rdx), %23(%rsi), %24(%rdi), %25(%r8), %26(%r9), %27(%r10), %28(%r11), %19(%rdi), fibonacci
-      movq %16any, %20(%rax)
-      movq %31any, %3any
-      addq %30(reuse=%31), %31any, %16any
-      movq %29any, %30(reuse=%31)
-      jmp label1(%29any)
+      movq %37any, %33any
+      subq %36(reuse=%37), %37any, $1
+      pcopy [(%38(%rdi), %36(reuse=%37))]
+      call %39(%rax), %40(%rcx), %41(%rdx), %42(%rsi), %43(%rdi), %44(%r8), %45(%r9), %46(%r10), %47(%r11), %48f(%xmm0), %49f(%xmm1), %50f(%xmm2), %51f(%xmm3), %52f(%xmm4), %53f(%xmm5), %54f(%xmm6), %55f(%xmm7), %56f(%xmm8), %57f(%xmm9), %58f(%xmm10), %59f(%xmm11), %60f(%xmm12), %61f(%xmm13), %62f(%xmm14), %63f(%xmm15), %38(%rdi), fibonacci
+      movq %35any, %39(%rax)
+      movq %66any, %33any
+      subq %65(reuse=%66), %66any, $2
+      pcopy [(%67(%rdi), %65(reuse=%66))]
+      call %68(%rax), %69(%rcx), %70(%rdx), %71(%rsi), %72(%rdi), %73(%r8), %74(%r9), %75(%r10), %76(%r11), %77f(%xmm0), %78f(%xmm1), %79f(%xmm2), %80f(%xmm3), %81f(%xmm4), %82f(%xmm5), %83f(%xmm6), %84f(%xmm7), %85f(%xmm8), %86f(%xmm9), %87f(%xmm10), %88f(%xmm11), %89f(%xmm12), %90f(%xmm13), %91f(%xmm14), %92f(%xmm15), %67(%rdi), fibonacci
+      movq %64any, %68(%rax)
+      movq %95any, %35any
+      addq %94(reuse=%95), %95any, %64any
+      movq %93any, %94(reuse=%95)
+      jmp label1(%93any)
     |}]
 
 let%expect_test "Nested loops code generation" =
@@ -443,27 +546,27 @@ let%expect_test "Nested loops code generation" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      movq %0any, $0
+      movq %32any, $0
       jmp label6
     label1(local=false)():
       exit
-    label2(local=false)(1any):
-      jl label3, label1, %1any, $100
+    label2(local=false)(33any):
+      jl label3, label1, %33any, $100
     label3(local=false)():
-      movq %2any, %1any
-      jmp label4(%1any, %2any)
-    label4(local=false)(3any, 4any):
-      jl label5, label2(%3any), %4any, $100
+      movq %34any, %33any
+      jmp label4(%33any, %34any)
+    label4(local=false)(35any, 36any):
+      jl label5, label2(%35any), %36any, $100
     label5(local=false)():
-      movq %7any, %3any
-      addq %6(reuse=%7), %7any, $1
-      movq %5any, %6(reuse=%7)
-      movq %10any, %4any
-      addq %9(reuse=%10), %10any, $1
-      movq %8any, %9(reuse=%10)
-      jmp label4(%5any, %8any)
+      movq %39any, %35any
+      addq %38(reuse=%39), %39any, $1
+      movq %37any, %38(reuse=%39)
+      movq %42any, %36any
+      addq %41(reuse=%42), %42any, $1
+      movq %40any, %41(reuse=%42)
+      jmp label4(%37any, %40any)
     label6(local=false)():
-      jmp label2(%0any)
+      jmp label2(%32any)
     |}]
 
 let%expect_test "CBranch with both labels the same with different arguments" =
@@ -473,21 +576,21 @@ let%expect_test "CBranch with both labels the same with different arguments" =
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      movq %0any, $3
-      movq %1any, $2
-      movq %2any, $1
-      movq %3any, $0
+      movq %32any, $3
+      movq %33any, $2
+      movq %34any, $1
+      movq %35any, $0
       jmp label1
     label1(local=false)():
-      movq %4any, %3any
-      movq %6any, %3any
-      movq %7any, $2
-      movq %8any, %0any
-      cmp %5(reuse=%4), %4any, %2any
-      cmove %6any, $1
-      cmove %7any, %2any
-      cmove %8any, %1any
-      jmp label2(%6any, %7any, %8any)
-    label2(local=false)(9any, 10any, 11any):
+      movq %36any, %35any
+      movq %38any, %35any
+      movq %39any, $2
+      movq %40any, %32any
+      cmp %37(reuse=%36), %36any, %34any
+      cmove %38any, $1
+      cmove %39any, %34any
+      cmove %40any, %33any
+      jmp label2(%38any, %39any, %40any)
+    label2(local=false)(41any, 42any, 43any):
       exit
   |}]

@@ -212,7 +212,8 @@ let fibonacci =
               ( Cfg.Instruction
                   (Target.Call
                      ( Target.Operand.Reg (TInteger, name "tmp1"),
-                       Target.Operand.Label ((-1, "fibonacci"), []),
+                       Target.Operand.Label
+                         (TFunction ([], Some TInteger), (-1, "fibonacci"), []),
                        [ Target.Operand.Reg (TInteger, name "tmp0") ] )),
                 Cfg.Tail
                   ( Cfg.Instruction
@@ -225,7 +226,10 @@ let fibonacci =
                       ( Cfg.Instruction
                           (Target.Call
                              ( Target.Operand.Reg (TInteger, name "tmp3"),
-                               Target.Operand.Label ((-1, "fibonacci"), []),
+                               Target.Operand.Label
+                                 ( TFunction ([], Some TInteger),
+                                   (-1, "fibonacci"),
+                                   [] ),
                                [ Target.Operand.Reg (TInteger, name "tmp2") ] )),
                         Cfg.Tail
                           ( Cfg.Instruction

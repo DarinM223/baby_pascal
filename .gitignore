@@ -12,3 +12,8 @@ _build/
 /callconv.pas
 /array.pas
 /record.pas
+/fibonacci_float.pas
+/factorial_float.pas
+/gcd_float.pas
+/collatz_float.pas
+/isprime_float.pas

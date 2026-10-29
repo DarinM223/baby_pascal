@@ -8,21 +8,21 @@ module Target = struct
       | Const of int
       | Instr of 'a
       | Reg of reg
-      | Label of label * 'a t list
+      | Label of Ast.typ * label * 'a t list
     [@@deriving eq]
     let rec pp pp_instr fmt = function
       | Const c -> Format.fprintf fmt "$%d" c
       | Instr i -> Format.fprintf fmt "(%a)" pp_instr i
       | Reg r -> Format.fprintf fmt "%%%a" pp_reg r
-      | Label (l, args) ->
+      | Label (_, l, args) ->
         Format.fprintf fmt "%a(%a)" pp_label l
           (Format.pp_print_list ~pp_sep:Utils.pp_sep (pp pp_instr))
           args
     type 'a operand = 'a t [@@deriving show, eq]
     type 'a operands = 'a t list [@@deriving show, eq]
-    let label l ops = Label (l, ops)
+    let label typ l ops = Label (typ, l, ops)
     let destruct_label = function
-      | Label (l, ops) -> Some (l, ops)
+      | Label (typ, l, ops) -> Some (typ, l, ops)
       | _ -> None
     let tombstone = Normalize.Target.tombstone
     let is_tombstone = function
@@ -61,9 +61,10 @@ let treeify_instruction lookup instr =
       | Some instr -> Target.Instr instr
       | None -> Target.Reg reg
       end
-    | Normalize.Target.Label (l, ops) ->
+    | Normalize.Target.Label (l_typ, l, ops) ->
       Target.Label
-        ( l,
+        ( l_typ,
+          l,
           List.filter_map
             (fun op ->
               if Normalize.Target.is_tombstone op then None
@@ -121,7 +122,7 @@ module FreshGEP () : Normalize.Fresh = struct
   let fresh typ =
     incr c;
     (typ, ("__gep_tmp", !c))
-  let new_label () = failwith "Can't create label for getelementptr"
+  let new_label _ = failwith "Can't create label for getelementptr"
   let reset_names () = ()
   let reset_labels () = ()
 end
@@ -179,7 +180,7 @@ let undag (module F : Normalize.Fresh) ((first, tail) : Normalize.Cfg.block) :
   let add_uses instr acc =
     let rec fold_operand acc = function
       | Normalize.Target.Reg (_, r) -> NameMap.update r increment acc
-      | Label (_, args) -> List.fold_left fold_operand acc args
+      | Label (_, _, args) -> List.fold_left fold_operand acc args
       | _ -> acc
     in
     fst (fold_uses fold_operand acc instr)
@@ -207,9 +208,10 @@ let undag (module F : Normalize.Fresh) ((first, tail) : Normalize.Cfg.block) :
           Target.Instr instr
         | None -> Target.Reg reg
         end
-      | Normalize.Target.Label (l, ops) ->
+      | Normalize.Target.Label (l_typ, l, ops) ->
         Target.Label
-          ( l,
+          ( l_typ,
+            l,
             List.filter_map
               (fun op ->
                 if Normalize.Target.is_tombstone op then None

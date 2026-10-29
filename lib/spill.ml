@@ -108,11 +108,17 @@ module NextUseDistances = struct
         let l = block_lengths.(a.block_pos) in
         let num_instructions = block_num_instructions.(a.block_pos) in
         let handle_use acc r =
-          (IntMap.add (Target.index r) (l + num_instructions - a.count) acc, r)
+          ( IntMap.add (Target.index r) (l + num_instructions - a.count - 1) acc,
+            r )
         in
         let distances, _ = Target.fold_reg_uses handle_use a.distances i in
+        (* Don't include distances <= 0, which treats it as infinite distance *)
         a.distances_per_instruction.(num_instructions - 1 - a.count) <-
-          distances;
+          IntMap.filter_map
+            (fun _ d ->
+              let d = d - (num_instructions - 1 - a.count) in
+              if d <= 0 then None else Some d)
+            distances;
         { a with distances; count = a.count + 1 }
       in
       let first_in a _ = { a with count = 0 } in
@@ -154,6 +160,10 @@ module NextUseDistances = struct
         at_block = (fun uid -> (fact.get uid).distances);
         at_instruction =
           (fun uid instr_num ->
+            (* Format.printf "Distances per instruction: %a\n"
+              (Format.pp_print_list ~pp_sep:Utils.pp_sep
+                 (IntMap.pp Format.pp_print_int))
+              (Array.to_list (fact.get uid).distances_per_instruction); *)
             (fact.get uid).distances_per_instruction.(instr_num));
       }
   end
@@ -178,15 +188,18 @@ module Liveness = struct
         Graph.S
           with type Target.reg = Target.reg
            and type Target.instr = Target.instr)
-      (Flow : Dataflow.S with module G = G) :
-    S with module Target = Target and module G = G = struct
+      (Flow : Dataflow.S with module G = G)
+      (Requirements : sig
+        val matches : Target.reg -> bool
+      end) : S with module Target = Target and module G = G = struct
     module Target = Target
     module G = G
     module RegSet = Target.RegSet
     module RegMap = Target.RegMap
     module State = struct
       type t = {
-        mapping : RegSet.t;
+        live_in : RegSet.t;
+        live_out : RegSet.t;
         max_register_pressure : int;
         used : RegSet.t;
         dies : int RegMap.t;
@@ -205,7 +218,8 @@ module Liveness = struct
       {
         Flow.init_info =
           {
-            State.mapping = RegSet.empty;
+            State.live_in = RegSet.empty;
+            live_out = RegSet.empty;
             used = RegSet.empty;
             max_register_pressure = 0;
             dies = RegMap.empty;
@@ -213,38 +227,41 @@ module Liveness = struct
           };
         add_info =
           (fun a b ->
-            let mapping = RegSet.union a.mapping b.mapping in
+            let live_in = RegSet.union a.live_in b.live_in in
+            let live_out = RegSet.union a.live_out b.live_out in
+            (* Updated live out could have more variables so remove those from dies *)
+            let dies =
+              RegSet.fold RegMap.remove live_out
+                RegMap.(union (fun _ a b -> Some (min a b)) a.dies b.dies)
+            in
             {
               a with
-              mapping;
+              live_in;
+              live_out;
               used = RegSet.union a.used b.used;
-              (* Updated mapping could set more variables as live out so remove those from dies *)
-              dies =
-                RegSet.fold
-                  (fun reg acc -> RegMap.remove reg acc)
-                  mapping
-                  RegMap.(union (fun _ _ b -> Some b) a.dies b.dies);
+              dies;
             });
         changed =
           (fun ~before ~after ->
             RegSet.(
-              cardinal after.mapping > cardinal before.mapping
-              || cardinal after.used > cardinal before.used));
+              cardinal after.live_in > cardinal before.live_in
+              || cardinal after.live_out > cardinal before.live_out
+              || cardinal after.used > cardinal before.used)
+            || RegMap.(cardinal after.dies > cardinal before.dies));
         skip_block = Fun.const false;
         get = IntHashtbl.find store;
         set = IntHashtbl.replace store;
       }
     let calc graph : t =
       let fact = fact () in
-      let add_reg map reg = (RegSet.add reg map, reg) in
-      let uses instr = fst @@ Target.fold_reg_uses add_reg RegSet.empty instr in
-      let defs instr = fst @@ Target.fold_reg_defs add_reg RegSet.empty instr in
-      let update_mapping mapping a =
+      let uses instr = RegSet.filter Requirements.matches (Target.uses instr) in
+      let defs instr = RegSet.filter Requirements.matches (Target.defs instr) in
+      let update_live_in live_in a =
         {
           a with
-          mapping;
+          live_in;
           State.max_register_pressure =
-            max a.State.max_register_pressure (RegSet.cardinal mapping);
+            max a.State.max_register_pressure (RegSet.cardinal live_in);
         }
       in
       let update_dead uses (a : State.t) =
@@ -253,41 +270,46 @@ module Liveness = struct
           RegSet.fold
             (fun dead acc ->
               if RegMap.mem dead acc then acc else RegMap.add dead a.count acc)
-            (RegSet.diff uses a.mapping)
+            (RegSet.diff uses a.live_in)
             a.dies
         in
         { a with dies }
       in
       let finish_dead (a : State.t) =
-        { a with dies = RegMap.map (fun off -> a.count - 1 - off) a.dies }
+        let dies = RegMap.map (fun off -> a.count - 1 - off) a.dies in
+        { a with dies }
       in
       let first_in (a : State.t) = function
         | G.Entry -> finish_dead a
         | G.Label (_, info) ->
-          let uses = RegSet.of_list info.args in
+          let uses = RegSet.(filter Requirements.matches (of_list info.args)) in
           let a = update_dead uses a in
           finish_dead
-          @@ update_mapping RegSet.(diff a.mapping (of_list info.args)) a
+          @@ update_live_in RegSet.(diff a.live_in (of_list info.args)) a
       in
       let handle_instruction instr (a : State.t) =
         let instr_uses = uses instr in
         let instr_defs = defs instr in
         let a = update_dead instr_uses a in
         let a = update_dead instr_defs a in
-        update_mapping
-          RegSet.(union instr_uses (diff a.mapping instr_defs))
+        update_live_in
+          RegSet.(union instr_uses (diff a.live_in instr_defs))
           { a with used = RegSet.union instr_uses a.used; count = a.count + 1 }
       in
       let calc_live_out = function
         | G.Exit -> fact.init_info
         | Branch (instr, (uid, _)) ->
-          handle_instruction instr
-          @@ update_mapping (fact.get uid).mapping fact.init_info
+          let a = update_live_in (fact.get uid).live_in fact.init_info in
+          let a = { a with live_out = a.live_in } in
+          handle_instruction instr a
         | CBranch (instr, (uid1, _), (uid2, _)) ->
-          handle_instruction instr
-          @@ update_mapping
-               (RegSet.union (fact.get uid1).mapping (fact.get uid2).mapping)
-          @@ fact.init_info
+          let a =
+            update_live_in
+              (RegSet.union (fact.get uid1).live_in (fact.get uid2).live_in)
+              fact.init_info
+          in
+          let a = { a with live_out = a.live_in } in
+          handle_instruction instr a
         | Return instr -> handle_instruction instr fact.init_info
       in
       let analysis =
@@ -302,15 +324,24 @@ module Liveness = struct
       {
         live_in =
           (fun uid ->
-            try (fact.get uid).mapping
+            try (fact.get uid).live_in
             with Not_found ->
               failwith
               @@ Format.sprintf "Live in block for uid %d not found" uid);
         live_out =
           (fun uid ->
-            (calc_live_out G.(last @@ fst @@ focus uid graph)).mapping);
+            try (fact.get uid).live_out
+            with Not_found ->
+              failwith
+              @@ Format.sprintf "Live out block for uid %d not found" uid);
         used_in_block = (fun uid -> (fact.get uid).used);
-        dies = (fun uid reg -> RegMap.find_opt reg (fact.get uid).dies);
+        dies =
+          (fun uid reg ->
+            (* Logs.debug (fun m ->
+                m "Dies for block %d: %a\n" uid
+                  (RegMap.pp Target.pp_reg Format.pp_print_int)
+                  (fact.get uid).dies); *)
+            RegMap.find_opt reg (fact.get uid).dies);
         max_register_pressure =
           (fun uid -> (fact.get uid).max_register_pressure);
       }
@@ -332,7 +363,7 @@ module Make
          and type Dom.uid = G.uid)
     (NextUseDistances : NextUseDistances.S with module G = G)
     (M : sig
-      val reg_class : Target.reg_class
+      val matches : Target.reg -> bool
       val k : int
       val next_use_distances : NextUseDistances.distances
       val liveness : Liveness.t
@@ -477,12 +508,12 @@ struct
   let reload (state : spill_state) v =
     try
       let slot = IntHashtbl.find state.spill_mapping (Target.index v) in
-      let v' = state.select_state.fresh_vreg M.reg_class in
+      let v' = state.select_state.fresh_vreg (Target.Reg.reg_class v) in
       RegHashtbl.add state.copies v v';
       Target.mov ~dest:(Target.reg v') ~src:slot
     with Not_found ->
-      failwith
-      @@ Format.asprintf "Couldn't find spill slot for %a" Target.pp_reg v
+      Logs.debug (fun m -> m "Couldn't find spill slot for %a" Target.pp_reg v);
+      raise Not_found
 
   let limit ~add_spills (state : spill_state) ({ w; s } : min_state)
       (block_uid : G.uid) (instr_num : int) (head : G.head) (m : int) :
@@ -492,12 +523,15 @@ struct
         let pp_print_tuple fmt (a, b) =
           Format.fprintf fmt "%d -> %a" a (Format.pp_print_option CCInt.pp) b
         in
-        m "Distances: %a\n"
+        m "Distances at %d: %a\n" instr_num
           Format.(pp_print_list ~pp_sep:Utils.pp_sep pp_print_tuple)
           (List.map
              (fun v -> (Target.index v, IntMap.find_opt (Target.index v) dists))
              (RegSet.elements w)));
     let w = List.sort (compare dists) (RegSet.elements w) in
+    Logs.debug (fun m -> m "W: %a\n" Target.pp_regs w);
+    Logs.debug (fun m -> m "S: %a\n" (RegSet.pp Target.pp_reg) s);
+    Logs.debug (fun m' -> m' "M: %d\n" m);
     let head, s =
       List.fold_left
         (fun (head, s) v ->
@@ -528,11 +562,14 @@ struct
     let uid, w =
       match G.first zblock with
       | G.Entry -> (G.entry_uid, w)
-      | G.Label ((uid, _), info) -> (uid, RegSet.(union w (of_list info.args)))
+      | G.Label ((uid, _), info) ->
+        (uid, RegSet.(union w (filter M.matches (of_list info.args))))
     in
     let rec go instr_num w s = function
       | head, G.Tail (Instruction instr, tail) ->
-        let r = RegSet.diff (Target.uses instr) w in
+        Logs.debug (fun m -> m "Instr: %a\n" Target.pp_instr instr);
+        let r = RegSet.(diff (filter M.matches (Target.uses instr)) w) in
+        Logs.debug (fun m -> m "R: %a\n" (RegSet.pp Target.pp_reg) r);
         (* todo: just use RegSet.union r ? *)
         let w, s =
           RegSet.fold
@@ -546,22 +583,28 @@ struct
         let head, { w; s } =
           limit ~add_spills state { w; s } uid instr_num head M.k
         in
-        let head = G.Head (head, Instruction instr) in
         (* add reloads for vars in r *)
         let head =
           if add_spills then
             RegSet.fold
               (fun var head ->
                 Logs.debug (fun m -> m "Reloading %a\n" Target.pp_reg var);
-                G.Head (head, Instruction (reload state var)))
+                (* todo: look into why it tries to reload variables that haven't been spilled
+                   could be because of r being calculated incorrectly *)
+                try
+                  let instr = reload state var in
+                  G.Head (head, Instruction instr)
+                with Not_found -> head)
               (RegSet.filter is_valid_vreg r)
               head
           else head
         in
-        let w = RegSet.union w (Target.defs instr) in
+        let head = G.Head (head, Instruction instr) in
+        let w = RegSet.(union w (filter M.matches (Target.defs instr))) in
         let next_defs =
           match tail with
-          | G.Tail (Instruction next, _) -> RegSet.cardinal (Target.defs next)
+          | G.Tail (Instruction next, _) ->
+            RegSet.(cardinal (filter M.matches (Target.defs next)))
           | Last _ -> 0
         in
         (* provide room for definitions of next instruction *)
@@ -569,12 +612,12 @@ struct
            uses don't matter when writing to result registers *)
         let head, { w; s } =
           limit ~add_spills state { w; s } uid (instr_num + 1) head
-            (M.k - next_defs)
+            (Int.max 0 (M.k - next_defs))
         in
         go (instr_num + 1) w s (head, tail)
       | head, G.Last l ->
         let handle_instruction instr =
-          let r = RegSet.diff (Target.uses instr) w in
+          let r = RegSet.(diff (filter M.matches (Target.uses instr)) w) in
           let w, s =
             RegSet.fold
               (fun use (w, s) -> (RegSet.add use w, RegSet.add use s))
@@ -688,13 +731,23 @@ struct
       graph rpo
 end
 
-module X86 = struct
+module type RegClass = sig
+  module Target : Isa.Target
+  val reg_class : Target.reg_class
+  val k : int
+end
+
+module X86 (RegClass : RegClass with module Target = X86.Target) = struct
+  module Matches = struct
+    let matches r =
+      X86.Target.(equal_reg_class (Reg.reg_class r) RegClass.reg_class)
+  end
   module NextUseDistances =
     NextUseDistances.Make (X86.Target) (X86.Cfg) (X86.Flow)
-  module Liveness = Liveness.Make (X86.Target) (X86.Cfg) (X86.Flow)
+  module Liveness = Liveness.Make (X86.Target) (X86.Cfg) (X86.Flow) (Matches)
   module Make = Make (X86.Target) (X86.Cfg) (Select_x86.State) (Liveness)
 
-  let spill_helper ?(reg_class = X86.Target.Int) ?(k = 16) ?(args = [])
+  let spill_helper ?(args = [])
       (module Loop : Loopnesting.S
         with type Dom.label = X86.Cfg.label
          and type Dom.position = int
@@ -705,8 +758,8 @@ module X86 = struct
     let module Spill' =
       Make (Loop) (NextUseDistances)
         (struct
-          let reg_class = reg_class
-          let k = k
+          include Matches
+          include RegClass
           let next_use_distances = next_use_distances
           let liveness = liveness
         end) in
@@ -714,31 +767,43 @@ module X86 = struct
     let cfg = Spill'.spill ~args spill_state cfg in
     let module Reconstruct = Reconstruct.Make (X86.Target) (X86.Cfg) (Loop.Dom)
     in
-    let reconstruct_copies reg _ graph =
-      let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
-      let def_blocks =
-        List.map
-          (fun r ->
-            Deadcode.IntHashtbl.find spill_state.select_state.vreg_block
-              (X86.Target.index r))
-          (reg :: copies)
-      in
-      Reconstruct.reconstruct
-        (fun () -> spill_state.select_state.fresh_vreg Int)
-        (Spill'.RegSet.singleton reg)
-        (Spill'.RegSet.of_list copies)
-        def_blocks graph
+    let reconstruct_copies reg graph =
+      if not (Matches.matches reg) then graph
+      else begin
+        let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
+        let def_blocks =
+          List.map
+            (fun r ->
+              Deadcode.IntHashtbl.find spill_state.select_state.vreg_block
+                (X86.Target.index r))
+            (reg :: copies)
+        in
+        Format.printf "Reconstructing reg %a with copies %a\n" X86.Target.pp_reg
+          reg X86.Target.pp_regs copies;
+        Reconstruct.reconstruct
+          (fun () -> spill_state.select_state.fresh_vreg RegClass.reg_class)
+          reg
+          (Spill'.RegSet.of_list copies)
+          def_blocks graph
+      end
     in
-    Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
+    let reconstruct_regs =
+      X86.Target.RegSet.of_list (Spill'.RegHashtbl.keys_list spill_state.copies)
+    in
+    X86.Target.RegSet.fold reconstruct_copies reconstruct_regs cfg
 end
 
-module Arm = struct
+module Arm (RegClass : RegClass with module Target = Arm.Target) = struct
+  module Matches = struct
+    let matches r =
+      Arm.Target.(equal_reg_class (Reg.reg_class r) RegClass.reg_class)
+  end
   module NextUseDistances =
     NextUseDistances.Make (Arm.Target) (Arm.Cfg) (Arm.Flow)
-  module Liveness = Liveness.Make (Arm.Target) (Arm.Cfg) (Arm.Flow)
+  module Liveness = Liveness.Make (Arm.Target) (Arm.Cfg) (Arm.Flow) (Matches)
   module Make = Make (Arm.Target) (Arm.Cfg) (Select_arm.State) (Liveness)
 
-  let spill_helper ?(reg_class = Arm.Target.Int) ?(k = 16) ?(args = [])
+  let spill_helper ?(args = [])
       (module Loop : Loopnesting.S
         with type Dom.label = Arm.Cfg.label
          and type Dom.position = int
@@ -749,8 +814,8 @@ module Arm = struct
     let module Spill' =
       Make (Loop) (NextUseDistances)
         (struct
-          let reg_class = reg_class
-          let k = k
+          include Matches
+          include RegClass
           let next_use_distances = next_use_distances
           let liveness = liveness
         end) in
@@ -758,7 +823,7 @@ module Arm = struct
     let cfg = Spill'.spill ~args spill_state cfg in
     let module Reconstruct = Reconstruct.Make (Arm.Target) (Arm.Cfg) (Loop.Dom)
     in
-    let reconstruct_copies reg _ graph =
+    let reconstruct_copies reg graph =
       let copies = Spill'.RegHashtbl.find_all spill_state.copies reg in
       let def_blocks =
         List.map
@@ -768,10 +833,13 @@ module Arm = struct
           (reg :: copies)
       in
       Reconstruct.reconstruct
-        (fun () -> spill_state.select_state.fresh_vreg Int)
-        (Spill'.RegSet.singleton reg)
+        (fun () -> spill_state.select_state.fresh_vreg RegClass.reg_class)
+        reg
         (Spill'.RegSet.of_list copies)
         def_blocks graph
     in
-    Spill'.RegHashtbl.fold reconstruct_copies spill_state.copies cfg
+    let reconstruct_regs =
+      Arm.Target.RegSet.of_list (Spill'.RegHashtbl.keys_list spill_state.copies)
+    in
+    Arm.Target.RegSet.fold reconstruct_copies reconstruct_regs cfg
 end

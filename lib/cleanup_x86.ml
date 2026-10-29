@@ -8,8 +8,8 @@ module RegHashtbl = CCHashtbl.Make (X86.Target.Reg)
 let align_stack_offset called_function offset =
   if called_function && offset mod 16 = 0 then offset + 8 else offset
 
-let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
-    (cfg : Cfg.graph) : Cfg.graph =
+let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
+    (tmp_float : Target.physical_reg) (cfg : Cfg.graph) : Cfg.graph =
   let callee_save =
     RegSet.of_list (List.map (fun p -> Target.Physical p) Regs.callee_save)
   in
@@ -25,7 +25,7 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
     | MemAddr { base; index; _ } ->
       Option.iter record_reg base;
       record_reg index
-    | Label (_, args) -> List.iter record_operand args
+    | Label (_, _, args) -> List.iter record_operand args
     | _ -> ()
   in
   let restore tail =
@@ -97,17 +97,18 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
     | _ -> f
   in
   (* convert jump arguments that are immediates to moves *)
-  let lower_jump_label f = function
-    | X86.Target.Label (l', args) ->
+  let lower_jump_label ls f = function
+    | X86.Target.Label (clz, l', args)
+      when List.exists (fun l -> X86.Target.equal_label l' l) ls ->
       let phis =
         match X86.Cfg.(firstt (fst (fst (focus (idd (Some l')) cfg)))) with
         | Entry -> []
         | Label (_, info) -> info.args
       in
       let tail =
-        List.fold_left lower_immediate_jump f (List.combine args phis)
+        List.fold_left lower_immediate_jump f (Utils.combine_drop args phis)
       in
-      (tail, X86.Target.Label (l', args))
+      (tail, X86.Target.Label (clz, l', args))
     | op -> (f, op)
   in
   let go_block cfg block =
@@ -123,49 +124,84 @@ let cleanup (state : Select_x86.State.t) (tmp : Target.physical_reg)
          uses = [ (Imm _ as src) ];
          _;
         } ->
-          Target.mov ~dest:(Reg (Physical tmp)) ~src
-          @> { i with uses = [ Reg (Physical tmp) ] }
+          Target.mov ~dest:(Reg (Physical tmp_int)) ~src
+          @> { i with uses = [ Reg (Physical tmp_int) ] }
           @> go_tail tail
         (* lower moves with two memory operands *)
         | {
          Target.instr = "movq";
-         defs = [ ((MemAddr _ | StackSlot _) as dest) ];
-         uses = [ ((MemAddr _ | StackSlot _) as src) ];
+         defs = [ ((MemAddr _ | StackSlot _ | Label _) as dest) ];
+         uses = [ ((MemAddr _ | StackSlot _ | Label _) as src) ];
          _;
         } ->
-          Target.mov ~dest:(Reg (Physical tmp)) ~src
-          @> Target.mov ~dest ~src:(Reg (Physical tmp))
+          Target.mov ~dest:(Reg (Physical tmp_int)) ~src
+          @> Target.mov ~dest ~src:(Reg (Physical tmp_int))
+          @> go_tail tail
+        | {
+         Target.instr = "movsd";
+         defs = [ ((MemAddr _ | StackSlot _ | Label _) as dest) ];
+         uses = [ ((MemAddr _ | StackSlot _ | Label _) as src) ];
+         _;
+        } ->
+          Target.mov ~dest:(Reg (Physical tmp_float)) ~src
+          @> Target.mov ~dest ~src:(Reg (Physical tmp_float))
           @> go_tail tail
         (* remove redundant moves *)
         | { Target.instr = "movq"; defs = [ dest ]; uses = [ src ]; _ }
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->
           go_tail tail
         | _ ->
+          if i.instr = "call" then called_function := true;
           List.iter record_operand i.uses;
           List.iter record_operand i.defs;
           i @> go_tail tail
         end
-      (* lower cmp instructions into cmp + j* *)
+        (* lower cmp instructions into cmp + j* *)
+      | Cfg.Last
+          (CBranch
+             ( ({
+                  instr;
+                  uses = Label (Float, _, _) :: _ :: first_use :: uses;
+                  defs;
+                  _;
+                } as i),
+               l1,
+               l2 ))
+        when List.exists (fun (_, i) -> i = instr) Target.float_cond_mapping ->
+        List.iter record_operand (first_use :: uses);
+        List.iter record_operand defs;
+        let tail, _ =
+          X86.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
+        in
+        tail
+        @@ Target.mov ~dest:(Reg (Physical tmp_float)) ~src:first_use
+        @> Target.instr "ucomisd" ~defs:[ Reg (Physical tmp_float) ] ~uses
+        @> Target.instr instr ~defs:[] ~uses:[ Label (Float, l1, []) ]
+        @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last
           (CBranch
              ( ({ instr; uses = _ :: _ :: first_use :: uses; defs; _ } as i),
                l1,
                l2 ))
-        when List.exists (fun (_, i) -> i = instr) Target.cond_mapping ->
+        when List.exists (fun (_, i) -> i = instr) Target.int_cond_mapping ->
         List.iter record_operand (first_use :: uses);
         List.iter record_operand defs;
-        let tail, _ = X86.Target.fold_uses lower_jump_label Fun.id i in
+        let tail, _ =
+          X86.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
+        in
         tail
-        @@ Target.mov ~dest:(Reg (Physical tmp)) ~src:first_use
-        @> Target.instr "cmp" ~defs:[ Reg (Physical tmp) ] ~uses
-        @> Target.instr instr ~defs:[] ~uses:[ Label (l1, []) ]
+        @@ Target.mov ~dest:(Reg (Physical tmp_int)) ~src:first_use
+        @> Target.instr "cmp" ~defs:[ Reg (Physical tmp_int) ] ~uses
+        @> Target.instr instr ~defs:[] ~uses:[ Label (Int, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
-      | Cfg.Last (CBranch _) ->
-        failwith "cleanup_x86: invalid conditional branch"
+      | Cfg.Last (CBranch _) as tail ->
+        failwith
+        @@ Format.asprintf "cleanup_x86: invalid conditional branch: %a"
+             X86.Cfg.pp_tail tail
       | Cfg.Last (Branch (i, l)) ->
         List.iter record_operand i.uses;
         List.iter record_operand i.defs;
-        let tail, i = X86.Target.fold_uses lower_jump_label Fun.id i in
+        let tail, i = X86.Target.fold_uses (lower_jump_label [ l ]) Fun.id i in
         tail (Cfg.Last (Branch (i, l)))
       | Cfg.Last (Return i) ->
         List.iter record_operand i.uses;

@@ -42,7 +42,9 @@ struct
     in
     go head
 
-  let reconstruct (fresh : unit -> G.Target.reg) (old_defs : Target.RegSet.t)
+  (* todo: this implementation adds phis to every block but not always the corresponding jump args.
+     after this the phi args and jump args may become mismatched. this should be fixed. *)
+  let reconstruct (fresh : unit -> G.Target.reg) (old_def : Target.reg)
       (cloned_defs : Target.RegSet.t) (def_blocks : G.uid list)
       (graph : G.graph) : G.graph =
     (* for every block in dominance frontier, place a phi with fresh definition *)
@@ -70,7 +72,7 @@ struct
     let phis, graph =
       List.fold_left place_phi (Target.RegSet.empty, graph) iter_df_bbs
     in
-    let all_defs = Target.RegSet.(union old_defs (union cloned_defs phis)) in
+    let all_defs = Target.RegSet.(add old_def (union cloned_defs phis)) in
     let phi_worklist = ref PhiSet.empty in
     let blocks = G.reverse_postorder_dfs graph in
     let go_block graph block =
@@ -78,7 +80,7 @@ struct
       let handle_instruction head instr =
         let go_use op =
           match Target.Reg.of_operand op with
-          | Some reg when Target.RegSet.mem reg old_defs ->
+          | Some reg when Target.equal_reg reg old_def ->
             let reaching_def, is_phi =
               compute_reaching_def all_defs graph head
             in
@@ -130,9 +132,9 @@ struct
           in
           let go_use op =
             match Target.destruct_label op with
-            | Some (((uid, _) as l), ops)
+            | Some (l_typ, ((uid, _) as l), ops)
               when uid = phi_block_uid && List.(length ops <> length args) ->
-              Target.(label l (Reg.to_operand reaching_def :: ops))
+              Target.(label l_typ l (Reg.to_operand reaching_def :: ops))
             | _ -> op
           in
           let last =

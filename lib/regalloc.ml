@@ -11,7 +11,10 @@ module Make
       Dominator.S
         with type label = G.label
          and type position = int
-         and type uid = G.uid) =
+         and type uid = G.uid)
+    (Requirements : sig
+      val matches : Target.reg -> bool
+    end) =
 struct
   module RegSet = Target.RegSet
   module RegMap = Target.RegMap
@@ -121,7 +124,7 @@ struct
            Target.pp_reg reg)
 
   let vreg_id = function
-    | Target.Virtual vreg -> Some vreg.id
+    | Target.Virtual vreg as reg when Requirements.matches reg -> Some vreg.id
     | _ -> None
 
   let load_block_state ?(copy = false) state pos =
@@ -363,6 +366,12 @@ struct
         is necessary *)
   end
 
+  let matches_operand op =
+    fst
+    @@ Target.fold_reg_operand
+         (fun acc reg -> (acc && Requirements.matches reg, reg))
+         true op
+
   let iter_use_defs ~k_pair_both_regs ?(k_pair_use_reg = fun _ -> ())
       ?(k_pair_def_reg = fun _ -> ()) ?(k_pair_no_reg = fun _ -> ())
       ?(k_def_only = fun _ -> ()) instr =
@@ -383,13 +392,15 @@ struct
         go ([], defs)
       | _, [] -> ()
     in
-    go (Target.srcs instr, Target.dests instr)
+    go
+      ( List.filter matches_operand (Target.srcs instr),
+        List.filter matches_operand (Target.dests instr) )
 
   let iter_of_fold fold f instr =
     fst
     @@ fold
          (fun () reg ->
-           f reg;
+           if Requirements.matches reg then f reg;
            ((), reg))
          () instr
 
@@ -542,7 +553,9 @@ struct
       Target.srcs instr
       |> List.find_map (fun op ->
           match Target.destruct_label op with
-          | Some (label, args) when dest_label = Some label -> Some args
+          | Some (_, label, args)
+            when Option.equal G.equal_label dest_label (Some label) ->
+            Some args
           | _ -> None)
       |> Option.value ~default:[]
     in
@@ -550,8 +563,9 @@ struct
       Target.map_uses
         (fun op ->
           match Target.destruct_label op with
-          | Some (label, _) when dest_label = Some label ->
-            Target.label label args
+          | Some (typ, label, _)
+            when Option.equal G.equal_label dest_label (Some label) ->
+            Target.label typ label args
           | _ -> op)
         instr
     in
@@ -574,7 +588,8 @@ struct
         (fun (arg, phi) args ->
           match (Target.destruct_reg arg, phi) with
           | ( Some (Virtual { reg = arg_reg; _ } | (Physical _ as arg_reg)),
-              (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) ) ->
+              (Virtual { reg = Physical phi_reg; _ } | Physical phi_reg) )
+            when Requirements.(matches arg_reg && matches (Physical phi_reg)) ->
             let arg_reg_idx = find_reg_index state.regs arg_reg in
             let phi_reg_idx = find_reg_index state.regs (Physical phi_reg) in
             if arg_reg_idx <> phi_reg_idx then begin
@@ -592,7 +607,8 @@ struct
             end
             else arg :: args
           | _ -> arg :: args)
-        (List.combine args phis) []
+        (Utils.combine_drop args phis)
+        []
     in
     let last =
       match last with
@@ -620,6 +636,7 @@ struct
     (* Update instruction uses, replacing virtual registers with physical registers,
        and removing dead uses from the currently occupied registers *)
     let go_use = function
+      | reg when not (Requirements.matches reg) -> reg
       | Target.Virtual vreg when dies state uid (Virtual vreg) instr_num ->
         Logs.debug (fun m ->
             m "Killing dead register %a for %a\n" Target.pp_reg vreg.Target.reg
@@ -640,22 +657,30 @@ struct
     let instr = Target.map_reg_uses go_use instr in
     (* Assign registers for definitions *)
     let go_def head = function
+      | reg when not (Requirements.matches reg) -> (head, reg)
       | Target.Virtual r' as r when Target.equal_reg r'.reg r ->
         let reg, pref, head =
           get_register ~don't_use_for_optimistic_moves state uid r head
         in
         Logs.debug (fun m ->
-            m "Setting register for %a to %a\n" Target.pp_reg (Virtual r')
-              Target.pp_reg state.regs.(reg));
+            m "Attempting to set register for %a to %a\n" Target.pp_reg
+              (Virtual r') Target.pp_reg state.regs.(reg));
         r'.reg <- state.regs.(reg);
+        Logs.debug (fun m ->
+            match state.liveness.dies uid r with
+            | Some dies -> m "Register dies at %d\n" dies
+            | None -> m "Register doesn't die %d\n" 0);
         if not (dies state uid r instr_num) then begin
+          Logs.debug (fun m ->
+              m "Actually set register for %a to %a\n" Target.pp_reg
+                (Virtual r') Target.pp_reg state.regs.(reg));
           CCBV.set state.occupied reg;
           state.reg_current_var.(reg) <- Some r';
           state.reg_current_pref.(reg) <- pref
         end;
         (head, r'.reg)
       | Target.Virtual r' -> (head, r'.reg)
-      | r -> (head, r)
+      | reg -> (head, reg)
     in
     let head, instr = Target.fold_reg_defs go_def head instr in
     (head, instr)
@@ -675,7 +700,9 @@ struct
         let head, args =
           List.fold_left_map
             (fun head -> function
-              | Target.Virtual phi' as phi when Target.equal_reg phi'.reg phi ->
+              | Target.Virtual phi' as phi
+                when Requirements.matches phi && Target.equal_reg phi'.reg phi
+                ->
                 let reg, pref, head =
                   get_register ~don't_use_for_optimistic_moves state uid phi
                     head
@@ -746,6 +773,7 @@ struct
   let build_preferences state graph : unit =
     let preferences = state.preferences in
     let rec handle_operand ?(def = false) uid live = function
+      | reg when not (Requirements.matches reg) -> ()
       | Target.Virtual { id; reg_constr = ReuseOperand reg; _ } when def ->
         (* add preferences to use variable when there is a reuse operand def *)
         let op = reg.id in
@@ -774,6 +802,7 @@ struct
       | _ -> ()
     in
     let handle_pcopy = function
+      | r1, r2 when not Requirements.(matches r1 && matches r2) -> ()
       | ( Target.Virtual { id = src; _ },
           Target.Virtual { id = dest; reg_constr = UsePhysical _; _ } ) ->
         (* add preferences to use variable when there is a pcopy to a constrained def *)
@@ -846,9 +875,7 @@ struct
       let succ = G.idd (Some succ) in
       let live =
         Target.RegSet.filter
-          (function
-            | Target.Virtual _ -> true
-            | _ -> false)
+          (fun reg -> Option.is_some (vreg_id reg))
           (state.liveness.live_in succ)
       in
       let check_interferes v =
@@ -899,11 +926,12 @@ struct
       List.iter
         (fun op ->
           match Target.destruct_label op with
-          | Some (succ, args) ->
+          | Some (_, succ, args) ->
             List.iteri
               (fun i op ->
                 match Target.destruct_reg op with
-                | Some r -> handle_jump_arg succ args i r
+                | Some r when Requirements.matches r ->
+                  handle_jump_arg succ args i r
                 | _ -> ())
               args
           | _ -> ())
@@ -1035,13 +1063,13 @@ struct
       let zblock, cfg = G.(focus (idd (Dom.label_of_position pred)) cfg) in
       let head, last = G.goto_end zblock in
       (* if predecessor is unprocessed, insert the uncolored virtual register,
-       it will be colored with the right register later. *)
+         it will be colored with the right register later. *)
       let v = if state.processed.(pred) then get_reg v else v in
       let rewrite_edge instr =
         let add_phi_arg op =
           match Target.destruct_label op with
-          | Some (l, ops) when phi_block_label = Some l ->
-            Target.label l (Target.reg v :: ops)
+          | Some (typ, l, ops) when phi_block_label = Some l ->
+            Target.label typ l (Target.reg v :: ops)
           | _ -> op
         in
         Target.map_uses add_phi_arg instr
@@ -1081,7 +1109,8 @@ struct
           let head =
             RegSet.fold
               (function
-                | Target.Virtual r' as r when Target.equal_reg r'.reg r ->
+                | Target.Virtual r' as r
+                  when Requirements.matches r && Target.equal_reg r'.reg r ->
                   fun head ->
                     let reg, pref, head =
                       get_register state G.entry_uid r head
@@ -1161,8 +1190,8 @@ struct
              (List.map Dom.label_of_position blockorder)));
     List.fold_left go_block cfg blockorder
 
-  let init_state ~select_state ~regs ~block_execution_frequency ~liveness =
-    let num_vars = Utils.IntHashtbl.length select_state.State.vreg_block in
+  let init_state ~select_state ~num_vars ~regs ~block_execution_frequency
+      ~liveness =
     {
       select_state;
       regs;
@@ -1190,25 +1219,33 @@ module X86Helper
         with type Dom.label = X86.Cfg.label
          and type Dom.position = int
          and type Dom.uid = int
-         and type Dom.graph = X86.Cfg.graph) =
+         and type Dom.graph = X86.Cfg.graph)
+    (RegClass : Spill.RegClass with module Target = X86.Target) =
 struct
+  module X86Spill = Spill.X86 (RegClass)
   module Regalloc =
-    Make (X86.Target) (X86.Cfg) (Select_x86.State) (Spill.X86.Liveness)
+    Make (X86.Target) (X86.Cfg) (Select_x86.State) (X86Spill.Liveness)
       (Loop.Dom)
+      (X86Spill.Matches)
   let regalloc ?(args = X86.Target.RegSet.empty)
       ?(regs =
         X86.Regs.int_regs |> Array.of_list
         |> Array.map (fun r -> X86.Target.Physical r)) state cfg k_prefs =
     (* have to recalculate because added spills may have modified the instruction numbers *)
-    let liveness = Spill.X86.Liveness.calc cfg in
+    let liveness = X86Spill.Liveness.calc cfg in
     let module Freq = Execfreq.Make (X86.Cfg) (Loop) (X86.ExecfreqRequirements)
     in
     let block_execution_frequency uid =
       Freq.bfreq.(Loop.Dom.position_of_uid uid)
     in
+    let num_vars =
+      X86.Regs.start_virtual_counter
+      + Utils.IntHashtbl.length state.Select_x86.State.vreg_block
+      + 1
+    in
     let alloc_state =
-      Regalloc.init_state ~select_state:state ~block_execution_frequency
-        ~liveness ~regs
+      Regalloc.init_state ~select_state:state ~num_vars
+        ~block_execution_frequency ~liveness ~regs
     in
     Regalloc.color_graph alloc_state args cfg k_prefs
 end
@@ -1218,25 +1255,33 @@ module ArmHelper
         with type Dom.label = Arm.Cfg.label
          and type Dom.position = int
          and type Dom.uid = int
-         and type Dom.graph = Arm.Cfg.graph) =
+         and type Dom.graph = Arm.Cfg.graph)
+    (RegClass : Spill.RegClass with module Target = Arm.Target) =
 struct
+  module ArmSpill = Spill.Arm (RegClass)
   module Regalloc =
-    Make (Arm.Target) (Arm.Cfg) (Select_arm.State) (Spill.Arm.Liveness)
+    Make (Arm.Target) (Arm.Cfg) (Select_arm.State) (ArmSpill.Liveness)
       (Loop.Dom)
+      (ArmSpill.Matches)
   let regalloc ?(args = Arm.Target.RegSet.empty)
       ?(regs =
         Arm.Regs.int_regs |> Array.of_list
         |> Array.map (fun r -> Arm.Target.Physical r)) state cfg k_prefs =
     (* have to recalculate because added spills may have modified the instruction numbers *)
-    let liveness = Spill.Arm.Liveness.calc cfg in
+    let liveness = ArmSpill.Liveness.calc cfg in
     let module Freq = Execfreq.Make (Arm.Cfg) (Loop) (Arm.ExecfreqRequirements)
     in
     let block_execution_frequency uid =
       Freq.bfreq.(Loop.Dom.position_of_uid uid)
     in
+    let num_vars =
+      Arm.Regs.start_virtual_counter
+      + Utils.IntHashtbl.length state.Select_arm.State.vreg_block
+      + 1
+    in
     let alloc_state =
-      Regalloc.init_state ~select_state:state ~block_execution_frequency
-        ~liveness ~regs
+      Regalloc.init_state ~select_state:state ~num_vars
+        ~block_execution_frequency ~liveness ~regs
     in
     Regalloc.color_graph alloc_state args cfg k_prefs
 end
@@ -1248,8 +1293,14 @@ let%expect_test "Nested loops register allocation" =
   let extra = X86.Cfg.precalculate_edges cfg in
   let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-  let cfg = Spill.X86.spill_helper (module Loop) state cfg in
-  let module Helper = X86Helper (Loop) in
+  let module RegClass = struct
+    module Target = X86.Target
+    let reg_class = X86.Target.Int
+    let k = 16
+  end in
+  let module X86Spill = Spill.X86 (RegClass) in
+  let cfg = X86Spill.spill_helper (module Loop) state cfg in
+  let module Helper = X86Helper (Loop) (RegClass) in
   let cfg =
     Helper.regalloc state cfg @@ fun state ->
     Format.printf "%a\n"
@@ -1267,6 +1318,38 @@ let%expect_test "Nested loops register allocation" =
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 8 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 9 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 10 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 11 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 12 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 13 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 14 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 15 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 16 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 17 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 18 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 19 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 20 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 21 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 22 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 23 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 24 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 25 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 26 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 27 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 28 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 29 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 30 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 31 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 32 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 33 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 34 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 35 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 36 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 37 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 38 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 39 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 40 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 41 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 42 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000]]
     |}]
   in
@@ -1309,35 +1392,41 @@ let%expect_test "Fibonacci register allocation" =
   let extra = X86.Cfg.precalculate_edges cfg in
   let module Dom = Dominator.Make (X86.Cfg) ((val extra)) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-  let cfg = Spill.X86.spill_helper ~args (module Loop) state cfg in
+  let module RegClass = struct
+    module Target = X86.Target
+    let reg_class = X86.Target.Int
+    let k = 16
+  end in
+  let module X86Spill = Spill.X86 (RegClass) in
+  let cfg = X86Spill.spill_helper ~args (module Loop) state cfg in
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|
-      pcopy [(%1any, %0(%rdi))]
-      jle label2, label3, %1any, $1
-    label1(local=false)(32any):
-      pcopy [(%33(%rax), %32any)]
-      ret %33(%rax)
+      pcopy [(%33any, %32(%rdi))]
+      jle label2, label3, %33any, $1
+    label1(local=false)(96any):
+      pcopy [(%97(%rax), %96any)]
+      ret %97(%rax)
     label2(local=false)():
-      movq %2any, %1any
-      jmp label1(%2any)
+      movq %34any, %33any
+      jmp label1(%34any)
     label3(local=false)():
-      movq %5any, %1any
-      subq %4(reuse=%5), %5any, $1
-      pcopy [(%6(%rdi), %4(reuse=%5))]
-      call %7(%rax), %8(%rcx), %9(%rdx), %10(%rsi), %11(%rdi), %12(%r8), %13(%r9), %14(%r10), %15(%r11), %6(%rdi), fibonacci
-      movq %3any, %7(%rax)
-      movq %18any, %1any
-      subq %17(reuse=%18), %18any, $2
-      pcopy [(%19(%rdi), %17(reuse=%18))]
-      call %20(%rax), %21(%rcx), %22(%rdx), %23(%rsi), %24(%rdi), %25(%r8), %26(%r9), %27(%r10), %28(%r11), %19(%rdi), fibonacci
-      movq %16any, %20(%rax)
-      movq %31any, %3any
-      addq %30(reuse=%31), %31any, %16any
-      movq %29any, %30(reuse=%31)
-      jmp label1(%29any)
+      movq %37any, %33any
+      subq %36(reuse=%37), %37any, $1
+      pcopy [(%38(%rdi), %36(reuse=%37))]
+      call %39(%rax), %40(%rcx), %41(%rdx), %42(%rsi), %43(%rdi), %44(%r8), %45(%r9), %46(%r10), %47(%r11), %48f(%xmm0), %49f(%xmm1), %50f(%xmm2), %51f(%xmm3), %52f(%xmm4), %53f(%xmm5), %54f(%xmm6), %55f(%xmm7), %56f(%xmm8), %57f(%xmm9), %58f(%xmm10), %59f(%xmm11), %60f(%xmm12), %61f(%xmm13), %62f(%xmm14), %63f(%xmm15), %38(%rdi), fibonacci
+      movq %35any, %39(%rax)
+      movq %66any, %33any
+      subq %65(reuse=%66), %66any, $2
+      pcopy [(%67(%rdi), %65(reuse=%66))]
+      call %68(%rax), %69(%rcx), %70(%rdx), %71(%rsi), %72(%rdi), %73(%r8), %74(%r9), %75(%r10), %76(%r11), %77f(%xmm0), %78f(%xmm1), %79f(%xmm2), %80f(%xmm3), %81f(%xmm4), %82f(%xmm5), %83f(%xmm6), %84f(%xmm7), %85f(%xmm8), %86f(%xmm9), %87f(%xmm10), %88f(%xmm11), %89f(%xmm12), %90f(%xmm13), %91f(%xmm14), %92f(%xmm15), %67(%rdi), fibonacci
+      movq %64any, %68(%rax)
+      movq %95any, %35any
+      addq %94(reuse=%95), %95any, %64any
+      movq %93any, %94(reuse=%95)
+      jmp label1(%93any)
     |}];
-  let module Helper = X86Helper (Loop) in
+  let module Helper = X86Helper (Loop) (RegClass) in
   let cfg =
     Helper.regalloc ~args:(X86.Target.RegSet.of_list args) state cfg
     @@ fun state ->
@@ -1346,39 +1435,103 @@ let%expect_test "Fibonacci register allocation" =
       state.preferences;
     [%expect
       {|
-    [0 -> [rax: -1.000000, rbx: -1.000000, rcx: -1.000000, rdx: -1.000000, rsi: -1.000000, rdi: 0.000000, rsp: -1.000000, rbp: -1.000000, r8: -1.000000, r9: -1.000000, r10: -1.000000, r11: -1.000000, r12: -1.000000, r13: -1.000000, r14: -1.000000, r15: -1.000000], 1 ->
-    [rax: -0.088000, rbx: 0.000000, rcx: -0.044000, rdx: -0.044000, rsi: -0.044000, rdi: -0.132000, rsp: 0.000000, rbp: 0.000000, r8: -0.044000, r9: -0.044000, r10: -0.044000, r11: -0.044000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 2 ->
-    [rax: 0.000000, rbx: -2.000000, rcx: -2.000000, rdx: -2.000000, rsi: -2.000000, rdi: -2.000000, rsp: -2.000000, rbp: -2.000000, r8: -2.000000, r9: -2.000000, r10: -2.000000, r11: -2.000000, r12: -2.000000, r13: -2.000000, r14: -2.000000, r15: -2.000000], 3 ->
-    [rax: -0.088000, rbx: 0.000000, rcx: -0.044000, rdx: -0.044000, rsi: -0.044000, rdi: -0.132000, rsp: 0.000000, rbp: 0.000000, r8: -0.044000, r9: -0.044000, r10: -0.044000, r11: -0.044000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 4 ->
-    [rax: -0.440000, rbx: -0.440000, rcx: -0.440000, rdx: -0.440000, rsi: -0.440000, rdi: 0.000000, rsp: -0.440000, rbp: -0.440000, r8: -0.440000, r9: -0.440000, r10: -0.440000, r11: -0.440000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 5 ->
-    [rax: -0.440000, rbx: -0.440000, rcx: -0.440000, rdx: -0.440000, rsi: -0.440000, rdi: 0.000000, rsp: -0.440000, rbp: -0.440000, r8: -0.440000, r9: -0.440000, r10: -0.440000, r11: -0.440000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 6 ->
-    [rax: -0.440000, rbx: -0.440000, rcx: -0.440000, rdx: -0.440000, rsi: -0.440000, rdi: 0.000000, rsp: -0.440000, rbp: -0.440000, r8: -0.440000, r9: -0.440000, r10: -0.440000, r11: -0.440000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 7 ->
-    [rax: 0.000000, rbx: -0.440000, rcx: -0.484000, rdx: -0.484000, rsi: -0.484000, rdi: -0.484000, rsp: -0.440000, rbp: -0.440000, r8: -0.484000, r9: -0.484000, r10: -0.484000, r11: -0.484000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 8 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: 0.000000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 9 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: 0.000000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 10 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: 0.000000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 11 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: 0.000000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 12 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: 0.000000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 13 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: 0.000000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 14 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: 0.000000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 15 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: 0.000000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 16 ->
+    [0 -> [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 1 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 2 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 3 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 4 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 5 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 6 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 7 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 8 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 9 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 10 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 11 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 12 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 13 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 14 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 15 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 16 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 17 ->
-    [rax: -0.440000, rbx: -0.440000, rcx: -0.440000, rdx: -0.440000, rsi: -0.440000, rdi: 0.000000, rsp: -0.440000, rbp: -0.440000, r8: -0.440000, r9: -0.440000, r10: -0.440000, r11: -0.440000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 18 ->
-    [rax: -0.440000, rbx: -0.440000, rcx: -0.440000, rdx: -0.440000, rsi: -0.440000, rdi: 0.000000, rsp: -0.440000, rbp: -0.440000, r8: -0.440000, r9: -0.440000, r10: -0.440000, r11: -0.440000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 19 ->
-    [rax: -0.440000, rbx: -0.440000, rcx: -0.440000, rdx: -0.440000, rsi: -0.440000, rdi: 0.000000, rsp: -0.440000, rbp: -0.440000, r8: -0.440000, r9: -0.440000, r10: -0.440000, r11: -0.440000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 20 ->
-    [rax: 0.000000, rbx: -0.440000, rcx: -0.484000, rdx: -0.484000, rsi: -0.484000, rdi: -0.484000, rsp: -0.440000, rbp: -0.440000, r8: -0.484000, r9: -0.484000, r10: -0.484000, r11: -0.484000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 21 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: 0.000000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 22 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: 0.000000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 23 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: 0.000000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 24 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: 0.000000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 25 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: 0.000000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 26 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: 0.000000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 27 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: 0.000000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 28 ->
-    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: 0.000000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 29 ->
-    [rax: 0.000000, rbx: -2.000000, rcx: -2.000000, rdx: -2.000000, rsi: -2.000000, rdi: -2.000000, rsp: -2.000000, rbp: -2.000000, r8: -2.000000, r9: -2.000000, r10: -2.000000, r11: -2.000000, r12: -2.000000, r13: -2.000000, r14: -2.000000, r15: -2.000000], 30 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 18 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 19 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 20 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 21 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 22 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 23 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 24 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 25 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 26 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 27 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 28 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 29 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 30 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 31 ->
     [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 32 ->
-    [rax: 0.000000, rbx: -2.000000, rcx: -2.000000, rdx: -2.000000, rsi: -2.000000, rdi: -2.000000, rsp: -2.000000, rbp: -2.000000, r8: -2.000000, r9: -2.000000, r10: -2.000000, r11: -2.000000, r12: -2.000000, r13: -2.000000, r14: -2.000000, r15: -2.000000], 33 ->
+    [rax: -1.000000, rbx: -1.000000, rcx: -1.000000, rdx: -1.000000, rsi: -1.000000, rdi: 0.000000, rsp: -1.000000, rbp: -1.000000, r8: -1.000000, r9: -1.000000, r10: -1.000000, r11: -1.000000, r12: -1.000000, r13: -1.000000, r14: -1.000000, r15: -1.000000], 33 ->
+    [rax: -0.088000, rbx: 0.000000, rcx: -0.044000, rdx: -0.044000, rsi: -0.044000, rdi: -0.132000, rsp: 0.000000, rbp: 0.000000, r8: -0.044000, r9: -0.044000, r10: -0.044000, r11: -0.044000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 34 ->
+    [rax: 0.000000, rbx: -2.000000, rcx: -2.000000, rdx: -2.000000, rsi: -2.000000, rdi: -2.000000, rsp: -2.000000, rbp: -2.000000, r8: -2.000000, r9: -2.000000, r10: -2.000000, r11: -2.000000, r12: -2.000000, r13: -2.000000, r14: -2.000000, r15: -2.000000], 35 ->
+    [rax: -0.088000, rbx: 0.000000, rcx: -0.044000, rdx: -0.044000, rsi: -0.044000, rdi: -0.132000, rsp: 0.000000, rbp: 0.000000, r8: -0.044000, r9: -0.044000, r10: -0.044000, r11: -0.044000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 36 ->
+    [rax: -0.440000, rbx: -0.440000, rcx: -0.440000, rdx: -0.440000, rsi: -0.440000, rdi: 0.000000, rsp: -0.440000, rbp: -0.440000, r8: -0.440000, r9: -0.440000, r10: -0.440000, r11: -0.440000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 37 ->
+    [rax: -0.440000, rbx: -0.440000, rcx: -0.440000, rdx: -0.440000, rsi: -0.440000, rdi: 0.000000, rsp: -0.440000, rbp: -0.440000, r8: -0.440000, r9: -0.440000, r10: -0.440000, r11: -0.440000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 38 ->
+    [rax: -0.440000, rbx: -0.440000, rcx: -0.440000, rdx: -0.440000, rsi: -0.440000, rdi: 0.000000, rsp: -0.440000, rbp: -0.440000, r8: -0.440000, r9: -0.440000, r10: -0.440000, r11: -0.440000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 39 ->
+    [rax: 0.000000, rbx: -0.440000, rcx: -0.484000, rdx: -0.484000, rsi: -0.484000, rdi: -0.484000, rsp: -0.440000, rbp: -0.440000, r8: -0.484000, r9: -0.484000, r10: -0.484000, r11: -0.484000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 40 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: 0.000000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 41 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: 0.000000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 42 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: 0.000000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 43 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: 0.000000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 44 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: 0.000000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 45 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: 0.000000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 46 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: 0.000000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 47 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: 0.000000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 48 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 49 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 50 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 51 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 52 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 53 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 54 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 55 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 56 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 57 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 58 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 59 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 60 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 61 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 62 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 63 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 64 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 65 ->
+    [rax: -0.440000, rbx: -0.440000, rcx: -0.440000, rdx: -0.440000, rsi: -0.440000, rdi: 0.000000, rsp: -0.440000, rbp: -0.440000, r8: -0.440000, r9: -0.440000, r10: -0.440000, r11: -0.440000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 66 ->
+    [rax: -0.440000, rbx: -0.440000, rcx: -0.440000, rdx: -0.440000, rsi: -0.440000, rdi: 0.000000, rsp: -0.440000, rbp: -0.440000, r8: -0.440000, r9: -0.440000, r10: -0.440000, r11: -0.440000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 67 ->
+    [rax: -0.440000, rbx: -0.440000, rcx: -0.440000, rdx: -0.440000, rsi: -0.440000, rdi: 0.000000, rsp: -0.440000, rbp: -0.440000, r8: -0.440000, r9: -0.440000, r10: -0.440000, r11: -0.440000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 68 ->
+    [rax: 0.000000, rbx: -0.440000, rcx: -0.484000, rdx: -0.484000, rsi: -0.484000, rdi: -0.484000, rsp: -0.440000, rbp: -0.440000, r8: -0.484000, r9: -0.484000, r10: -0.484000, r11: -0.484000, r12: -0.440000, r13: -0.440000, r14: -0.440000, r15: -0.440000], 69 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: 0.000000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 70 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: 0.000000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 71 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: 0.000000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 72 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: 0.000000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 73 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: 0.000000, r9: -0.220000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 74 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: 0.000000, r10: -0.220000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 75 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: 0.000000, r11: -0.220000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 76 ->
+    [rax: -0.220000, rbx: -0.220000, rcx: -0.220000, rdx: -0.220000, rsi: -0.220000, rdi: -0.220000, rsp: -0.220000, rbp: -0.220000, r8: -0.220000, r9: -0.220000, r10: -0.220000, r11: 0.000000, r12: -0.220000, r13: -0.220000, r14: -0.220000, r15: -0.220000], 77 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 78 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 79 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 80 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 81 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 82 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 83 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 84 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 85 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 86 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 87 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 88 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 89 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 90 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 91 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 92 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 93 ->
+    [rax: 0.000000, rbx: -2.000000, rcx: -2.000000, rdx: -2.000000, rsi: -2.000000, rdi: -2.000000, rsp: -2.000000, rbp: -2.000000, r8: -2.000000, r9: -2.000000, r10: -2.000000, r11: -2.000000, r12: -2.000000, r13: -2.000000, r14: -2.000000, r15: -2.000000], 94 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 95 ->
+    [rax: 0.000000, rbx: 0.000000, rcx: 0.000000, rdx: 0.000000, rsi: 0.000000, rdi: 0.000000, rsp: 0.000000, rbp: 0.000000, r8: 0.000000, r9: 0.000000, r10: 0.000000, r11: 0.000000, r12: 0.000000, r13: 0.000000, r14: 0.000000, r15: 0.000000], 96 ->
+    [rax: 0.000000, rbx: -2.000000, rcx: -2.000000, rdx: -2.000000, rsi: -2.000000, rdi: -2.000000, rsp: -2.000000, rbp: -2.000000, r8: -2.000000, r9: -2.000000, r10: -2.000000, r11: -2.000000, r12: -2.000000, r13: -2.000000, r14: -2.000000, r15: -2.000000], 97 ->
     [rax: 0.000000, rbx: -2.000000, rcx: -2.000000, rdx: -2.000000, rsi: -2.000000, rdi: -2.000000, rsp: -2.000000, rbp: -2.000000, r8: -2.000000, r9: -2.000000, r10: -2.000000, r11: -2.000000, r12: -2.000000, r13: -2.000000, r14: -2.000000, r15: -2.000000]]
     |}];
     let rec reg =
@@ -1393,7 +1546,7 @@ let%expect_test "Fibonacci register allocation" =
       dies;
     [%expect {|
     Label: (3, "label3")
-    8(rcx) dies at: 3
+    8(rcx) dies at:
     |}]
   in
   Format.printf "%a" X86.Printer.pp_graph cfg;
@@ -1412,12 +1565,12 @@ let%expect_test "Fibonacci register allocation" =
       subq %rax, %rax, $1
       pcopy [(%rsp, %rdi); (%rdi, %rax)]
       pcopy [(%rdi, %rdi)]
-      call %rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %rdi, fibonacci
+      call %rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %48f(%xmm0), %49f(%xmm1), %50f(%xmm2), %51f(%xmm3), %52f(%xmm4), %53f(%xmm5), %54f(%xmm6), %55f(%xmm7), %56f(%xmm8), %57f(%xmm9), %58f(%xmm10), %59f(%xmm11), %60f(%xmm12), %61f(%xmm13), %62f(%xmm14), %63f(%xmm15), %rdi, fibonacci
       movq %r13, %rax
       movq %rdi, %rbx
       subq %rdi, %rdi, $2
       pcopy [(%rdi, %rdi)]
-      call %rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %rdi, fibonacci
+      call %rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %77f(%xmm0), %78f(%xmm1), %79f(%xmm2), %80f(%xmm3), %81f(%xmm4), %82f(%xmm5), %83f(%xmm6), %84f(%xmm7), %85f(%xmm8), %86f(%xmm9), %87f(%xmm10), %88f(%xmm11), %89f(%xmm12), %90f(%xmm13), %91f(%xmm14), %92f(%xmm15), %rdi, fibonacci
       movq %rax, %rax
       movq %rsi, %r13
       addq %rsi, %rsi, %rax

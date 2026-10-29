@@ -39,6 +39,7 @@ module type Target = sig
     val compare : reg -> reg -> int
     val hash : reg -> int
     val reg : reg -> reg
+    val reg_class : reg -> reg_class
   end
   module RegSet : CCSet.S with type elt = reg
   module RegMap : CCMap.S with type key = reg
@@ -76,7 +77,8 @@ module type Target = sig
   val constrained : physical_reg -> reg -> reg
   val reuse : reg -> reg -> reg
   val reuse_op : operand -> operand -> operand
-  val cond_mapping : (Graph.Cond.t * string) list
+  val int_cond_mapping : (Graph.Cond.t * string) list
+  val float_cond_mapping : (Graph.Cond.t * string) list
   val instr : string -> defs:operands -> uses:operands -> instr
   val mov : dest:operand -> src:operand -> instr
   val pcopy : dests:operands -> srcs:operands -> instr

@@ -206,7 +206,7 @@ let convert_instruction (instr : Undag.Cfg.Target.instr) :
              Undag.Target.pp_instr i
       end
     | Reg reg -> Normalize.Target.Reg reg
-    | Label (l, args) ->
-      Normalize.Target.Label (l, List.map convert_operand args)
+    | Label (typ, l, args) ->
+      Normalize.Target.Label (typ, l, List.map convert_operand args)
   in
   Convert.convert convert_operand instr

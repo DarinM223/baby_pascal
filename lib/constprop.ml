@@ -48,7 +48,7 @@ let block_args graph =
   in
   let last_in uid =
     let go_use (a : OperandSet.t NameMap.t) = function
-      | Target.Label ((uid', _), args) ->
+      | Target.Label (_, (uid', _), args) ->
         begin try
           let args' = IntHashtbl.find args_tbl uid' in
           List.fold_left
@@ -166,7 +166,7 @@ let rewrite_uses lookup_operand a instr =
   let instr' =
     Target.map_uses
       (function
-        | Label (l, args) -> Label (l, List.map handle_operand args)
+        | Label (typ, l, args) -> Label (typ, l, List.map handle_operand args)
         | (Const _ | Reg _) as op -> handle_operand op)
       instr
   in

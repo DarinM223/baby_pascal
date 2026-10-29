@@ -68,7 +68,8 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
         begin try Reg (typ, NameHashtbl.find state.vn n)
         with Not_found -> Reg (typ, n)
         end
-      | Label (lab, args) -> Label (lab, List.map rewrite_with_value_number args)
+      | Label (typ, lab, args) ->
+        Label (typ, lab, List.map rewrite_with_value_number args)
     in
     let zgraph, graph =
       Normalize.Cfg.(focus (idd (Dom.tree_label tree)) graph)
@@ -103,7 +104,7 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
             let exception Found of Normalize.Target.operand in
             try
               let go_src = function
-                | Label (l', args) when Normalize.Cfg.equal_label l l' ->
+                | Label (_, l', args) when Normalize.Cfg.equal_label l l' ->
                   raise (Found (List.nth args idx))
                 | _ -> ()
               in
@@ -116,8 +117,11 @@ module Make (Dom : Dominator.S with type label = Normalize.Cfg.label) = struct
           in
           let remove_arg_at idx =
             Normalize.Target.map_uses (function
-              | Label (l', args) when Normalize.Cfg.equal_label l l' ->
-                Label (l', CCList.set_at_idx idx Normalize.Target.tombstone args)
+              | Label (typ, l', args) when Normalize.Cfg.equal_label l l' ->
+                Label
+                  ( typ,
+                    l',
+                    CCList.set_at_idx idx Normalize.Target.tombstone args )
               | op -> op)
           in
           let rewrite_arg (idx, zippers, args) (typ, arg) =

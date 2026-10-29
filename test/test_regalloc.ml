@@ -47,10 +47,16 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
          else instr_num)
     | _ -> None
   in
+  let module RegClass = struct
+    module Target = X86.Target
+    let reg_class = X86.Target.Int
+    let k = 16
+  end in
+  let module X86Spill = Spill.X86 (RegClass) in
   let liveness =
     X86.Target.
       {
-        Spill.X86.Liveness.live_in = (fun _ -> RegSet.empty);
+        X86Spill.Liveness.live_in = (fun _ -> RegSet.empty);
         live_out = (fun _ -> RegSet.empty);
         used_in_block = (fun _ -> RegSet.empty);
         dies;
@@ -59,10 +65,17 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   in
   let open Regalloc in
   let module Regalloc =
-    Make (X86.Target) (X86.Cfg) (Select_x86.State) (Spill.X86.Liveness) (Dom)
+    Make (X86.Target) (X86.Cfg) (Select_x86.State) (X86Spill.Liveness) (Dom)
+      (X86Spill.Matches)
+  in
+  let num_vars =
+    List.fold_left max 0
+      (Utils.IntHashtbl.keys_list select_state.Select_x86.State.vreg_block)
+    + 1
   in
   let state =
-    Regalloc.init_state ~select_state ~regs ~block_execution_frequency ~liveness
+    Regalloc.init_state ~select_state ~num_vars ~regs ~block_execution_frequency
+      ~liveness
   in
   let idx phys = find_reg_index regs (X86.Target.Physical phys) in
   let set_reg idx = function
@@ -221,7 +234,7 @@ let test_pcopy_instr ~regs head =
     Seqpcopy.Make
       (X86.Cfg)
       (struct
-        include X86.SeqpcopyRequirements
+        include X86.SeqpcopyIntRequirements
         let temp = Target.Reg (Physical dummy_reg)
       end) in
   let rec expand_pcopies tail = function
@@ -305,9 +318,12 @@ let check_result_state ~extra_curr_live ~uses ~defs ~extra_clobbered_regs
       (Format.asprintf
          "Checking that vreg %d was moved from %a to %a and is still live \
           through"
-         vreg'.id X86.Target.pp_reg old_vregs.(vreg'.id) X86.Target.pp_reg
-         vreg'.reg)
-      (X86.Target.RegMap.find old_vregs.(vreg'.id) init_state)
+         vreg'.id X86.Target.pp_reg
+         old_vregs.(vreg'.id - X86.Regs.start_virtual_counter - 1)
+         X86.Target.pp_reg vreg'.reg)
+      (X86.Target.RegMap.find
+         old_vregs.(vreg'.id - X86.Regs.start_virtual_counter - 1)
+         init_state)
       (X86.Target.RegMap.find vreg'.reg result_state)
   in
   List.iter check_live_through (List.map (fun i -> vregs.(i)) live_throughs)

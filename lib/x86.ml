@@ -75,7 +75,7 @@ module Target = struct
                 stack pointer) instead of the current stack pointer *)
         offset : int;
       }
-    | Label of label * operand list
+    | Label of reg_class * label * operand list
   [@@deriving eq]
   let rec pp_operand' pp_reg fmt = function
     | Imm i -> Format.fprintf fmt "$%d" i
@@ -93,8 +93,8 @@ module Target = struct
         (Format.pp_print_option pp_reg)
         base pp_reg index scale
     | StackSlot { offset; _ } -> Format.fprintf fmt "%d(%%rsp)" offset
-    | Label (l, []) -> Format.fprintf fmt "%s" (snd l)
-    | Label (l, args) ->
+    | Label (_, l, []) -> Format.fprintf fmt "%s" (snd l)
+    | Label (_, l, args) ->
       Format.fprintf fmt "%s(%a)" (snd l)
         (Format.pp_print_list ~pp_sep:Utils.pp_sep (pp_operand' pp_reg))
         args
@@ -107,9 +107,16 @@ module Target = struct
   let is_memaddr = function
     | MemAddr _ -> true
     | _ -> false
-  let label label args = Label (label, args)
+  let label typ label args =
+    let clz =
+      match typ with
+      | Ast.TDouble -> Float
+      | _ -> Int
+    in
+    Label (clz, label, args)
   let destruct_label = function
-    | Label (l, args) -> Some (l, args)
+    | Label (Float, l, args) -> Some (Ast.TDouble, l, args)
+    | Label (Int, l, args) -> Some (Ast.TInteger, l, args)
     | _ -> None
   let rec fold_reg_operand (f : 'a -> reg -> 'a * reg) (acc : 'a) = function
     | Reg r ->
@@ -123,16 +130,17 @@ module Target = struct
       in
       let acc, index = f acc index in
       (acc, MemAddr { addr with base; index })
-    | Label (l, ops) ->
+    | Label (clz, l, ops) ->
       let acc, ops = List.fold_left_map (fold_reg_operand f) acc ops in
-      (acc, Label (l, ops))
+      (acc, Label (clz, l, ops))
     | (Imm _ | StackSlot _) as op -> (acc, op)
   let rec subst_reg_operand subst_reg = function
     | Reg r -> Reg (subst_reg r)
     | MemAddr ({ base : reg option; index : reg; _ } as addr) ->
       MemAddr
         { addr with base = Option.map subst_reg base; index = subst_reg index }
-    | Label (l, ops) -> Label (l, List.map (subst_reg_operand subst_reg) ops)
+    | Label (clz, l, ops) ->
+      Label (clz, l, List.map (subst_reg_operand subst_reg) ops)
     | (Imm _ | StackSlot _) as op -> op
   let to_colored =
     let to_colored_reg = function
@@ -157,6 +165,13 @@ module Target = struct
     let reg = function
       | Virtual v -> v.reg
       | r -> r
+    let reg_class = function
+      | Virtual v -> v.reg_class
+      | Physical (_, clz, _) -> clz
+      | Tombstone ->
+        failwith
+          "reg_class: attempted to get the register class of a tombstone \
+           register"
   end
   module RegSet = CCSet.Make (Reg)
   module RegMap = CCMap.Make (Reg)
@@ -280,40 +295,90 @@ module Target = struct
       hidden_uses = 0;
       clobber_regs = RegSet.empty;
     }
-  let goto l ops = instr "jmp" ~defs:[] ~uses:[ Label (l, ops) ]
-  let cond_mapping =
+  let goto l ops = instr "jmp" ~defs:[] ~uses:[ Label (Int, l, ops) ]
+  let int_cond_mapping =
     Graph.Cond.
       [
         (LT, "jl"); (LE, "jle"); (GT, "jg"); (GE, "jge"); (EQ, "jz"); (NE, "jnz");
       ]
 
+  (* Actually unsigned int condition mapping but float operands use it as well *)
+  let float_cond_mapping =
+    Graph.Cond.
+      [
+        (LT, "jb"); (LE, "jbe"); (GT, "ja"); (GE, "jae"); (EQ, "jz"); (NE, "jnz");
+      ]
+
   let cbranch ~args cond l1 l1args l2 l2args =
-    let jmp = snd @@ List.find (fun (c, _) -> cond = c) cond_mapping in
-    instr jmp ~uses:(Label (l1, l1args) :: Label (l2, l2args) :: args) ~defs:[]
+    let is_float =
+      List.exists
+        (function
+          | Reg reg when Reg.reg_class reg = Float -> true
+          | _ -> false)
+        args
+    in
+    let clz = if is_float then Float else Int in
+    let mapping = if is_float then float_cond_mapping else int_cond_mapping in
+    let jmp = snd @@ List.find (fun (c, _) -> cond = c) mapping in
+    instr jmp
+      ~uses:(Label (clz, l1, l1args) :: Label (clz, l2, l2args) :: args)
+      ~defs:[]
   let return ~uses = instr "ret" ~uses ~defs:[]
-  let mov ~dest ~src = instr "movq" ~defs:[ dest ] ~uses:[ src ]
+  let mov ~dest ~src =
+    let reg_class_of op = Option.map Reg.reg_class (destruct_reg op) in
+    match (reg_class_of dest, reg_class_of src) with
+    | Some Float, _ | _, Some Float ->
+      instr "movsd" ~defs:[ dest ] ~uses:[ src ]
+    | _ -> instr "movq" ~defs:[ dest ] ~uses:[ src ]
+
   let pcopy ~dests ~srcs = instr "pcopy" ~defs:dests ~uses:srcs
   let is_side_effectful _ = true
 end
 
 module Regs = struct
+  open struct
+    let counter = ref (-1)
+    let new_reg clz s =
+      incr counter;
+      (!counter, clz, s)
+  end
+
   (* todo: handle overlapping subregisters *)
-  let rax = (0, Target.Int, "rax")
-  let rbx = (1, Target.Int, "rbx")
-  let rcx = (2, Target.Int, "rcx")
-  let rdx = (3, Target.Int, "rdx")
-  let rsi = (4, Target.Int, "rsi")
-  let rdi = (5, Target.Int, "rdi")
-  let rsp = (6, Target.Int, "rsp")
-  let rbp = (7, Target.Int, "rbp")
-  let r8 = (8, Target.Int, "r8")
-  let r9 = (9, Target.Int, "r9")
-  let r10 = (10, Target.Int, "r10")
-  let r11 = (11, Target.Int, "r11")
-  let r12 = (12, Target.Int, "r12")
-  let r13 = (13, Target.Int, "r13")
-  let r14 = (14, Target.Int, "r14")
-  let r15 = (15, Target.Int, "r15")
+  let rax = new_reg Target.Int "rax"
+  let rbx = new_reg Target.Int "rbx"
+  let rcx = new_reg Target.Int "rcx"
+  let rdx = new_reg Target.Int "rdx"
+  let rsi = new_reg Target.Int "rsi"
+  let rdi = new_reg Target.Int "rdi"
+  let rsp = new_reg Target.Int "rsp"
+  let rbp = new_reg Target.Int "rbp"
+  let r8 = new_reg Target.Int "r8"
+  let r9 = new_reg Target.Int "r9"
+  let r10 = new_reg Target.Int "r10"
+  let r11 = new_reg Target.Int "r11"
+  let r12 = new_reg Target.Int "r12"
+  let r13 = new_reg Target.Int "r13"
+  let r14 = new_reg Target.Int "r14"
+  let r15 = new_reg Target.Int "r15"
+
+  let xmm0 = new_reg Target.Float "xmm0"
+  let xmm1 = new_reg Target.Float "xmm1"
+  let xmm2 = new_reg Target.Float "xmm2"
+  let xmm3 = new_reg Target.Float "xmm3"
+  let xmm4 = new_reg Target.Float "xmm4"
+  let xmm5 = new_reg Target.Float "xmm5"
+  let xmm6 = new_reg Target.Float "xmm6"
+  let xmm7 = new_reg Target.Float "xmm7"
+  let xmm8 = new_reg Target.Float "xmm8"
+  let xmm9 = new_reg Target.Float "xmm9"
+  let xmm10 = new_reg Target.Float "xmm10"
+  let xmm11 = new_reg Target.Float "xmm11"
+  let xmm12 = new_reg Target.Float "xmm12"
+  let xmm13 = new_reg Target.Float "xmm13"
+  let xmm14 = new_reg Target.Float "xmm14"
+  let xmm15 = new_reg Target.Float "xmm15"
+
+  let start_virtual_counter = !counter
 
   let caller_save = [ rax; rcx; rdx; rsi; rdi; r8; r9; r10; r11 ]
   let callee_save = [ r12; r13; r14; r15; rbx; rsp; rbp ]
@@ -335,6 +400,25 @@ module Regs = struct
       r13;
       r14;
       r15;
+    ]
+  let float_regs =
+    [
+      xmm0;
+      xmm1;
+      xmm2;
+      xmm3;
+      xmm4;
+      xmm5;
+      xmm6;
+      xmm7;
+      xmm8;
+      xmm9;
+      xmm10;
+      xmm11;
+      xmm12;
+      xmm13;
+      xmm14;
+      xmm15;
     ]
 end
 
@@ -405,7 +489,7 @@ module Writer = struct
           (Target.StackSlot
              { relative_to_base = false; offset = offset + stack_offset })
       end
-    | Label (l, _) -> Format.fprintf fmt "%s" (snd l)
+    | Label (_, l, _) -> Format.fprintf fmt "%s" (snd l)
     | op -> Target.pp_operand' pp_reg fmt op
   let pp_instr state fmt i =
     let pp_operands =
@@ -468,16 +552,40 @@ module ExecfreqRequirements :
   let uses = fun i -> i.Target.uses
   let call = "call"
   let ret = "ret"
-  let cond_mapping = Target.cond_mapping
+  let cond_mapping = Target.int_cond_mapping
   let exit = "exit"
 end
-module SeqpcopyRequirements :
+module SeqpcopyIntRequirements :
   Seqpcopy.Requirements with module Target = Target = struct
   module Target = Target
   let temp = Target.Reg (Target.Physical Regs.r10)
-  let is_pcopy = Target.is_pcopy
+  let is_pcopy instr =
+    Target.is_pcopy instr
+    && Target.RegSet.for_all
+         (fun reg -> Target.Reg.reg_class reg = Int)
+         (Target.uses instr)
+    && Target.RegSet.for_all
+         (fun reg -> Target.Reg.reg_class reg = Int)
+         (Target.defs instr)
   let mov = Target.mov
   let uses instr = List.map Target.to_colored instr.Target.uses
   let defs instr = List.map Target.to_colored instr.Target.defs
 end
-module Sequentialize = Seqpcopy.Make (Cfg) (SeqpcopyRequirements)
+module SeqpcopyFloatRequirements :
+  Seqpcopy.Requirements with module Target = Target = struct
+  module Target = Target
+  let temp = Target.Reg (Target.Physical Regs.xmm10)
+  let is_pcopy instr =
+    Target.is_pcopy instr
+    && Target.RegSet.for_all
+         (fun reg -> Target.Reg.reg_class reg = Float)
+         (Target.uses instr)
+    && Target.RegSet.for_all
+         (fun reg -> Target.Reg.reg_class reg = Float)
+         (Target.defs instr)
+  let mov = Target.mov
+  let uses instr = List.map Target.to_colored instr.Target.uses
+  let defs instr = List.map Target.to_colored instr.Target.defs
+end
+module SequentializeInt = Seqpcopy.Make (Cfg) (SeqpcopyIntRequirements)
+module SequentializeFloat = Seqpcopy.Make (Cfg) (SeqpcopyFloatRequirements)

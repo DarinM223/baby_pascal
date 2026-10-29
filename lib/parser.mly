@@ -3,9 +3,10 @@
 %token VAR
 %token TRUE FALSE
 %token FUNCTION PROCEDURE BEGIN END IF THEN ELSE WHILE DO ALLOCA
-%token INTEGER BOOLEAN VOID
+%token INTEGER BOOLEAN VOID DOUBLE
 %token<string> IDENT
 %token<int> INT
+%token<float> FLOAT
 %token EOF
 
 %left AND OR
@@ -16,7 +17,7 @@
 %nonassoc NOT
 
 %start <Ast.stmt Ast.program> program
-%type <string * Ast.typ> global
+%type <Ast.global_def> global
 %type <Ast.typ> typ
 %type <Ast.stmt Ast.decl> decl
 %type <Ast.stmt> statement
@@ -32,7 +33,8 @@ program:
 | EOF {{ Ast.globals = []; decls = []; main = Ast.Group [] }}
 
 global:
-| VAR r = separated_pair(IDENT, COLON, typ) {r}
+| VAR r = separated_pair(IDENT, COLON, typ)
+  {let id, typ = r in { id; typ; value = Ast.External }}
 
 typ:
 | LPAREN params = separated_list(COMMA, typ) RPAREN COLON ret = typ {Ast.TFunction (params, Some ret)}
@@ -40,6 +42,7 @@ typ:
 | LBRACE fields = separated_list(COMMA, separated_pair(IDENT, COLON, typ)) RBRACE {Ast.TRecord fields}
 | INTEGER {Ast.TInteger}
 | BOOLEAN {Ast.TBoolean}
+| DOUBLE {Ast.TDouble}
 | VOID {Ast.TVoid}
 | TIMES t = typ {Ast.TPointer t}
 
@@ -99,4 +102,5 @@ expr:
 | v = IDENT {Ast.Var v}
 | TRUE {Ast.Bool true}
 | FALSE {Ast.Bool false}
+| f = FLOAT {Ast.Double f}
 | i = INT {Ast.Int i}

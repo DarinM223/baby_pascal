@@ -139,7 +139,13 @@ let test_loops () =
   let module Extra = (val extra) in
   let module Dom = Dominator.Make (X86.Cfg) (Extra) in
   let module Loop = Loopnesting.Make (X86.Cfg) (Dom) in
-  let module NextUseDistances = Spill.X86.NextUseDistances (Loop) in
+  let module RegClass = struct
+    module Target = X86.Target
+    let reg_class = X86.Target.Int
+    let k = 16
+  end in
+  let module X86Spill = Spill.X86 (RegClass) in
+  let module NextUseDistances = X86Spill.NextUseDistances (Loop) in
   let next_use_distances = NextUseDistances.calc cfg in
   Logs.debug (fun m ->
       m "Next use distances: %s\n"
@@ -152,11 +158,11 @@ let test_loops () =
           in
           [%show: (int * (int * int) list) list] next_use_distances
         end);
-  let liveness = Spill.X86.Liveness.calc cfg in
+  let liveness = X86Spill.Liveness.calc cfg in
   let module Spill =
-    Spill.X86.Make (Loop) (NextUseDistances)
+    X86Spill.Make (Loop) (NextUseDistances)
       (struct
-        let reg_class = X86.Target.Int
+        let matches r = X86.Target.Reg.reg_class r = X86.Target.Int
         let k = 16
         let next_use_distances = next_use_distances
         let liveness = liveness
@@ -165,56 +171,56 @@ let test_loops () =
   let cfg = Spill.spill state cfg in
   let expected =
     {|
-  movq %17any, $17
-  movq %16any, $16
-  movq %15any, $15
-  movq %14any, $14
-  movq %13any, $13
-  movq %12any, $12
-  movq %11any, $11
-  movq %10any, $10
-  movq %9any, $9
-  movq %8any, $8
-  movq %7any, $7
-  movq %6any, $6
-  movq %5any, $5
-  movq %4any, $4
-  movq %3any, $3
-  movq %2any, $2
-  movq 0(%rsp), %16any
-  movq %1any, $1
-  movq 8(%rsp), %1any
-  movq %0any, $0
-  jmp label1(%9any)
-label1(local=false)(18any):
-  jl label3(%18any), label2(%18any), %3any, %2any
-label2(local=false)(19any):
-  addq %20any, %2any, %3any
-  subq %21any, %20any, %2any
-  mulq %22any, %4any, %19any, %5any
-  addq %23any, %22any, %6any
-  subq %24any, %7any, %8any
-  addq %25any, %21any, %23any
-  addq %26any, %25any, %24any, %22any
-  jmp label1(%26any)
-label3(local=false)(27any):
-  movq %39any, 8(%rsp)
-  movq %40any, 0(%rsp)
-  jmp label4(%17any)
-label4(local=false)(28any):
-  jl label6(%28any), label5(%28any), %11any, %10any
-label5(local=false)(29any):
-  addq %30any, %10any, %11any
-  subq %31any, %30any, %12any
-  mulq %32any, %31any, %13any
-  addq %33any, %32any, %14any
-  subq %34any, %33any, %15any, %16any, %29any
-  jmp label4(%34any)
-label6(local=false)(35any):
-  addq %36any, %0any, %1any
-  addq %37any, %27any, %36any
-  addq %38any, %35any, %37any
-  ret %38any
+  movq %49any, $17
+  movq %48any, $16
+  movq %47any, $15
+  movq %46any, $14
+  movq %45any, $13
+  movq %44any, $12
+  movq %43any, $11
+  movq %42any, $10
+  movq %41any, $9
+  movq %40any, $8
+  movq %39any, $7
+  movq %38any, $6
+  movq %37any, $5
+  movq %36any, $4
+  movq %35any, $3
+  movq %34any, $2
+  movq 0(%rsp), %48any
+  movq %33any, $1
+  movq 8(%rsp), %33any
+  movq %32any, $0
+  jmp label1(%41any)
+label1(local=false)(50any):
+  jl label3(%50any), label2(%50any), %35any, %34any
+label2(local=false)(51any):
+  addq %52any, %34any, %35any
+  subq %53any, %52any, %34any
+  mulq %54any, %36any, %51any, %37any
+  addq %55any, %54any, %38any
+  subq %56any, %39any, %40any
+  addq %57any, %53any, %55any
+  addq %58any, %57any, %56any, %54any
+  jmp label1(%58any)
+label3(local=false)(59any):
+  movq %71any, 8(%rsp)
+  movq %72any, 0(%rsp)
+  jmp label4(%49any)
+label4(local=false)(60any):
+  jl label6(%60any), label5(%60any), %43any, %42any
+label5(local=false)(61any):
+  addq %62any, %42any, %43any
+  subq %63any, %62any, %44any
+  mulq %64any, %63any, %45any
+  addq %65any, %64any, %46any
+  subq %66any, %65any, %47any, %48any, %61any
+  jmp label4(%66any)
+label6(local=false)(67any):
+  addq %68any, %32any, %33any
+  addq %69any, %59any, %68any
+  addq %70any, %67any, %69any
+  ret %70any
 |}
   in
   Logs.debug (fun m -> m "Spilled graph: %a\n" X86.Printer.pp_graph cfg);
@@ -233,7 +239,7 @@ label6(local=false)(35any):
     in
     Reconstruct.reconstruct
       (fun () -> state.select_state.fresh_vreg Int)
-      (Spill.RegSet.singleton reg)
+      reg
       (Spill.RegSet.of_list copies)
       def_blocks graph
   in
@@ -242,56 +248,56 @@ label6(local=false)(35any):
   let cfg_pretty = Format.asprintf "%a" X86.Printer.pp_graph cfg in
   let expected =
     {|
-  movq %17any, $17
-  movq %16any, $16
-  movq %15any, $15
-  movq %14any, $14
-  movq %13any, $13
-  movq %12any, $12
-  movq %11any, $11
-  movq %10any, $10
-  movq %9any, $9
-  movq %8any, $8
-  movq %7any, $7
-  movq %6any, $6
-  movq %5any, $5
-  movq %4any, $4
-  movq %3any, $3
-  movq %2any, $2
-  movq 0(%rsp), %16any
-  movq %1any, $1
-  movq 8(%rsp), %1any
-  movq %0any, $0
-  jmp label1(%9any)
-label1(local=false)(18any):
-  jl label3(%18any), label2(%18any), %3any, %2any
-label2(local=false)(19any):
-  addq %20any, %2any, %3any
-  subq %21any, %20any, %2any
-  mulq %22any, %4any, %19any, %5any
-  addq %23any, %22any, %6any
-  subq %24any, %7any, %8any
-  addq %25any, %21any, %23any
-  addq %26any, %25any, %24any, %22any
-  jmp label1(%26any)
-label3(local=false)(27any):
-  movq %39any, 8(%rsp)
-  movq %40any, 0(%rsp)
-  jmp label4(%17any)
-label4(local=false)(28any):
-  jl label6(%28any), label5(%28any), %11any, %10any
-label5(local=false)(29any):
-  addq %30any, %10any, %11any
-  subq %31any, %30any, %12any
-  mulq %32any, %31any, %13any
-  addq %33any, %32any, %14any
-  subq %34any, %33any, %15any, %40any, %29any
-  jmp label4(%34any)
-label6(local=false)(35any):
-  addq %36any, %0any, %39any
-  addq %37any, %27any, %36any
-  addq %38any, %35any, %37any
-  ret %38any
+  movq %49any, $17
+  movq %48any, $16
+  movq %47any, $15
+  movq %46any, $14
+  movq %45any, $13
+  movq %44any, $12
+  movq %43any, $11
+  movq %42any, $10
+  movq %41any, $9
+  movq %40any, $8
+  movq %39any, $7
+  movq %38any, $6
+  movq %37any, $5
+  movq %36any, $4
+  movq %35any, $3
+  movq %34any, $2
+  movq 0(%rsp), %48any
+  movq %33any, $1
+  movq 8(%rsp), %33any
+  movq %32any, $0
+  jmp label1(%41any)
+label1(local=false)(50any):
+  jl label3(%50any), label2(%50any), %35any, %34any
+label2(local=false)(51any):
+  addq %52any, %34any, %35any
+  subq %53any, %52any, %34any
+  mulq %54any, %36any, %51any, %37any
+  addq %55any, %54any, %38any
+  subq %56any, %39any, %40any
+  addq %57any, %53any, %55any
+  addq %58any, %57any, %56any, %54any
+  jmp label1(%58any)
+label3(local=false)(59any):
+  movq %71any, 8(%rsp)
+  movq %72any, 0(%rsp)
+  jmp label4(%49any)
+label4(local=false)(60any):
+  jl label6(%60any), label5(%60any), %43any, %42any
+label5(local=false)(61any):
+  addq %62any, %42any, %43any
+  subq %63any, %62any, %44any
+  mulq %64any, %63any, %45any
+  addq %65any, %64any, %46any
+  subq %66any, %65any, %47any, %72any, %61any
+  jmp label4(%66any)
+label6(local=false)(67any):
+  addq %68any, %32any, %71any
+  addq %69any, %59any, %68any
+  addq %70any, %67any, %69any
+  ret %70any
 |}
   in
   (check string) "Check reconstructed graph" expected cfg_pretty
