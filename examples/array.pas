@@ -1,5 +1,6 @@
 var printInteger : (integer): void;
 var printDouble : (double): void;
+var printChar : (char): void;
 
 function sumnums() : double;
 begin
@@ -55,9 +56,11 @@ end
 
 begin
     result := sumnums();
-    // Should print "Result: 15"
+    // Should print "15.000000"
     printDouble(result);
+    printChar('\n');
     result2 := multi();
-    // Should print "Result: 136"
+    // Should print "136"
     printInteger(result2);
+    printChar('\n');
 end

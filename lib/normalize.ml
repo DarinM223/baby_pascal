@@ -165,6 +165,7 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
       Cfg.nodes =
     match snd exp with
     | Ast.Typed.Int i -> k (Target.Const i)
+    | Char c -> k (Target.Const (int_of_char c))
     | Bool b -> k (Target.Const (if b then 1 else 0))
     | Double d ->
       (* emit global float constant, and return label to it *)
@@ -172,6 +173,12 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
       globals :=
         { id; typ = TDouble; value = Initialized (ConstDouble d) } :: !globals;
       k (Target.Label (TDouble, (-1, id), []))
+    | String s ->
+      (* emit global string constant, and return label to it *)
+      let typ = Ast.TArray (TChar, String.length s) in
+      let id = Name.label (snd (fresh typ)) in
+      globals := { id; typ; value = Initialized (ConstString s) } :: !globals;
+      k (Target.Label (typ, (-1, id), []))
     | Var v -> k (Target.reg (fst exp) v)
     | Uop (uop, e) ->
       let* e = go_expr e in
@@ -186,7 +193,7 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
         List.fold_right
           (fun i f ->
             fun zgraph ->
-             let ptr = Target.Reg (fresh elem_typ) in
+             let ptr = Target.Reg (fresh (TPointer elem_typ)) in
              Cfg.instruction
                (Target.GetElementPtr
                   (ptr, fst exp, array, [ (TInteger, Target.Const i) ]))
@@ -215,10 +222,11 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
       let tmp = Target.Reg (fresh (fst exp)) in
       let rest = k tmp in
       fun zgraph -> Cfg.instruction (Target.Load (tmp, e)) @@ rest @@ zgraph
+    | Addrof _ -> failwith "Addrof normalization not implemented yet"
     | ArrayIndex (((array_typ, _) as array), ((index_typ, _) as index)) ->
       let* array = go_expr array in
       let* index = go_expr index in
-      let tmp = Target.Reg (fresh (fst exp)) in
+      let tmp = Target.Reg (fresh (TPointer array_typ)) in
       let rest = k tmp in
       fun zgraph ->
         Cfg.instruction
@@ -236,7 +244,7 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
       begin match index_of field fields with
       | Some index ->
         let* record = go_expr record in
-        let tmp = Target.Reg (fresh (fst exp)) in
+        let tmp = Target.Reg (fresh (TPointer (fst exp))) in
         let rest = k tmp in
         fun zgraph ->
           Cfg.instruction

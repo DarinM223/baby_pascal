@@ -20,6 +20,6 @@ begin
 end
 
 begin
-  // Should print "Result: 120"
+  // Should print "120"
   printInteger(factorial(5));
 end

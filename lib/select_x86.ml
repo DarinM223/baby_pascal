@@ -170,6 +170,12 @@ module Select = struct
       go [] l k
     in
     match instruction with
+    | Undag.Target.Assign (dest, (Label (Ast.TArray _, _, _) as src)) ->
+      let open Target in
+      let dest_class = reg_class_of_operand dest in
+      let dest = assign_vreg dest_class dest in
+      let* src = translate_operand src in
+      instr "leaq" ~defs:[ dest ] ~uses:[ src ] @> k dest
     | Undag.Target.Assign (dest, src) ->
       let open Target in
       let dest_class = reg_class_of_operand dest in
@@ -468,13 +474,13 @@ module Select = struct
         in
         (* for dynamic allocas, you need to manually increase the stack *)
         instr "subq" ~defs:[ Reg (Physical Regs.rsp) ] ~uses:[ Imm size ]
-        @> instr "lea" ~defs:[ dest ] ~uses:[ rsp_address ]
+        @> instr "leaq" ~defs:[ dest ] ~uses:[ rsp_address ]
         @> k dest
       end
       else begin
         (* alloca in entry block, so use it as a stack slot *)
         let slot = state.new_stack_slot size in
-        instr "lea" ~defs:[ dest ] ~uses:[ slot ] @> k dest
+        instr "leaq" ~defs:[ dest ] ~uses:[ slot ] @> k dest
       end
     | Undag.Target.Load (dest, src) ->
       let dest = assign_vreg (reg_class_of_operand dest) dest in

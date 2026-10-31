@@ -1,5 +1,6 @@
 var printInteger : (integer): void;
 var printDouble : (double): void;
+var printChar : (char): void;
 
 function hello(a: integer, b: integer, c: integer, d: integer, e: integer, f: integer, g: integer, h: integer) : integer;
 begin
@@ -36,13 +37,17 @@ end
 
 begin
   // 1 + 2 + 3 + 4 + 5 + 6 + 1 (8 - 7 instead of 7 - 8)
-  // Should print "Result: 22"
+  // Should print "22"
   printInteger(hello(1, 2, 3, 4, 5, 6, 7, 8));
+  printChar('\n');
   // 1 + 2 + 3 + 4 + 5 + 6 + 1 (8 - 7 instead of 7 - 8)
-  // Should print "Result: 22.000000"
+  // Should print "22.000000"
   printDouble(doublehello(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0));
-  // Should print "Result: 36"
+  printChar('\n');
+  // Should print "36"
   printInteger(world(8));
-  // Should print "Result: 7"
+  printChar('\n');
+  // Should print "7"
   printInteger(blah());
+  printChar('\n');
 end

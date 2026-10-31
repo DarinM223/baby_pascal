@@ -1,6 +1,7 @@
 type typ =
   | TInteger
   | TBoolean
+  | TChar
   | TDouble
   | TVoid
   | TFunction of typ list * typ option
@@ -13,6 +14,7 @@ let rec pp_typ fmt = function
   | TInteger -> Format.fprintf fmt "integer"
   | TBoolean -> Format.fprintf fmt "boolean"
   | TDouble -> Format.fprintf fmt "double"
+  | TChar -> Format.fprintf fmt "char"
   | TVoid -> Format.fprintf fmt "void"
   | TFunction (args, ret) ->
     let pp_ret fmt = function
@@ -73,10 +75,13 @@ struct
     | Int of int
     | Bool of bool
     | Double of float
+    | Char of char
     | Var of string
+    | String of string
     | Array of expr * int
     | Uop of uop * expr
     | Bop of bop * expr * expr
+    | Addrof of expr
     | Deref of expr
     | ArrayIndex of expr * expr
     | RecordField of expr * string
@@ -140,6 +145,7 @@ type 'a program = {
 let rec alignof = function
   | TInteger -> 8
   | TBoolean -> 1
+  | TChar -> 1
   | TDouble -> 8
   | TVoid -> 0
   | TFunction (_, _) -> failwith "Cannot get alignof function yet"
@@ -151,6 +157,7 @@ let rec alignof = function
 let rec sizeof = function
   | TInteger -> 8
   | TBoolean -> 1
+  | TChar -> 1
   | TDouble -> 8
   | TVoid -> 0
   | TFunction (_, _) -> failwith "Cannot get sizeof function yet"

@@ -287,6 +287,10 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
         | { Target.instr = "mov"; defs = [ dest ]; uses = [ src ]; _ }
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->
           go_tail tail
+        | { Target.instr = "adr"; _ } ->
+          List.iter record_operand i.uses;
+          List.iter record_operand i.defs;
+          prepend_head (Cfg.Head (head, Instruction i)) (go_tail tail)
         | { Target.instr = "bl"; _ } ->
           called_function := true;
           List.iter record_operand i.uses;

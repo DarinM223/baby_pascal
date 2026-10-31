@@ -20,6 +20,6 @@ end
 
 begin
   // The GCD of 54 and 24 is 6
-  // Should print "Result: 6.0000"
+  // Should print "6.000000"
   printDouble(gcd(54.0, 24.0));
 end

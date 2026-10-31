@@ -158,6 +158,7 @@ let rec lower_getelementptr (module F : Normalize.Fresh) = function
       | _, [] ->
         begin match (offset, tmp) with
         | 0, Target.Instr instr -> instr
+        | 0, src -> Target.assign ~dest ~src
         | _ -> Target.bop Ast.Add ~dest ~src1:tmp ~src2:(Const offset)
         end
       | typ, _ ->

@@ -5,6 +5,8 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
   | Int i -> (TInteger, Typed.Int i)
   | Bool b -> (TBoolean, Bool b)
   | Double d -> (TDouble, Double d)
+  | Char c -> (TChar, Char c)
+  | String s -> (TArray (TChar, String.length s), String s)
   | Var v ->
     begin try (M.find v venv, Var v)
     with Not_found ->
@@ -13,7 +15,9 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
   | Array (init_expr, size) ->
     let init_expr = check_expr venv fenv init_expr in
     (TArray (fst init_expr, size), Array (init_expr, size))
-  | Uop (_, e) -> check_expr venv fenv e
+  | Uop (uop, e) ->
+    let ((typ, _) as e) = check_expr venv fenv e in
+    (typ, Uop (uop, e))
   | Bop (bop, l, r) ->
     let ((l_typ, _) as l_expr) = check_expr venv fenv l in
     let ((r_typ, _) as r_expr) = check_expr venv fenv r in
@@ -40,7 +44,7 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
              pp_typ TBoolean pp_typ r_typ);
       (TBoolean, Bop (bop, l_expr, r_expr))
     | Eq | Neq | Lt | Le | Gt | Ge ->
-      if l_typ <> TInteger && l_typ <> TDouble then
+      if l_typ <> TInteger && l_typ <> TDouble && l_typ <> TChar then
         failwith
           (Format.asprintf
              "Left expression is different, expected %a or %a got %a" pp_typ
@@ -102,8 +106,26 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
   | Deref expr ->
     begin match check_expr venv fenv expr with
     | (TPointer ty, _) as expr -> (ty, Deref expr)
-    | _ -> failwith "Expected pointer type for load"
+    | _ -> failwith "Expected pointer type for deref"
     end
+  | Addrof ((String _ | Array _) as expr) ->
+    check_expr ~inside_selector venv fenv (Addrof (ArrayIndex (expr, Int 0)))
+  | Addrof ((ArrayIndex _ | RecordField _) as expr) ->
+    let typ, expr = check_expr ~inside_selector:true venv fenv expr in
+    (TPointer typ, expr)
+  | Addrof (Deref expr) -> check_expr ~inside_selector venv fenv expr
+  | Addrof (Var _ as var) ->
+    let var = check_expr venv fenv var in
+    begin match fst var with
+    | TArray (typ, _size) ->
+      (TPointer typ, ArrayIndex (var, (TInteger, Typed.Int 0)))
+    | TRecord _ as typ ->
+      (TPointer typ, ArrayIndex (var, (TInteger, Typed.Int 0)))
+    | typ -> (TPointer typ, Addrof var)
+    end
+  | Addrof expr ->
+    failwith
+    @@ Format.asprintf "Cannot get address of expression %a" Ast.pp_expr expr
 
 let rec check_stmt venv fenv = function
   | Declare (x, typ) -> (M.add x typ venv, Typed.Declare (x, typ))
