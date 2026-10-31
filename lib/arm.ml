@@ -1,3 +1,48 @@
+open struct
+  let register_index name =
+    if String.length name < 2 then None
+    else
+      try Some (int_of_string (String.sub name 1 (String.length name - 1)))
+      with Failure _ -> None
+
+  let numbered_register prefix max_index name =
+    match register_index name with
+    | Some i when i >= 0 && i <= max_index ->
+      Some (String.make 1 prefix ^ string_of_int i)
+    | _ -> None
+
+  let lower_to_width (width, reg) =
+    match reg.[0] with
+    | 'x' | 'w' ->
+      let prefix =
+        match width with
+        | 1 | 2 | 4 -> 'w'
+        | 8 -> 'x'
+        | _ -> invalid_arg "lower_to_width: unsupported integer width"
+      in
+      begin match numbered_register prefix 30 reg with
+      | Some lowered -> lowered
+      | None -> invalid_arg "lower_to_width: invalid GPR"
+      end
+    | 'b' | 'h' | 's' | 'd' | 'q' | 'v' ->
+      let prefix =
+        match width with
+        | 1 -> 'b'
+        | 2 -> 'h'
+        | 4 -> 's'
+        | 8 -> 'd'
+        | 16 -> 'q'
+        | _ -> invalid_arg "lower_to_width: unsupported FP width"
+      in
+      begin match numbered_register prefix 31 reg with
+      | Some lowered -> lowered
+      | None -> invalid_arg "lower_to_width: invalid SIMD/FP register"
+      end
+    | _ -> invalid_arg "lower_to_width: unknown register"
+end
+
+let width_of_typ = Ast.sizeof
+
 module Target = struct
   type label = Normalize.Target.label [@@deriving show, eq]
   type reg_class =
@@ -8,8 +53,8 @@ module Target = struct
     | Int -> Format.fprintf fmt ""
     | Float -> Format.fprintf fmt "f"
 
-  type physical_reg = int * reg_class * string [@@deriving eq]
-  let pp_physical_reg fmt (_, _, s) = Format.fprintf fmt "%s" s
+  type physical_reg = int * reg_class * int * string [@@deriving eq]
+  let pp_physical_reg fmt (_, _, _, s) = Format.fprintf fmt "%s" s
   let show_physical_reg phys = Format.asprintf "%a" pp_physical_reg phys
 
   type reg_constr =
@@ -21,6 +66,7 @@ module Target = struct
   and virtual_reg = {
     id : int;
     reg_class : reg_class;
+    width : int;
     mutable reg : reg;
     mutable reg_constr : reg_constr;
   }
@@ -38,7 +84,7 @@ module Target = struct
     | ReuseOperand r -> Format.fprintf fmt "(reuse=%%%d)" r.id
 
   and pp_reg fmt = function
-    | Physical (_, _, s) -> Format.fprintf fmt "%s" s
+    | Physical (_, _, _, s) -> Format.fprintf fmt "%s" s
     | Virtual v ->
       begin match v.reg with
       | Physical _ as r -> Format.fprintf fmt "%a(%d)" pp_reg r v.id
@@ -50,12 +96,12 @@ module Target = struct
   let show_reg_constr = Format.asprintf "%a" pp_reg_constr
   let show_reg = Format.asprintf "%a" pp_reg
   let index = function
-    | Physical (id, _, _) -> id
+    | Physical (id, _, _, _) -> id
     | Virtual v -> v.id
     | Tombstone -> failwith "index: got tombstone"
   let equal_reg r1 r2 =
     match (r1, r2) with
-    | Physical (id1, _, _), Physical (id2, _, _) -> id1 = id2
+    | Physical (id1, _, _, _), Physical (id2, _, _, _) -> id1 = id2
     | Virtual v1, Virtual v2 -> v1.id = v2.id
     | _ -> false
 
@@ -185,11 +231,20 @@ module Target = struct
       | r -> r
     let reg_class = function
       | Virtual v -> v.reg_class
-      | Physical (_, clz, _) -> clz
+      | Physical (_, clz, _, _) -> clz
       | Tombstone ->
         failwith
           "reg_class: attempted to get the register class of a tombstone \
            register"
+    let width = function
+      | Virtual v -> v.width
+      | Physical (_, _, width, _) -> width
+      | Tombstone -> failwith "cannot get width of tombstone"
+    let lower_to_width width = function
+      | Virtual v -> Virtual { v with width }
+      | Physical (id, clz, _width, reg) ->
+        Physical (id, clz, width, lower_to_width (width, reg))
+      | Tombstone -> Tombstone
   end
   module RegSet = CCSet.Make (Reg)
   module RegMap = CCMap.Make (Reg)
@@ -354,7 +409,7 @@ module Regs = struct
     let counter = ref (-1)
     let new_reg clz s =
       incr counter;
-      (!counter, clz, s)
+      (!counter, clz, 8, s)
   end
 
   (* todo: handle overlapping subregisters *)
@@ -498,7 +553,7 @@ module Regs = struct
   let int_callee_save =
     List.filter
       (function
-        | _, Target.Int, "x30" -> false
+        | _, Target.Int, _, "x30" -> false
         | _ -> true)
       (CCList.drop 19 int_regs)
     @ [ sp ]
@@ -554,7 +609,7 @@ end
 module Writer = struct
   type label = Cfg.label
   let rec pp_reg fmt = function
-    | Target.Physical (_, _, s) -> Format.fprintf fmt "%s" s
+    | Target.Physical (_, _, _, s) -> Format.fprintf fmt "%s" s
     | Virtual v ->
       begin match v.reg with
       | Physical _ as r -> Format.fprintf fmt "%a" pp_reg r

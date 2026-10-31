@@ -7,7 +7,7 @@ let ( let* ) = ( @@ )
 module State = struct
   module Target = Target
   type t = {
-    fresh_vreg : Target.reg_class -> Target.reg;
+    fresh_vreg : Target.reg_class -> int -> Target.reg;
     mapping : Target.operand NameHashtbl.t;
     vreg_block : Cfg.uid IntHashtbl.t;
     new_stack_slot : int -> Target.operand;
@@ -23,11 +23,12 @@ module State = struct
     let rec r =
       {
         fresh_vreg =
-          (fun clz ->
+          (fun clz width ->
             incr c;
             IntHashtbl.replace vreg_block !c r.curr_block;
             let rec reg =
-              Target.Virtual { id = !c; reg_class = clz; reg; reg_constr = Any }
+              Target.Virtual
+                { id = !c; reg_class = clz; width; reg; reg_constr = Any }
             in
             reg);
         mapping;
@@ -48,8 +49,9 @@ module State = struct
     r
 
   let assign_vreg { fresh_vreg; mapping; _ } clz = function
-    | Undag.Target.Reg (_, n) ->
-      let vreg = fresh_vreg clz in
+    | Undag.Target.Reg (typ, n) ->
+      (* todo: handle structs with size < 16 *)
+      let vreg = fresh_vreg clz (width_of_typ typ) in
       NameHashtbl.add mapping n (Reg vreg);
       vreg
     | _ -> failwith "assign_vreg: expected destination to be register"
@@ -79,31 +81,35 @@ module Select = struct
       reg_class
     | Const _ -> Int
 
-  let call_conv ~caller { State.fresh_vreg; new_stack_slot; _ } = function
+  let width_of_operand _ = failwith ""
+
+  let call_conv ~caller { State.fresh_vreg; new_stack_slot; _ } width = function
     | Target.Int ->
       begin function
-        | 0 -> Target.(Reg (constrained Regs.rdi (fresh_vreg Int)))
-        | 1 -> Target.(Reg (constrained Regs.rsi (fresh_vreg Int)))
-        | 2 -> Target.(Reg (constrained Regs.rdx (fresh_vreg Int)))
-        | 3 -> Target.(Reg (constrained Regs.rcx (fresh_vreg Int)))
-        | 4 -> Target.(Reg (constrained Regs.r8 (fresh_vreg Int)))
-        | 5 -> Target.(Reg (constrained Regs.r9 (fresh_vreg Int)))
+        | 0 -> Target.(Reg (constrained Regs.rdi (fresh_vreg Int width)))
+        | 1 -> Target.(Reg (constrained Regs.rsi (fresh_vreg Int width)))
+        | 2 -> Target.(Reg (constrained Regs.rdx (fresh_vreg Int width)))
+        | 3 -> Target.(Reg (constrained Regs.rcx (fresh_vreg Int width)))
+        | 4 -> Target.(Reg (constrained Regs.r8 (fresh_vreg Int width)))
+        | 5 -> Target.(Reg (constrained Regs.r9 (fresh_vreg Int width)))
         | n ->
+          (* todo: handle arbitrary width stack slots for pass by value structs > 16 bytes *)
           if caller then new_stack_slot 8
           else
             Target.StackSlot { relative_to_base = true; offset = (n - 5) * 8 }
       end
     | Target.Float ->
       begin function
-        | 0 -> Target.(Reg (constrained Regs.xmm0 (fresh_vreg Float)))
-        | 1 -> Target.(Reg (constrained Regs.xmm1 (fresh_vreg Float)))
-        | 2 -> Target.(Reg (constrained Regs.xmm2 (fresh_vreg Float)))
-        | 3 -> Target.(Reg (constrained Regs.xmm3 (fresh_vreg Float)))
-        | 4 -> Target.(Reg (constrained Regs.xmm4 (fresh_vreg Float)))
-        | 5 -> Target.(Reg (constrained Regs.xmm5 (fresh_vreg Float)))
-        | 6 -> Target.(Reg (constrained Regs.xmm6 (fresh_vreg Float)))
-        | 7 -> Target.(Reg (constrained Regs.xmm7 (fresh_vreg Float)))
+        | 0 -> Target.(Reg (constrained Regs.xmm0 (fresh_vreg Float width)))
+        | 1 -> Target.(Reg (constrained Regs.xmm1 (fresh_vreg Float width)))
+        | 2 -> Target.(Reg (constrained Regs.xmm2 (fresh_vreg Float width)))
+        | 3 -> Target.(Reg (constrained Regs.xmm3 (fresh_vreg Float width)))
+        | 4 -> Target.(Reg (constrained Regs.xmm4 (fresh_vreg Float width)))
+        | 5 -> Target.(Reg (constrained Regs.xmm5 (fresh_vreg Float width)))
+        | 6 -> Target.(Reg (constrained Regs.xmm6 (fresh_vreg Float width)))
+        | 7 -> Target.(Reg (constrained Regs.xmm7 (fresh_vreg Float width)))
         | n ->
+          (* todo: handle arbitrary width stack slots for pass by value structs > 16 bytes *)
           if caller then new_stack_slot 8
           else
             Target.StackSlot { relative_to_base = true; offset = (n - 7) * 8 }
@@ -117,10 +123,11 @@ module Select = struct
         (Target.reuse_op tmp dest :: defs, num_hidden))
   let ( @> ) i t = Cfg.Tail (Instruction i, t)
 
-  let reuse_cond fresh src1_class src1 src2_class src2 init k mk_instr =
+  let reuse_cond fresh src1_class src1_width src1 src2_class src2_width src2
+      init k mk_instr =
     let open Target in
-    let tmp1 = Reg (fresh src1_class) in
-    let tmp2 = Reg (fresh src2_class) in
+    let tmp1 = Reg (fresh src1_class src1_width) in
+    let tmp2 = Reg (fresh src2_class src2_width) in
     let args, inject = init () in
     let setters =
       List.fold_right
@@ -184,9 +191,10 @@ module Select = struct
       mov ~dest ~src @> k dest
     | Undag.Target.Uop (dest, Not, src) ->
       let src_class = reg_class_of_operand src in
+      let src_width = width_of_typ (width_of_operand src) in
       let open Target in
       let dest = assign_vreg src_class dest in
-      let tmp = Reg (fresh_vreg src_class) in
+      let tmp = Reg (fresh_vreg src_class src_width) in
       let* src = translate_operand src in
       mov ~dest:tmp ~src:(Imm 0)
       @> instr "testq" ~defs:[] ~uses:[ src; src ]
@@ -195,12 +203,14 @@ module Select = struct
     | Undag.Target.Bop (dest, bop, src1, src2) ->
       let open Target in
       let src1_class = reg_class_of_operand src1 in
+      let src1_width = width_of_operand src1 in
       let src2_class = reg_class_of_operand src2 in
+      let src2_width = width_of_operand src2 in
       let dest = assign_vreg src1_class dest in
       let* src1 = translate_operand src1 in
       let* src2 = translate_operand src2 in
       let reuse_bop i =
-        let tmp = Reg (fresh_vreg src1_class) in
+        let tmp = Reg (fresh_vreg src1_class src1_width) in
         mov ~dest:tmp ~src:src1
         @> reuse_instr tmp dest (instr i ~defs:[] ~uses:[ src2 ])
         @> k dest
@@ -209,10 +219,11 @@ module Select = struct
         reuse_instr tmp dest (instr i ~defs:[] ~uses:[])
       in
       let reuse_cond =
-        reuse_cond fresh_vreg src1_class src1 src2_class src2
+        reuse_cond fresh_vreg src1_class src1_width src1 src2_class src2_width
+          src2
           (fun () ->
-            let tmp = Reg (fresh_vreg Int) in
-            let dest = Reg (fresh_vreg Int) in
+            let tmp = Reg (fresh_vreg Int src1_width) in
+            let dest = Reg (fresh_vreg Int src1_width) in
             ([ (Imm 0, tmp, dest) ], fun t -> mov ~dest:tmp ~src:(Imm 0) @> t))
           (function
             | [ dest ] -> k dest
@@ -229,10 +240,10 @@ module Select = struct
       | Int, Ast.Sub -> reuse_bop "subq"
       | Float, Ast.Sub -> reuse_bop "subsd"
       | Int, Ast.Mul ->
-        let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int)) in
-        let tmp2 = Reg (fresh_vreg Int) in
-        let tmp3 = Reg (constrained Regs.rdx (fresh_vreg Int)) in
-        let tmp4 = Reg (constrained Regs.rax (fresh_vreg Int)) in
+        let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int src1_width)) in
+        let tmp2 = Reg (fresh_vreg Int src1_width) in
+        let tmp3 = Reg (constrained Regs.rdx (fresh_vreg Int src1_width)) in
+        let tmp4 = Reg (constrained Regs.rax (fresh_vreg Int src1_width)) in
         (* rax -> rdx:rax *)
         let mul =
           instr "imulq" ~defs:[] ~uses:[ tmp2 ]
@@ -248,11 +259,11 @@ module Select = struct
         @> mul @> mov ~dest ~src:tmp4 @> k dest
       | Float, Ast.Mul -> reuse_bop "mulsd"
       | Int, Ast.Div ->
-        let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int)) in
-        let tmp2 = Reg (fresh_vreg Int) in
-        let tmp3 = Reg (constrained Regs.rdx (fresh_vreg Int)) in
-        let tmp4 = Reg (constrained Regs.rax (fresh_vreg Int)) in
-        let tmp5 = Reg (constrained Regs.rax (fresh_vreg Int)) in
+        let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int src1_width)) in
+        let tmp2 = Reg (fresh_vreg Int src1_width) in
+        let tmp3 = Reg (constrained Regs.rdx (fresh_vreg Int src1_width)) in
+        let tmp4 = Reg (constrained Regs.rax (fresh_vreg Int src1_width)) in
+        let tmp5 = Reg (constrained Regs.rax (fresh_vreg Int src1_width)) in
         (* rax -> rdx:rax *)
         let cqto =
           instr "cqto" ~defs:[] ~uses:[]
@@ -278,14 +289,14 @@ module Select = struct
       | Float, Ast.Div -> reuse_bop "divsd"
       | Int, Ast.And ->
         (* todo: change to use bitwise and since we use that in value numbering *)
-        let tmp = Reg (fresh_vreg Int) in
+        let tmp = Reg (fresh_vreg Int src1_width) in
         mov ~dest:tmp ~src:src1
         @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
         @> reuse_instr tmp dest (instr "cmovnz" ~defs:[] ~uses:[ src2 ])
         @> k dest
       | Int, Ast.Or ->
         (* todo: change to use bitwise or since we use that in value numbering *)
-        let tmp = Reg (fresh_vreg Int) in
+        let tmp = Reg (fresh_vreg Int src1_width) in
         mov ~dest:tmp ~src:src1
         @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
         @> reuse_instr tmp dest (instr "cmovz" ~defs:[] ~uses:[ src2 ])
@@ -303,17 +314,22 @@ module Select = struct
       end
     | Undag.Target.Return ops ->
       let ops_classes = List.map reg_class_of_operand ops in
+      let ops_widths = List.map width_of_operand ops in
       let* ops = translate_operands ops in
-      begin match List.combine ops_classes ops with
+      begin match List.combine (List.combine ops_classes ops_widths) ops with
       | [] -> Cfg.Last (Cfg.Return (Target.return ~uses:[]))
-      | [ (op_class, op) ] ->
+      | [ ((op_class, op_width), op) ] ->
         begin match op_class with
         | Int ->
-          let rax = Target.(Reg (constrained Regs.rax (fresh_vreg Int))) in
+          let rax =
+            Target.(Reg (constrained Regs.rax (fresh_vreg Int op_width)))
+          in
           Target.pcopy ~dests:[ rax ] ~srcs:[ op ]
           @> Cfg.Last (Cfg.Return (Target.return ~uses:[ rax ]))
         | Float ->
-          let xmm0 = Target.(Reg (constrained Regs.xmm0 (fresh_vreg Float))) in
+          let xmm0 =
+            Target.(Reg (constrained Regs.xmm0 (fresh_vreg Float op_width)))
+          in
           Target.pcopy ~dests:[ xmm0 ] ~srcs:[ op ]
           @> Cfg.Last (Cfg.Return (Target.return ~uses:[ xmm0 ]))
         end
@@ -332,24 +348,28 @@ module Select = struct
       let float_args, int_args =
         List.partition (fun op -> reg_class_of_operand op = Float) args
       in
+      let int_widths = List.map width_of_operand int_args in
       let* int_args = translate_operands int_args in
+      let float_widths = List.map width_of_operand float_args in
       let* float_args = translate_operands float_args in
       let int_dests =
-        List.(init (length int_args)) (call_conv ~caller:true state Target.Int)
+        List.(init (length int_args)) (fun i ->
+            call_conv ~caller:true state (List.nth int_widths i) Target.Int i)
       in
       let float_dests =
-        List.(init (length float_args))
-          (call_conv ~caller:true state Target.Float)
+        List.(init (length float_args)) (fun i ->
+            call_conv ~caller:true state (List.nth float_widths i) Target.Float
+              i)
       in
       let clobbered =
         let ints =
           List.map
-            (fun r -> Reg (constrained r (fresh_vreg Int)))
+            (fun r -> Reg (constrained r (fresh_vreg Int 8)))
             Regs.caller_save
         in
         let floats =
           List.map
-            (fun r -> Reg (constrained r (fresh_vreg Float)))
+            (fun r -> Reg (constrained r (fresh_vreg Float 8)))
             Regs.float_regs
         in
         ints @ floats
@@ -409,10 +429,13 @@ module Select = struct
       Cfg.Last (Cfg.Branch (Target.goto l args, l))
     | Undag.Target.Cbranch (src1, src2, cond, l1, l1args, l2, l2args) ->
       let src1_class = reg_class_of_operand src1 in
+      let src1_width = width_of_operand src1 in
       let src2_class = reg_class_of_operand src2 in
+      let src2_width = width_of_operand src2 in
       let* src1 = translate_operand src1 in
       let* src2 = translate_operand src2 in
       let l1args_class = List.map reg_class_of_operand l1args in
+      let l1args_width = List.map width_of_operand l1args in
       let* l1args = translate_operands l1args in
       let* l2args = translate_operands l2args in
       (* handle cbranches with the same label but different arguments *)
@@ -434,15 +457,20 @@ module Select = struct
           | Some Float -> failwith "Float conditional moves not handled yet"
           | None -> failwith "Unknown register class for conditional move"
         in
-        reuse_cond fresh_vreg src1_class src1 src2_class src2
+        reuse_cond fresh_vreg src1_class src1_width src1 src2_class src2_width
+          src2
           (fun () ->
             let open Target in
             let args =
               List.map
-                (fun ((arg1_class, arg1), arg2) ->
-                  let dest = Reg (fresh_vreg arg1_class) in
+                (fun (((arg1_class, arg1_width), arg1), arg2) ->
+                  let dest = Reg (fresh_vreg arg1_class arg1_width) in
                   (arg1, arg2, dest))
-                (List.combine (List.combine l1args_class l1args) l2args)
+                (List.combine
+                   (List.combine
+                      (List.combine l1args_class l1args_width)
+                      l1args)
+                   l2args)
             in
             ( args,
               List.fold_right

@@ -152,7 +152,7 @@ module X86 = struct
       Format.printf "%a\n" X86.Printer.pp_graph cfg;
       let int_regs =
         X86.Regs.int_regs
-        |> List.filter_map (fun ((_, _, reg) as r) ->
+        |> List.filter_map (fun ((_, _, _, reg) as r) ->
             if
               Option.equal X86.Target.equal_reg state.frame_pointer
                 (Some (Physical r))
@@ -164,7 +164,7 @@ module X86 = struct
       in
       let float_regs =
         X86.Regs.float_regs
-        |> List.filter_map (fun ((_, _, reg) as r) ->
+        |> List.filter_map (fun ((_, _, _, reg) as r) ->
             if reg <> "xmm10" then Some (X86.Target.Physical r) else None)
         |> Array.of_list
       in
@@ -248,7 +248,7 @@ module Arm = struct
       Format.printf "%a\n" Arm.Printer.pp_graph cfg;
       let int_regs =
         Arm.Regs.int_regs
-        |> List.filter_map (fun ((_, _, reg) as r) ->
+        |> List.filter_map (fun ((_, _, _, reg) as r) ->
             if
               Option.equal Arm.Target.equal_reg state.frame_pointer
                 (Some (Physical r))
@@ -260,7 +260,7 @@ module Arm = struct
       in
       let float_regs =
         Arm.Regs.float_regs
-        |> List.filter_map (fun ((_, _, reg) as r) ->
+        |> List.filter_map (fun ((_, _, _, reg) as r) ->
             if
               Option.equal Arm.Target.equal_reg state.frame_pointer
                 (Some (Physical r))

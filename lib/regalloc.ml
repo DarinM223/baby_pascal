@@ -1536,7 +1536,13 @@ let%expect_test "Fibonacci register allocation" =
     |}];
     let rec reg =
       X86.Target.Virtual
-        { id = 8; reg_class = Int; reg; reg_constr = UsePhysical X86.Regs.rcx }
+        {
+          id = 8;
+          reg_class = Int;
+          width = 8;
+          reg;
+          reg_constr = UsePhysical X86.Regs.rcx;
+        }
     in
     let label = X86.Cfg.(block_label (zip (fst (X86.Cfg.focus 3 cfg)))) in
     Format.printf "Label: %a\n" (Format.pp_print_option X86.Cfg.pp_label) label;

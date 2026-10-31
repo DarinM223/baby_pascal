@@ -10,6 +10,7 @@ module type Target = sig
   and virtual_reg = {
     id : int;
     reg_class : reg_class;
+    width : int;
     mutable reg : reg;
     mutable reg_constr : reg_constr;
   }
@@ -40,6 +41,8 @@ module type Target = sig
     val hash : reg -> int
     val reg : reg -> reg
     val reg_class : reg -> reg_class
+    val width : reg -> int
+    val lower_to_width : int -> reg -> reg
   end
   module RegSet : CCSet.S with type elt = reg
   module RegMap : CCMap.S with type key = reg
@@ -87,7 +90,7 @@ end
 module type State = sig
   module Target : Target
   type t = {
-    fresh_vreg : Target.reg_class -> Target.reg;
+    fresh_vreg : Target.reg_class -> int -> Target.reg;
     mapping : Target.operand Normalize.NameHashtbl.t;
     vreg_block : int Utils.IntHashtbl.t;
     new_stack_slot : int -> Target.operand;
@@ -105,8 +108,14 @@ module type Select = sig
   val select :
     State.t -> Undag.Target.instr -> (G.Target.operand -> G.tail) -> G.tail
   val reg_class_of_operand : Undag.Target.operand -> State.Target.reg_class
+  val width_of_operand : Undag.Target.operand -> int
   val call_conv :
-    caller:bool -> State.t -> State.Target.reg_class -> int -> G.Target.operand
+    caller:bool ->
+    State.t ->
+    int ->
+    State.Target.reg_class ->
+    int ->
+    G.Target.operand
 end
 
 module Codegen
@@ -153,6 +162,7 @@ struct
       List.mapi
         (fun i arg ->
           Select.call_conv ~caller:false state
+            (Select.width_of_operand (Reg arg))
             (Select.reg_class_of_operand (Reg arg))
             i)
         args

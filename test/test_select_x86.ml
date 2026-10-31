@@ -9,28 +9,48 @@ let test_print () =
     reg
   in
   let reg = Tombstone in
-  let v1 = new_reg { id = 1; reg_class = Int; reg_constr = Any; reg } in
-  let v2 = new_reg { id = 2; reg_class = Int; reg_constr = Any; reg } in
-  let v3 = new_reg { id = 3; reg_class = Int; reg_constr = Any; reg } in
+  let v1 =
+    new_reg { id = 1; reg_class = Int; width = 8; reg_constr = Any; reg }
+  in
+  let v2 =
+    new_reg { id = 2; reg_class = Int; width = 8; reg_constr = Any; reg }
+  in
+  let v3 =
+    new_reg { id = 3; reg_class = Int; width = 8; reg_constr = Any; reg }
+  in
   let instr =
     instr "addq"
       ~defs:[ Reg (reuse v1 v3) ]
       ~uses:[ Reg v1; Reg (constrained Regs.rax v2) ]
   in
   (check string) "add" "addq %3(reuse=%1), %1any, %2(%rax)" (show_instr instr);
-  let v1 = new_reg { id = 1; reg_class = Float; reg_constr = OnStack; reg } in
-  let v2 = new_reg { id = 2; reg_class = Float; reg_constr = OnReg; reg } in
-  let v3 = new_reg { id = 3; reg_class = Float; reg_constr = OnReg; reg } in
+  let v1 =
+    new_reg { id = 1; reg_class = Float; width = 8; reg_constr = OnStack; reg }
+  in
+  let v2 =
+    new_reg { id = 2; reg_class = Float; width = 8; reg_constr = OnReg; reg }
+  in
+  let v3 =
+    new_reg { id = 3; reg_class = Float; width = 8; reg_constr = OnReg; reg }
+  in
   let instr =
     mov ~dest:(Reg v1)
       ~src:
         (MemAddr { base = Some v2; index = v3; scale = 10; displacement = 15 })
   in
   (check string) "mov" "movsd %1fstack, 15(%2freg,%3freg,10)" (show_instr instr);
-  let v1 = new_reg { id = 1; reg_class = Int; reg_constr = Any; reg } in
-  let v2 = new_reg { id = 2; reg_class = Int; reg_constr = Any; reg } in
-  let v3 = new_reg { id = 3; reg_class = Int; reg_constr = Any; reg } in
-  let v4 = new_reg { id = 4; reg_class = Int; reg_constr = Any; reg } in
+  let v1 =
+    new_reg { id = 1; reg_class = Int; width = 8; reg_constr = Any; reg }
+  in
+  let v2 =
+    new_reg { id = 2; reg_class = Int; width = 8; reg_constr = Any; reg }
+  in
+  let v3 =
+    new_reg { id = 3; reg_class = Int; width = 8; reg_constr = Any; reg }
+  in
+  let v4 =
+    new_reg { id = 4; reg_class = Int; width = 8; reg_constr = Any; reg }
+  in
   let instr =
     pcopy
       ~dests:[ Reg (constrained Regs.rdi v3); Reg (constrained Regs.rsi v4) ]
