@@ -1360,27 +1360,23 @@ let%expect_test "Nested loops register allocation" =
       jmp label6
     label1(local=false)():
       exit
-    label2(local=false)(rbx):
-      jl label3, label1, %rbx, $100
+    label2(local=false)(rax):
+      jl label3, label1, %rax, $100
     label3(local=false)():
-      movq %rsi, %rbx
-      pcopy [(%r13, %rsi); (%rsi, %rbx)]
-      jmp label4(%rsi, %r13)
-    label4(local=false)(rsi, r13):
-      jl label5, label2(%rsi), %r13, $100
+      movq %rbx, %rax
+      jmp label4(%rax, %rbx)
+    label4(local=false)(rax, rbx):
+      jl label5, label2(%rax), %rbx, $100
     label5(local=false)():
-      movq %r15, %rsi
-      addq %r15, %r15, $1
-      movq %r15, %r15
-      movq %r14, %r13
-      addq %r14, %r14, $1
-      movq %r14, %r14
-      pcopy [(%rsi, %r15); (%r15, %rsi)]
-      pcopy [(%r13, %r14); (%r14, %r13)]
-      jmp label4(%rsi, %r13)
+      movq %rax, %rax
+      addq %rax, %rax, $1
+      movq %rax, %rax
+      movq %rbx, %rbx
+      addq %rbx, %rbx, $1
+      movq %rbx, %rbx
+      jmp label4(%rax, %rbx)
     label6(local=false)():
-      pcopy [(%rbx, %rax)]
-      jmp label2(%rbx)
+      jmp label2(%rax)
     |}]
 
 let%expect_test "Fibonacci register allocation" =
@@ -1567,9 +1563,8 @@ let%expect_test "Fibonacci register allocation" =
       movq %rax, %rbx
       jmp label1(%rax)
     label3(local=false)():
-      movq %rax, %rbx
-      subq %rax, %rax, $1
-      pcopy [(%rsp, %rdi); (%rdi, %rax)]
+      movq %rdi, %rbx
+      subq %rdi, %rdi, $1
       pcopy [(%rdi, %rdi)]
       call %rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %48f(%xmm0), %49f(%xmm1), %50f(%xmm2), %51f(%xmm3), %52f(%xmm4), %53f(%xmm5), %54f(%xmm6), %55f(%xmm7), %56f(%xmm8), %57f(%xmm9), %58f(%xmm10), %59f(%xmm11), %60f(%xmm12), %61f(%xmm13), %62f(%xmm14), %63f(%xmm15), %rdi, fibonacci
       movq %r13, %rax
@@ -1578,8 +1573,8 @@ let%expect_test "Fibonacci register allocation" =
       pcopy [(%rdi, %rdi)]
       call %rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %77f(%xmm0), %78f(%xmm1), %79f(%xmm2), %80f(%xmm3), %81f(%xmm4), %82f(%xmm5), %83f(%xmm6), %84f(%xmm7), %85f(%xmm8), %86f(%xmm9), %87f(%xmm10), %88f(%xmm11), %89f(%xmm12), %90f(%xmm13), %91f(%xmm14), %92f(%xmm15), %rdi, fibonacci
       movq %rax, %rax
-      movq %rsi, %r13
-      addq %rsi, %rsi, %rax
-      movq %rax, %rsi
+      movq %rbx, %r13
+      addq %rbx, %rbx, %rax
+      movq %rax, %rbx
       jmp label1(%rax)
     |}]

@@ -81,7 +81,15 @@ module Select = struct
       reg_class
     | Const _ -> Int
 
-  let width_of_operand _ = failwith ""
+  let rec width_of_operand = function
+    | Undag.Target.Reg (typ, _) -> width_of_typ typ
+    | Label (typ, _, _) -> width_of_typ typ
+    | Instr instr ->
+      fst
+      @@ Undag.Target.fold_defs
+           (fun acc op -> (max acc (width_of_operand op), op))
+           0 instr
+    | Const _ -> 8
 
   let call_conv ~caller { State.fresh_vreg; new_stack_slot; _ } width = function
     | Target.Int ->
@@ -191,7 +199,7 @@ module Select = struct
       mov ~dest ~src @> k dest
     | Undag.Target.Uop (dest, Not, src) ->
       let src_class = reg_class_of_operand src in
-      let src_width = width_of_typ (width_of_operand src) in
+      let src_width = width_of_operand src in
       let open Target in
       let dest = assign_vreg src_class dest in
       let tmp = Reg (fresh_vreg src_class src_width) in
