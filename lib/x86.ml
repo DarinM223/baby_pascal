@@ -33,7 +33,9 @@ open struct
     | _ -> reg
 end
 
-let width_of_typ = Ast.sizeof
+let width_of_typ = function
+  | Ast.TArray _ | TRecord _ -> 8
+  | typ -> Ast.sizeof typ
 
 module Target = struct
   type label = Normalize.Target.label [@@deriving show, eq]
@@ -371,12 +373,54 @@ module Target = struct
       ~uses:(Label (clz, l1, l1args) :: Label (clz, l2, l2args) :: args)
       ~defs:[]
   let return ~uses = instr "ret" ~uses ~defs:[]
+  let int_width instr = function
+    | 1 -> instr ^ "b"
+    | 2 -> instr ^ "w"
+    | 4 -> instr ^ "l"
+    | 8 -> instr ^ "q"
+    | width ->
+      invalid_arg @@ Format.asprintf "unsupported integer move width: %d" width
+  let float_width instr = function
+    | 4 -> instr ^ "ss"
+    | 8 -> instr ^ "sd"
+    | width ->
+      invalid_arg
+      @@ Format.asprintf "unsupported floating-point move width: %d" width
+
   let mov ~dest ~src =
     let reg_class_of op = Option.map Reg.reg_class (destruct_reg op) in
-    match (reg_class_of dest, reg_class_of src) with
-    | Some Float, _ | _, Some Float ->
-      instr "movsd" ~defs:[ dest ] ~uses:[ src ]
-    | _ -> instr "movq" ~defs:[ dest ] ~uses:[ src ]
+    let width =
+      match (destruct_reg dest, destruct_reg src) with
+      | Some reg, _ | None, Some reg -> Reg.width reg
+      | None, None -> 8
+    in
+    let instr_name =
+      match (reg_class_of dest, reg_class_of src) with
+      | Some Float, _ | _, Some Float ->
+        begin match width with
+        | 4 -> "movss"
+        | 8 -> "movsd"
+        | 16 -> "movups"
+        | width ->
+          invalid_arg
+          @@ Format.asprintf
+               "unsupported floating-point move width: %d dest: %a src: %a"
+               width pp_operand dest pp_operand src
+        end
+      | _ ->
+        begin match width with
+        | 1 -> "movb"
+        | 2 -> "movw"
+        | 4 -> "movl"
+        | 8 -> "movq"
+        | width ->
+          invalid_arg
+          @@ Format.asprintf
+               "unsupported integer move width: %d dest: %a src: %a" width
+               pp_operand dest pp_operand src
+        end
+    in
+    instr instr_name ~defs:[ dest ] ~uses:[ src ]
 
   let pcopy ~dests ~srcs = instr "pcopy" ~defs:dests ~uses:srcs
   let is_side_effectful _ = true

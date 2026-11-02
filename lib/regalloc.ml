@@ -662,10 +662,11 @@ struct
         let reg, pref, head =
           get_register ~don't_use_for_optimistic_moves state uid r head
         in
+        let lowered = Target.Reg.(lower_to_width (width r)) state.regs.(reg) in
         Logs.debug (fun m ->
             m "Attempting to set register for %a to %a\n" Target.pp_reg
-              (Virtual r') Target.pp_reg state.regs.(reg));
-        r'.reg <- state.regs.(reg);
+              (Virtual r') Target.pp_reg lowered);
+        r'.reg <- lowered;
         Logs.debug (fun m ->
             match state.liveness.dies uid r with
             | Some dies -> m "Register dies at %d\n" dies
@@ -673,7 +674,7 @@ struct
         if not (dies state uid r instr_num) then begin
           Logs.debug (fun m ->
               m "Actually set register for %a to %a\n" Target.pp_reg
-                (Virtual r') Target.pp_reg state.regs.(reg));
+                (Virtual r') Target.pp_reg lowered);
           CCBV.set state.occupied reg;
           state.reg_current_var.(reg) <- Some r';
           state.reg_current_pref.(reg) <- pref
@@ -707,10 +708,13 @@ struct
                   get_register ~don't_use_for_optimistic_moves state uid phi
                     head
                 in
+                let lowered =
+                  Target.Reg.(lower_to_width (width phi)) state.regs.(reg)
+                in
                 Logs.debug (fun m ->
                     m "Setting register for %a to %a\n" Target.pp_reg
-                      (Virtual phi') Target.pp_reg state.regs.(reg));
-                phi'.reg <- state.regs.(reg);
+                      (Virtual phi') Target.pp_reg lowered);
+                phi'.reg <- lowered;
                 state.reg_current_var.(reg) <- Some phi';
                 state.reg_current_pref.(reg) <- pref;
                 CCBV.set state.occupied reg;

@@ -284,6 +284,7 @@ module Select = struct
     | Undag.Target.Call (dest, f, args) ->
       let open Target in
       let dest_class = reg_class_of_operand dest in
+      let dest_width = width_of_operand dest in
       let dest = assign_vreg (reg_class_of_operand dest) dest in
       let* f = translate_operand f in
       let f_typ, f =
@@ -346,10 +347,12 @@ module Select = struct
         |> Target.modify_defs (fun ~defs ~num_hidden ->
             (clobbered @ defs, num_hidden + List.length clobbered))
       in
-      let mov_instr =
-        match dest_class with
-        | Int -> Target.mov ~dest ~src:x0
-        | Float -> Target.mov ~dest ~src:d0
+      let mov_instr rest =
+        if dest_width = 0 then rest
+        else
+          match dest_class with
+          | Int -> Target.mov ~dest ~src:x0 @> rest
+          | Float -> Target.mov ~dest ~src:d0 @> rest
       in
       let int_pcopies rest =
         if List.length int_dests > 0 then
@@ -371,7 +374,7 @@ module Select = struct
           @> rest
         else rest
       in
-      int_pcopies @@ float_pcopies @@ call @> mov_instr @> k dest
+      int_pcopies @@ float_pcopies @@ call @> mov_instr @@ k dest
     | Undag.Target.Goto (l, args) ->
       let* args = translate_operands args in
       Cfg.Last (Cfg.Branch (Target.goto l args, l))

@@ -243,10 +243,10 @@ module Select = struct
                    dests)
       in
       begin match (src1_class, bop) with
-      | Int, Ast.Add -> reuse_bop "addq"
-      | Float, Ast.Add -> reuse_bop "addsd"
-      | Int, Ast.Sub -> reuse_bop "subq"
-      | Float, Ast.Sub -> reuse_bop "subsd"
+      | Int, Ast.Add -> reuse_bop @@ int_width "add" src1_width
+      | Float, Ast.Add -> reuse_bop @@ float_width "add" src1_width
+      | Int, Ast.Sub -> reuse_bop @@ int_width "sub" src1_width
+      | Float, Ast.Sub -> reuse_bop @@ float_width "sub" src1_width
       | Int, Ast.Mul ->
         let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int src1_width)) in
         let tmp2 = Reg (fresh_vreg Int src1_width) in
@@ -254,7 +254,7 @@ module Select = struct
         let tmp4 = Reg (constrained Regs.rax (fresh_vreg Int src1_width)) in
         (* rax -> rdx:rax *)
         let mul =
-          instr "imulq" ~defs:[] ~uses:[ tmp2 ]
+          instr (int_width "imul" src1_width) ~defs:[] ~uses:[ tmp2 ]
           |> Target.modify_uses (fun ~uses ~num_hidden ->
               (tmp1 :: uses, num_hidden + 1))
           |> Target.modify_defs (fun ~defs ~num_hidden ->
@@ -265,7 +265,7 @@ module Select = struct
              (RegSet.of_list Regs.[ Physical rax; Physical rdx ])
              (pcopy ~dests:[ tmp1 ] ~srcs:[ src1 ])
         @> mul @> mov ~dest ~src:tmp4 @> k dest
-      | Float, Ast.Mul -> reuse_bop "mulsd"
+      | Float, Ast.Mul -> reuse_bop @@ float_width "mul" src1_width
       | Int, Ast.Div ->
         let tmp1 = Reg (constrained Regs.rax (fresh_vreg Int src1_width)) in
         let tmp2 = Reg (fresh_vreg Int src1_width) in
@@ -282,7 +282,7 @@ module Select = struct
         in
         (* rdx:rax -> rax *)
         let div =
-          instr "idivq" ~defs:[] ~uses:[ tmp2 ]
+          instr (int_width "idiv" src1_width) ~defs:[] ~uses:[ tmp2 ]
           |> Target.modify_uses (fun ~uses ~num_hidden ->
               (tmp3 :: tmp4 :: uses, num_hidden + 2))
           |> Target.modify_defs (fun ~defs ~num_hidden ->
@@ -294,20 +294,22 @@ module Select = struct
              (RegSet.of_list Regs.[ Physical rax; Physical rdx ])
              (pcopy ~dests:[ tmp1 ] ~srcs:[ src1 ])
         @> cqto @> div @> mov ~dest ~src:tmp5 @> k dest
-      | Float, Ast.Div -> reuse_bop "divsd"
+      | Float, Ast.Div -> reuse_bop @@ float_width "div" src1_width
       | Int, Ast.And ->
         (* todo: change to use bitwise and since we use that in value numbering *)
         let tmp = Reg (fresh_vreg Int src1_width) in
         mov ~dest:tmp ~src:src1
-        @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
-        @> reuse_instr tmp dest (instr "cmovnz" ~defs:[] ~uses:[ src2 ])
+        @> instr (int_width "test" src1_width) ~defs:[] ~uses:[ tmp; tmp ]
+        @> reuse_instr tmp dest
+             (instr (int_width "cmovnz" src1_width) ~defs:[] ~uses:[ src2 ])
         @> k dest
       | Int, Ast.Or ->
         (* todo: change to use bitwise or since we use that in value numbering *)
         let tmp = Reg (fresh_vreg Int src1_width) in
         mov ~dest:tmp ~src:src1
         @> instr "testq" ~defs:[] ~uses:[ tmp; tmp ]
-        @> reuse_instr tmp dest (instr "cmovz" ~defs:[] ~uses:[ src2 ])
+        @> reuse_instr tmp dest
+             (instr (int_width "cmovz" src1_width) ~defs:[] ~uses:[ src2 ])
         @> k dest
       | Int, Ast.Eq -> reuse_cond (instr_of_cond "setz")
       | Int, Ast.Neq -> reuse_cond (instr_of_cond "setnz")
@@ -346,6 +348,7 @@ module Select = struct
     | Undag.Target.Call (dest, f, args) ->
       let open Target in
       let dest_class = reg_class_of_operand dest in
+      let dest_width = width_of_operand dest in
       let dest = assign_vreg dest_class dest in
       let* f = translate_operand f in
       let f_typ, f =
@@ -408,10 +411,12 @@ module Select = struct
         |> Target.modify_defs (fun ~defs ~num_hidden ->
             (clobbered @ defs, num_hidden + List.length clobbered))
       in
-      let mov_instr =
-        match dest_class with
-        | Int -> Target.mov ~dest ~src:rax
-        | Float -> Target.mov ~dest ~src:xmm0
+      let mov_instr rest =
+        if dest_width = 0 then rest
+        else
+          match dest_class with
+          | Int -> Target.mov ~dest ~src:rax @> rest
+          | Float -> Target.mov ~dest ~src:xmm0 @> rest
       in
       let int_pcopies rest =
         if List.length int_dests > 0 then
@@ -431,7 +436,7 @@ module Select = struct
           @> rest
         else rest
       in
-      int_pcopies @@ float_pcopies @@ call @> mov_instr @> k dest
+      int_pcopies @@ float_pcopies @@ call @> mov_instr @@ k dest
     | Undag.Target.Goto (l, args) ->
       let* args = translate_operands args in
       Cfg.Last (Cfg.Branch (Target.goto l args, l))

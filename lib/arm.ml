@@ -41,7 +41,9 @@ open struct
     | _ -> invalid_arg "lower_to_width: unknown register"
 end
 
-let width_of_typ = Ast.sizeof
+let width_of_typ =  function
+  | Ast.TArray _ | TRecord _ -> 8
+  | typ -> Ast.sizeof typ
 
 module Target = struct
   type label = Normalize.Target.label [@@deriving show, eq]

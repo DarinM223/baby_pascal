@@ -50,15 +50,21 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
     | Label (clz, _, _) -> clz
     | _ -> Int
   in
+  let width_of_operand = function
+    | Target.Reg reg -> Target.Reg.width reg
+    | _ -> 8
+  in
   let tmp1 op =
+    let width = width_of_operand op in
     match reg_class_of_operand op with
-    | Float -> float_tmp1
-    | Int -> int_tmp1
+    | Float -> Target.Reg.lower_to_width width (Physical float_tmp1)
+    | Int -> Target.Reg.lower_to_width width (Physical int_tmp1)
   in
   let tmp2 op =
+    let width = width_of_operand op in
     match reg_class_of_operand op with
-    | Float -> float_tmp2
-    | Int -> int_tmp2
+    | Float -> Target.Reg.lower_to_width width (Physical float_tmp2)
+    | Int -> Target.Reg.lower_to_width width (Physical int_tmp2)
   in
   (* loads and stores can't have sp as an operand so use temporaries in that case *)
   let load ~dest ~src =
@@ -66,15 +72,16 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
     | Target.Reg (Physical phys) when Target.equal_physical_reg phys Arm.Regs.sp
       ->
       fun t ->
-        Target.instr "ldr" ~defs:[ Reg (Physical (tmp1 src)) ] ~uses:[ src ]
-        @> Target.mov ~dest ~src:(Reg (Physical (tmp1 src)))
-        @> t
+        let tmp = Target.Reg (tmp1 src) in
+        Target.instr "ldr" ~defs:[ tmp ] ~uses:[ src ]
+        @> Target.mov ~dest ~src:tmp @> t
     | _ -> fun t -> Target.instr "ldr" ~defs:[ dest ] ~uses:[ src ] @> t
   in
   let store ~dest ~src =
     let move_to_tmp t =
-      Target.mov ~dest:(Reg (Physical (tmp1 src))) ~src
-      @> Target.instr "str" ~defs:[] ~uses:[ Reg (Physical (tmp1 src)); dest ]
+      let tmp = Target.Reg (tmp1 src) in
+      Target.mov ~dest:tmp ~src
+      @> Target.instr "str" ~defs:[] ~uses:[ tmp; dest ]
       @> t
     in
     match src with
@@ -84,8 +91,9 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
       move_to_tmp
     | Target.MemAddr _ | Target.Label _ ->
       fun t ->
-        Target.instr "ldr" ~defs:[ Reg (Physical (tmp1 src)) ] ~uses:[ src ]
-        @> Target.instr "str" ~defs:[] ~uses:[ Reg (Physical (tmp1 src)); dest ]
+        let tmp = Target.Reg (tmp1 src) in
+        Target.instr "ldr" ~defs:[ tmp ] ~uses:[ src ]
+        @> Target.instr "str" ~defs:[] ~uses:[ tmp; dest ]
         @> t
     | _ -> fun t -> Target.instr "str" ~defs:[] ~uses:[ src; dest ] @> t
   in
@@ -207,28 +215,28 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
     let move_immediates_to_temps src1 src2 ~modify ~no_imms =
       begin match (src1, src2) with
       | (Target.Imm _ as src1), (Target.Imm _ as src2) ->
-        Target.mov ~dest:(Reg (Physical (tmp1 src1))) ~src:src1
-        @> Target.mov ~dest:(Reg (Physical (tmp2 src2))) ~src:src2
-        @> modify
-             (Target.Reg (Physical (tmp1 src1)))
-             (Target.Reg (Physical (tmp2 src2)))
+        let tmp1 = Target.Reg (tmp1 src1) in
+        let tmp2 = Target.Reg (tmp2 src2) in
+        Target.mov ~dest:tmp1 ~src:src1
+        @> Target.mov ~dest:tmp2 ~src:src2
+        @> modify tmp1 tmp2
       | (Imm _ as src1), src2 ->
-        Target.mov ~dest:(Reg (Physical (tmp1 src1))) ~src:src1
-        @> modify (Target.Reg (Physical (tmp1 src1))) src2
+        let tmp = Target.Reg (tmp1 src1) in
+        Target.mov ~dest:tmp ~src:src1 @> modify tmp src2
       | src1, (Imm _ as src2) ->
-        Target.mov ~dest:(Reg (Physical (tmp1 src2))) ~src:src2
-        @> modify src1 (Target.Reg (Physical (tmp1 src2)))
+        let tmp = Target.Reg (tmp1 src2) in
+        Target.mov ~dest:tmp ~src:src2 @> modify src1 tmp
       | _ -> no_imms src1 src2
       end
     in
     let lower_cmp cmp tmp1 uses rest =
       begin match uses with
       | [ (Target.Label _ as op) ] ->
-        load ~dest:(Reg (Physical (tmp2 op))) ~src:op
-        @@ Target.instr cmp ~defs:[ Reg (Physical tmp1) ]
-             ~uses:[ Reg (Physical (tmp2 op)) ]
+        let tmp2 = Target.Reg (tmp2 op) in
+        load ~dest:tmp2 ~src:op
+        @@ Target.instr cmp ~defs:[ tmp1 ] ~uses:[ tmp2 ]
         @> rest
-      | _ -> Target.instr cmp ~defs:[ Reg (Physical tmp1) ] ~uses @> rest
+      | _ -> Target.instr cmp ~defs:[ tmp1 ] ~uses @> rest
       end
     in
     let rec go_tail = function
@@ -264,9 +272,8 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
          uses = [ ((MemAddr _ | StackSlot _) as src) ];
          _;
         } ->
-          Target.mov ~dest:(Reg (Physical (tmp1 src))) ~src
-          @> Target.mov ~dest ~src:(Reg (Physical (tmp1 src)))
-          @> go_tail tail
+          let tmp = Target.Reg (tmp1 src) in
+          Target.mov ~dest:tmp ~src @> Target.mov ~dest ~src:tmp @> go_tail tail
         (* lower move with destination memory operand into store *)
         | {
          Target.instr = "mov";
@@ -347,9 +354,10 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
         let tail, _ =
           Arm.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
         in
+        let tmp = Target.Reg (tmp1 first_use) in
         tail
-        @@ Target.mov ~dest:(Reg (Physical float_tmp1)) ~src:first_use
-        @> lower_cmp "fcmp" float_tmp1 uses
+        @@ Target.mov ~dest:tmp ~src:first_use
+        @> lower_cmp "fcmp" tmp uses
         @@ Target.instr instr ~defs:[] ~uses:[ Label (Float, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last
@@ -363,9 +371,10 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
         let tail, _ =
           Arm.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
         in
+        let tmp = Target.Reg (tmp1 first_use) in
         tail
-        @@ Target.mov ~dest:(Reg (Physical int_tmp1)) ~src:first_use
-        @> lower_cmp "cmp" int_tmp1 uses
+        @@ Target.mov ~dest:tmp ~src:first_use
+        @> lower_cmp "cmp" tmp uses
         @@ Target.instr instr ~defs:[] ~uses:[ Label (Int, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last (CBranch _) ->

@@ -120,6 +120,22 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
       (tail, X86.Target.Label (clz, l', args))
     | op -> (f, op)
   in
+  let reg_class_of_operand = function
+    | Target.Imm _ -> Target.Int
+    | Reg reg -> Target.Reg.reg_class reg
+    | Label (clz, _, _) -> clz
+    | _ -> Int
+  in
+  let tmp op =
+    let width =
+      match op with
+      | Target.Reg reg -> Target.Reg.width reg
+      | _ -> 8
+    in
+    match reg_class_of_operand op with
+    | Int -> Target.Reg.lower_to_width width (Physical tmp_int)
+    | Float -> Target.Reg.lower_to_width width (Physical tmp_float)
+  in
   let go_block cfg block =
     let head, tail = Cfg.unzip block in
     let ( @> ) i t = Cfg.Tail (Instruction i, t) in
@@ -133,9 +149,8 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
          uses = [ (Imm _ as src) ];
          _;
         } ->
-          Target.mov ~dest:(Reg (Physical tmp_int)) ~src
-          @> { i with uses = [ Reg (Physical tmp_int) ] }
-          @> go_tail tail
+          let tmp = Target.Reg (tmp src) in
+          Target.mov ~dest:tmp ~src @> { i with uses = [ tmp ] } @> go_tail tail
         (* lower moves with two memory operands *)
         | {
          Target.instr = "movq";
@@ -143,18 +158,16 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
          uses = [ ((MemAddr _ | StackSlot _ | Label _) as src) ];
          _;
         } ->
-          Target.mov ~dest:(Reg (Physical tmp_int)) ~src
-          @> Target.mov ~dest ~src:(Reg (Physical tmp_int))
-          @> go_tail tail
+          let tmp = Target.Reg (tmp src) in
+          Target.mov ~dest:tmp ~src @> Target.mov ~dest ~src:tmp @> go_tail tail
         | {
          Target.instr = "movsd";
          defs = [ ((MemAddr _ | StackSlot _ | Label _) as dest) ];
          uses = [ ((MemAddr _ | StackSlot _ | Label _) as src) ];
          _;
         } ->
-          Target.mov ~dest:(Reg (Physical tmp_float)) ~src
-          @> Target.mov ~dest ~src:(Reg (Physical tmp_float))
-          @> go_tail tail
+          let tmp = Target.Reg (tmp src) in
+          Target.mov ~dest:tmp ~src @> Target.mov ~dest ~src:tmp @> go_tail tail
         (* remove redundant moves *)
         | { Target.instr = "movq"; defs = [ dest ]; uses = [ src ]; _ }
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->
@@ -179,12 +192,11 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
         when List.exists (fun (_, i) -> i = instr) Target.float_cond_mapping ->
         List.iter record_operand (first_use :: uses);
         List.iter record_operand defs;
-        let tail, _ =
-          X86.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
-        in
+        let tail, _ = Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i in
+        let tmp = Target.Reg (tmp first_use) in
         tail
-        @@ Target.mov ~dest:(Reg (Physical tmp_float)) ~src:first_use
-        @> Target.instr "ucomisd" ~defs:[ Reg (Physical tmp_float) ] ~uses
+        @@ Target.mov ~dest:tmp ~src:first_use
+        @> Target.instr "ucomisd" ~defs:[ tmp ] ~uses
         @> Target.instr instr ~defs:[] ~uses:[ Label (Float, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last
@@ -195,12 +207,11 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
         when List.exists (fun (_, i) -> i = instr) Target.int_cond_mapping ->
         List.iter record_operand (first_use :: uses);
         List.iter record_operand defs;
-        let tail, _ =
-          X86.Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i
-        in
+        let tail, _ = Target.fold_uses (lower_jump_label [ l1; l2 ]) Fun.id i in
+        let tmp = Target.Reg (tmp first_use) in
         tail
-        @@ Target.mov ~dest:(Reg (Physical tmp_int)) ~src:first_use
-        @> Target.instr "cmp" ~defs:[ Reg (Physical tmp_int) ] ~uses
+        @@ Target.mov ~dest:tmp ~src:first_use
+        @> Target.instr "cmp" ~defs:[ tmp ] ~uses
         @> Target.instr instr ~defs:[] ~uses:[ Label (Int, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last (CBranch _) as tail ->
@@ -210,7 +221,7 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
       | Cfg.Last (Branch (i, l)) ->
         List.iter record_operand i.uses;
         List.iter record_operand i.defs;
-        let tail, i = X86.Target.fold_uses (lower_jump_label [ l ]) Fun.id i in
+        let tail, i = Target.fold_uses (lower_jump_label [ l ]) Fun.id i in
         tail (Cfg.Last (Branch (i, l)))
       | Cfg.Last (Return i) ->
         List.iter record_operand i.uses;
