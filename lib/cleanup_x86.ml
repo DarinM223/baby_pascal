@@ -126,12 +126,12 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
     | Label (clz, _, _) -> clz
     | _ -> Int
   in
+  let width_of_operand = function
+    | Target.Reg reg -> Target.Reg.width reg
+    | _ -> 8
+  in
   let tmp op =
-    let width =
-      match op with
-      | Target.Reg reg -> Target.Reg.width reg
-      | _ -> 8
-    in
+    let width = width_of_operand op in
     match reg_class_of_operand op with
     | Int -> Target.Reg.lower_to_width width (Physical tmp_int)
     | Float -> Target.Reg.lower_to_width width (Physical tmp_float)
@@ -153,7 +153,7 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
           Target.mov ~dest:tmp ~src @> { i with uses = [ tmp ] } @> go_tail tail
         (* lower moves with two memory operands *)
         | {
-         Target.instr = "movq";
+         Target.instr = "movq" | "movb" | "movw" | "movl";
          defs = [ ((MemAddr _ | StackSlot _ | Label _) as dest) ];
          uses = [ ((MemAddr _ | StackSlot _ | Label _) as src) ];
          _;
@@ -161,7 +161,7 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
           let tmp = Target.Reg (tmp src) in
           Target.mov ~dest:tmp ~src @> Target.mov ~dest ~src:tmp @> go_tail tail
         | {
-         Target.instr = "movsd";
+         Target.instr = "movsd" | "movss" | "movups";
          defs = [ ((MemAddr _ | StackSlot _ | Label _) as dest) ];
          uses = [ ((MemAddr _ | StackSlot _ | Label _) as src) ];
          _;
@@ -169,7 +169,12 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
           let tmp = Target.Reg (tmp src) in
           Target.mov ~dest:tmp ~src @> Target.mov ~dest ~src:tmp @> go_tail tail
         (* remove redundant moves *)
-        | { Target.instr = "movq"; defs = [ dest ]; uses = [ src ]; _ }
+        | {
+         Target.instr = "movq" | "movb" | "movw" | "movl";
+         defs = [ dest ];
+         uses = [ src ];
+         _;
+        }
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->
           go_tail tail
         | _ ->
@@ -196,7 +201,9 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
         let tmp = Target.Reg (tmp first_use) in
         tail
         @@ Target.mov ~dest:tmp ~src:first_use
-        @> Target.instr "ucomisd" ~defs:[ tmp ] ~uses
+        @> Target.instr
+             (Target.float_width "ucomi" (width_of_operand first_use))
+             ~defs:[ tmp ] ~uses
         @> Target.instr instr ~defs:[] ~uses:[ Label (Float, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last
@@ -211,7 +218,9 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
         let tmp = Target.Reg (tmp first_use) in
         tail
         @@ Target.mov ~dest:tmp ~src:first_use
-        @> Target.instr "cmp" ~defs:[ tmp ] ~uses
+        @> Target.instr
+             (Target.int_width "cmp" (width_of_operand first_use))
+             ~defs:[ tmp ] ~uses
         @> Target.instr instr ~defs:[] ~uses:[ Label (Int, l1, []) ]
         @> Cfg.Last (Branch (Target.goto l2 [], l2))
       | Cfg.Last (CBranch _) as tail ->
