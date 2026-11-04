@@ -61,6 +61,58 @@ module Select = struct
   module G = X86.Cfg
   module State = State
 
+  type chunk_class =
+    | NO_CLASS
+    | INTEGER
+    | SSE
+
+  type classification =
+    | Memory
+    | Registers of chunk_class array
+
+  let merge_classes = function
+    | clz, NO_CLASS | NO_CLASS, clz -> clz
+    | INTEGER, _ | _, INTEGER -> INTEGER
+    | _ -> SSE
+
+  (* Only supports unpacked structs and maximum float or integer size is 8 bytes.
+     32 bit floats are not supported yet. *)
+  let classify_struct fields =
+    let rec classify_chunks size fields =
+      let classes =
+        Array.make ((size / 8) + if size mod 8 = 0 then 0 else 1) NO_CLASS
+      in
+      let merge_with offset clz =
+        let i = offset / 8 in
+        classes.(i) <- merge_classes (classes.(i), clz)
+      in
+      let rec visit_type offset = function
+        | Ast.TInteger | TBoolean | TChar -> merge_with offset INTEGER
+        | TDouble -> merge_with offset SSE
+        | TVoid -> failwith "Void type not supported inside structure"
+        | TFunction (_, _) ->
+          failwith "Function type stored by value in structure"
+        | TPointer _ -> merge_with offset INTEGER
+        | TRecord fields -> go offset fields fields
+        | TArray (typ, num_elems) ->
+          let typ_size = Ast.sizeof typ in
+          for i = 0 to num_elems - 1 do
+            visit_type (offset + (typ_size * i)) typ
+          done
+      and go base_offset fields = function
+        | (field, typ) :: rest ->
+          let offset = base_offset + Option.get (Ast.offsetof field fields) in
+          visit_type offset typ;
+          go base_offset fields rest
+        | [] -> ()
+      in
+      go 0 fields fields;
+      classes
+    in
+    let typ_size = Ast.(sizeof (TRecord fields)) in
+    if typ_size > 16 then Memory
+    else Registers (classify_chunks typ_size fields)
+
   let rec reg_class_of_operand : Undag.Target.operand -> Target.reg_class =
     let reg_class_of_type = function
       | Ast.TDouble -> Target.Float
@@ -356,6 +408,7 @@ module Select = struct
         | Label (typ, l, []) -> (typ, l)
         | _ -> failwith "call: expected function to be label"
       in
+      (* TODO: partition struct type arguments from int_args *)
       let float_args, int_args =
         List.partition (fun op -> reg_class_of_operand op = Float) args
       in
