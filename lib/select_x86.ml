@@ -409,21 +409,58 @@ module Select = struct
         | _ -> failwith "call: expected function to be label"
       in
       (* TODO: partition struct type arguments from int_args *)
-      let float_args, int_args =
-        List.partition (fun op -> reg_class_of_operand op = Float) args
+      let rec build_args ~int_dests ~int_args ~float_dests ~float_args
+          ~int_param_idx ~float_param_idx k = function
+        | (arg, arg') :: args ->
+          let width = width_of_operand arg in
+          begin match arg with
+          | Undag.Target.Reg (Ast.TRecord _fields, _) ->
+            (* TODO: wrap k with instructions to move the record at
+               offset into the calling convention integer reg *)
+            (* TODO: if param index is > total then allocate the struct
+               on the stack, copy the data over, and then pass in a pointer
+               to the data using the calling convention
+               (which may also make a stack slot) *)
+            failwith "todo: passing record by value not supported yet"
+          | _ ->
+            let clz = reg_class_of_operand arg in
+            begin match clz with
+            | Int ->
+              let dest = call_conv ~caller:true state width clz int_param_idx in
+              build_args ~int_dests:(dest :: int_dests)
+                ~int_args:(arg' :: int_args) ~float_dests ~float_args
+                ~int_param_idx:(int_param_idx + 1) ~float_param_idx k args
+            | Float ->
+              let dest =
+                call_conv ~caller:true state width clz float_param_idx
+              in
+              build_args ~int_dests ~int_args ~float_dests:(dest :: float_dests)
+                ~float_args:(arg' :: float_args) ~int_param_idx
+                ~float_param_idx:(float_param_idx + 1) k args
+            end
+          end
+        | [] ->
+          let pcopies dests args rest =
+            if List.length dests > 0 then
+              with_clobber_regs
+                (Regs.caller_save
+                |> List.map (fun r -> Physical r)
+                |> RegSet.of_list)
+                (pcopy ~dests ~srcs:args)
+              @> rest
+            else rest
+          in
+          let build tail =
+            k (pcopies int_dests int_args (pcopies float_dests float_args tail))
+          in
+          (int_dests, float_dests, build)
       in
-      let int_widths = List.map width_of_operand int_args in
-      let* int_args = translate_operands int_args in
-      let float_widths = List.map width_of_operand float_args in
-      let* float_args = translate_operands float_args in
-      let int_dests =
-        List.(init (length int_args)) (fun i ->
-            call_conv ~caller:true state (List.nth int_widths i) Target.Int i)
-      in
-      let float_dests =
-        List.(init (length float_args)) (fun i ->
-            call_conv ~caller:true state (List.nth float_widths i) Target.Float
-              i)
+      let* args' = translate_operands args in
+      let int_dests, float_dests, prelude =
+        build_args ~int_dests:[] ~int_args:[] ~float_dests:[] ~float_args:[]
+          ~int_param_idx:0 ~float_param_idx:0
+          (fun t -> t)
+          (List.combine args args')
       in
       let clobbered =
         let ints =
@@ -471,25 +508,7 @@ module Select = struct
           | Int -> Target.mov ~dest ~src:rax @> rest
           | Float -> Target.mov ~dest ~src:xmm0 @> rest
       in
-      let int_pcopies rest =
-        if List.length int_dests > 0 then
-          with_clobber_regs
-            (Regs.caller_save
-            |> List.map (fun r -> Physical r)
-            |> RegSet.of_list)
-            (pcopy ~dests:int_dests ~srcs:int_args)
-          @> rest
-        else rest
-      in
-      let float_pcopies rest =
-        if List.length float_dests > 0 then
-          with_clobber_regs
-            (Regs.float_regs |> List.map (fun r -> Physical r) |> RegSet.of_list)
-            (pcopy ~dests:float_dests ~srcs:float_args)
-          @> rest
-        else rest
-      in
-      int_pcopies @@ float_pcopies @@ call @> mov_instr @@ k dest
+      prelude @@ call @> mov_instr @@ k dest
     | Undag.Target.Goto (l, args) ->
       let* args = translate_operands args in
       Cfg.Last (Cfg.Branch (Target.goto l args, l))
