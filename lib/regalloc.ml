@@ -662,10 +662,11 @@ struct
         let reg, pref, head =
           get_register ~don't_use_for_optimistic_moves state uid r head
         in
+        let lowered = Target.Reg.(lower_to_width (width r)) state.regs.(reg) in
         Logs.debug (fun m ->
             m "Attempting to set register for %a to %a\n" Target.pp_reg
-              (Virtual r') Target.pp_reg state.regs.(reg));
-        r'.reg <- state.regs.(reg);
+              (Virtual r') Target.pp_reg lowered);
+        r'.reg <- lowered;
         Logs.debug (fun m ->
             match state.liveness.dies uid r with
             | Some dies -> m "Register dies at %d\n" dies
@@ -673,7 +674,7 @@ struct
         if not (dies state uid r instr_num) then begin
           Logs.debug (fun m ->
               m "Actually set register for %a to %a\n" Target.pp_reg
-                (Virtual r') Target.pp_reg state.regs.(reg));
+                (Virtual r') Target.pp_reg lowered);
           CCBV.set state.occupied reg;
           state.reg_current_var.(reg) <- Some r';
           state.reg_current_pref.(reg) <- pref
@@ -707,10 +708,13 @@ struct
                   get_register ~don't_use_for_optimistic_moves state uid phi
                     head
                 in
+                let lowered =
+                  Target.Reg.(lower_to_width (width phi)) state.regs.(reg)
+                in
                 Logs.debug (fun m ->
                     m "Setting register for %a to %a\n" Target.pp_reg
-                      (Virtual phi') Target.pp_reg state.regs.(reg));
-                phi'.reg <- state.regs.(reg);
+                      (Virtual phi') Target.pp_reg lowered);
+                phi'.reg <- lowered;
                 state.reg_current_var.(reg) <- Some phi';
                 state.reg_current_pref.(reg) <- pref;
                 CCBV.set state.occupied reg;
@@ -1360,27 +1364,23 @@ let%expect_test "Nested loops register allocation" =
       jmp label6
     label1(local=false)():
       exit
-    label2(local=false)(rbx):
-      jl label3, label1, %rbx, $100
+    label2(local=false)(rax):
+      jl label3, label1, %rax, $100
     label3(local=false)():
-      movq %rsi, %rbx
-      pcopy [(%r13, %rsi); (%rsi, %rbx)]
-      jmp label4(%rsi, %r13)
-    label4(local=false)(rsi, r13):
-      jl label5, label2(%rsi), %r13, $100
+      movq %rbx, %rax
+      jmp label4(%rax, %rbx)
+    label4(local=false)(rax, rbx):
+      jl label5, label2(%rax), %rbx, $100
     label5(local=false)():
-      movq %r15, %rsi
-      addq %r15, %r15, $1
-      movq %r15, %r15
-      movq %r14, %r13
-      addq %r14, %r14, $1
-      movq %r14, %r14
-      pcopy [(%rsi, %r15); (%r15, %rsi)]
-      pcopy [(%r13, %r14); (%r14, %r13)]
-      jmp label4(%rsi, %r13)
+      movq %rax, %rax
+      addq %rax, %rax, $1
+      movq %rax, %rax
+      movq %rbx, %rbx
+      addq %rbx, %rbx, $1
+      movq %rbx, %rbx
+      jmp label4(%rax, %rbx)
     label6(local=false)():
-      pcopy [(%rbx, %rax)]
-      jmp label2(%rbx)
+      jmp label2(%rax)
     |}]
 
 let%expect_test "Fibonacci register allocation" =
@@ -1536,7 +1536,13 @@ let%expect_test "Fibonacci register allocation" =
     |}];
     let rec reg =
       X86.Target.Virtual
-        { id = 8; reg_class = Int; reg; reg_constr = UsePhysical X86.Regs.rcx }
+        {
+          id = 8;
+          reg_class = Int;
+          width = 8;
+          reg;
+          reg_constr = UsePhysical X86.Regs.rcx;
+        }
     in
     let label = X86.Cfg.(block_label (zip (fst (X86.Cfg.focus 3 cfg)))) in
     Format.printf "Label: %a\n" (Format.pp_print_option X86.Cfg.pp_label) label;
@@ -1561,9 +1567,8 @@ let%expect_test "Fibonacci register allocation" =
       movq %rax, %rbx
       jmp label1(%rax)
     label3(local=false)():
-      movq %rax, %rbx
-      subq %rax, %rax, $1
-      pcopy [(%rsp, %rdi); (%rdi, %rax)]
+      movq %rdi, %rbx
+      subq %rdi, %rdi, $1
       pcopy [(%rdi, %rdi)]
       call %rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %48f(%xmm0), %49f(%xmm1), %50f(%xmm2), %51f(%xmm3), %52f(%xmm4), %53f(%xmm5), %54f(%xmm6), %55f(%xmm7), %56f(%xmm8), %57f(%xmm9), %58f(%xmm10), %59f(%xmm11), %60f(%xmm12), %61f(%xmm13), %62f(%xmm14), %63f(%xmm15), %rdi, fibonacci
       movq %r13, %rax
@@ -1572,8 +1577,8 @@ let%expect_test "Fibonacci register allocation" =
       pcopy [(%rdi, %rdi)]
       call %rax, %rcx, %rdx, %rsi, %rdi, %r8, %r9, %r10, %r11, %77f(%xmm0), %78f(%xmm1), %79f(%xmm2), %80f(%xmm3), %81f(%xmm4), %82f(%xmm5), %83f(%xmm6), %84f(%xmm7), %85f(%xmm8), %86f(%xmm9), %87f(%xmm10), %88f(%xmm11), %89f(%xmm12), %90f(%xmm13), %91f(%xmm14), %92f(%xmm15), %rdi, fibonacci
       movq %rax, %rax
-      movq %rsi, %r13
-      addq %rsi, %rsi, %rax
-      movq %rax, %rsi
+      movq %rbx, %r13
+      addq %rbx, %rbx, %rax
+      movq %rax, %rbx
       jmp label1(%rax)
     |}]

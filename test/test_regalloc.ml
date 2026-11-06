@@ -38,7 +38,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   in
   let uid, instr_num = (2, 5) in
   select_state.curr_block <- uid;
-  let vregs = Array.init num_vregs (fun _ -> select_state.fresh_vreg Int) in
+  let vregs = Array.init num_vregs (fun _ -> select_state.fresh_vreg Int 8) in
   let live_through = Utils.IntHashtbl.create num_vregs in
   let dies _uid = function
     | X86.Target.Virtual vreg ->
@@ -229,7 +229,7 @@ let setup_register_shuffle ~(regs : X86.Target.reg array)
   (old_vregs, vregs, X86.Cfg.Head (head, Instruction instr))
 
 let test_pcopy_instr ~regs head =
-  let dummy_reg = (-100, X86.Target.Int, "dummy") in
+  let dummy_reg = (-100, X86.Target.Int, 8, "dummy") in
   let module Sequentialize =
     Seqpcopy.Make
       (X86.Cfg)

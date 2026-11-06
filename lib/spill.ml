@@ -508,7 +508,10 @@ struct
   let reload (state : spill_state) v =
     try
       let slot = IntHashtbl.find state.spill_mapping (Target.index v) in
-      let v' = state.select_state.fresh_vreg (Target.Reg.reg_class v) in
+      let v' =
+        state.select_state.fresh_vreg (Target.Reg.reg_class v)
+          (Target.Reg.width v)
+      in
       RegHashtbl.add state.copies v v';
       Target.mov ~dest:(Target.reg v') ~src:slot
     with Not_found ->
@@ -781,7 +784,9 @@ module X86 (RegClass : RegClass with module Target = X86.Target) = struct
         Format.printf "Reconstructing reg %a with copies %a\n" X86.Target.pp_reg
           reg X86.Target.pp_regs copies;
         Reconstruct.reconstruct
-          (fun () -> spill_state.select_state.fresh_vreg RegClass.reg_class)
+          (fun () ->
+            spill_state.select_state.fresh_vreg RegClass.reg_class
+              (X86.Target.Reg.width reg))
           reg
           (Spill'.RegSet.of_list copies)
           def_blocks graph
@@ -833,7 +838,9 @@ module Arm (RegClass : RegClass with module Target = Arm.Target) = struct
           (reg :: copies)
       in
       Reconstruct.reconstruct
-        (fun () -> spill_state.select_state.fresh_vreg RegClass.reg_class)
+        (fun () ->
+          spill_state.select_state.fresh_vreg RegClass.reg_class
+            (Arm.Target.Reg.width reg))
         reg
         (Spill'.RegSet.of_list copies)
         def_blocks graph

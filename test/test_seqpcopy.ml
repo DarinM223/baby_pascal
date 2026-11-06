@@ -11,6 +11,7 @@ let test_simple_x86 () =
          {
            id = 1;
            reg_class = Int;
+           width = 8;
            reg_constr = OnStack;
            reg = Physical X86.Regs.rax;
          })
@@ -21,6 +22,7 @@ let test_simple_x86 () =
          {
            id = 1;
            reg_class = Int;
+           width = 8;
            reg_constr = OnStack;
            reg = Physical X86.Regs.rbx;
          })
