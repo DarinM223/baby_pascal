@@ -414,14 +414,56 @@ module Select = struct
         | (arg, arg') :: args ->
           let width = width_of_operand arg in
           begin match arg with
-          | Undag.Target.Reg (Ast.TRecord _fields, _) ->
+          | Undag.Target.Reg (Ast.TRecord fields, _) ->
             (* TODO: wrap k with instructions to move the record at
                offset into the calling convention integer reg *)
-            (* TODO: if param index is > total then allocate the struct
-               on the stack, copy the data over, and then pass in a pointer
-               to the data using the calling convention
-               (which may also make a stack slot) *)
-            failwith "todo: passing record by value not supported yet"
+            let handle_memory () =
+              (* TODO: if param index is > total then allocate the struct
+                 on the stack, copy the data over, and then pass in a pointer
+                 to the data using the calling convention
+                 (which may also make a stack slot) *)
+              build_args ~int_dests ~int_args ~float_dests ~float_args
+                ~int_param_idx ~float_param_idx k args
+            in
+            let handle_regs _int_param_idx _float_param_idx _regs =
+              failwith
+                "todo: moving struct data into integer registers not supported \
+                 yet"
+            in
+            begin match classify_struct fields with
+            | Registers chunks ->
+              let chunks = Array.to_list chunks in
+              let rec build_regs int_param_idx float_param_idx acc = function
+                | INTEGER :: rest ->
+                  let r =
+                    call_conv ~caller:false state width Int int_param_idx
+                  in
+                  build_regs (int_param_idx + 1) float_param_idx (r :: acc) rest
+                | SSE :: rest ->
+                  let r =
+                    call_conv ~caller:false state width Float float_param_idx
+                  in
+                  build_regs int_param_idx (float_param_idx + 1) (r :: acc) rest
+                | NO_CLASS :: rest ->
+                  build_regs int_param_idx float_param_idx acc rest
+                | [] -> (int_param_idx, float_param_idx, List.rev acc)
+              in
+              let int_param_idx', float_param_idx', regs =
+                build_regs int_param_idx float_param_idx [] chunks
+              in
+              (* Use caller:false so that new stack slots aren't created,
+                 and we can check if we ran out of registers by seeing if
+                 the result has any stack slots *)
+              if
+                List.exists
+                  (function
+                    | StackSlot _ -> true
+                    | _ -> false)
+                  regs
+              then handle_memory ()
+              else handle_regs int_param_idx' float_param_idx' regs
+            | Memory -> handle_memory ()
+            end
           | _ ->
             let clz = reg_class_of_operand arg in
             begin match clz with
