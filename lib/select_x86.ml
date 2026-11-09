@@ -418,17 +418,42 @@ module Select = struct
             (* TODO: wrap k with instructions to move the record at
                offset into the calling convention integer reg *)
             let handle_memory () =
-              (* TODO: if param index is > total then allocate the struct
+              (* TODO: then allocate the struct
                  on the stack, copy the data over, and then pass in a pointer
                  to the data using the calling convention
                  (which may also make a stack slot) *)
+              let k tail = k tail in
               build_args ~int_dests ~int_args ~float_dests ~float_args
                 ~int_param_idx ~float_param_idx k args
             in
-            let handle_regs _int_param_idx _float_param_idx _regs =
-              failwith
-                "todo: moving struct data into integer registers not supported \
-                 yet"
+            let handle_regs int_param_idx float_param_idx regs =
+              (* TODO: reg <- offset(arg') where offset starts at 0 and increments by 8 *)
+              let arg_reg =
+                match arg' with
+                | Target.Reg reg -> reg
+                | _ -> failwith "expected struct arg to reside in a register"
+              in
+              let k tail =
+                let rec go offset = function
+                  | reg :: regs ->
+                    G.Tail
+                      ( G.Instruction
+                          (Target.mov ~dest:reg
+                             ~src:
+                               (MemAddr
+                                  {
+                                    base = Some arg_reg;
+                                    index = arg_reg;
+                                    scale = 1;
+                                    displacement = offset;
+                                  })),
+                        go (offset + 8) regs )
+                  | [] -> k tail
+                in
+                go 0 regs
+              in
+              build_args ~int_dests ~int_args ~float_dests ~float_args
+                ~int_param_idx ~float_param_idx k args
             in
             begin match classify_struct fields with
             | Registers chunks ->
