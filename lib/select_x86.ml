@@ -183,6 +183,38 @@ module Select = struct
         (Target.reuse_op tmp dest :: defs, num_hidden))
   let ( @> ) i t = Cfg.Tail (Instruction i, t)
 
+  let copy_value ~size ~dest ~src ~tmp rest =
+    let copy width offset rest =
+      let tmp = Target.Reg (Target.Reg.lower_to_width width tmp) in
+      Target.mov ~dest:tmp
+        ~src:
+          (MemAddr
+             { base = Some src; index = src; scale = 0; displacement = offset })
+      @> Target.mov
+           ~dest:
+             (MemAddr
+                {
+                  base = Some dest;
+                  index = dest;
+                  scale = 0;
+                  displacement = offset;
+                })
+           ~src:tmp
+      @> rest
+    in
+    let rec go offset acc =
+      let remaining = size - offset in
+      match remaining with
+      | 0 -> acc
+      | 1 -> go (offset + 1) (copy 1 offset acc)
+      | 2 -> go (offset + 2) (copy 2 offset acc)
+      | 4 -> go (offset + 4) (copy 4 offset acc)
+      | n when n >= 8 -> go (offset + 8) (copy 8 offset acc)
+      | n ->
+        failwith @@ Format.asprintf "copy_value: invalid remaining size %d" n
+    in
+    go 0 rest
+
   let reuse_cond fresh src1_class src1_width src1 src2_class src2_width src2
       init k mk_instr =
     let open Target in
@@ -408,26 +440,37 @@ module Select = struct
         | Label (typ, l, []) -> (typ, l)
         | _ -> failwith "call: expected function to be label"
       in
-      (* TODO: partition struct type arguments from int_args *)
       let rec build_args ~int_dests ~int_args ~float_dests ~float_args
           ~int_param_idx ~float_param_idx k = function
         | (arg, arg') :: args ->
           let width = width_of_operand arg in
           begin match arg with
-          | Undag.Target.Reg (Ast.TRecord fields, _) ->
-            (* TODO: wrap k with instructions to move the record at
-               offset into the calling convention integer reg *)
+          | Undag.Target.Reg ((Ast.TRecord fields as typ), _) ->
             let handle_memory () =
-              (* TODO: then allocate the struct
-                 on the stack, copy the data over, and then pass in a pointer
-                 to the data using the calling convention
-                 (which may also make a stack slot) *)
-              let k tail = k tail in
-              build_args ~int_dests ~int_args ~float_dests ~float_args
-                ~int_param_idx ~float_param_idx k args
+              (* allocate the struct on the stack, copy the data over,
+                 and then pass in a pointer to the data using the
+                 calling convention (which may also make a stack slot) *)
+              let typ_size = Ast.sizeof typ in
+              let slot = state.new_stack_slot typ_size in
+              let slot_ptr = state.fresh_vreg Int 8 in
+              let tmp = state.fresh_vreg Int 8 in
+              let arg_reg =
+                match arg' with
+                | Target.Reg reg -> reg
+                | _ -> failwith "expected struct arg to reside in a register"
+              in
+              let dest = call_conv ~caller:true state width Int int_param_idx in
+              let k tail =
+                instr "leaq" ~defs:[ Reg slot_ptr ] ~uses:[ slot ]
+                @> copy_value ~size:typ_size ~dest:slot_ptr ~src:arg_reg ~tmp
+                @@ k tail
+              in
+              build_args ~int_dests:(dest :: int_dests)
+                ~int_args:(Reg slot_ptr :: int_args) ~float_dests ~float_args
+                ~int_param_idx:(int_param_idx + 1) ~float_param_idx k args
             in
             let handle_regs int_param_idx float_param_idx regs =
-              (* TODO: reg <- offset(arg') where offset starts at 0 and increments by 8 *)
+              (* reg <- offset(arg') where offset starts at 0 and increments by 8 *)
               let arg_reg =
                 match arg' with
                 | Target.Reg reg -> reg
@@ -444,7 +487,7 @@ module Select = struct
                                   {
                                     base = Some arg_reg;
                                     index = arg_reg;
-                                    scale = 1;
+                                    scale = 0;
                                     displacement = offset;
                                   })),
                         go (offset + 8) regs )
