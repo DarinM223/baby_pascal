@@ -502,6 +502,25 @@ module Select = struct
       end
     | Undag.Target.GetElementPtr _ ->
       failwith "Select_Arm: GetElementPtr should have already been lowered"
+
+  let entry state args =
+    let srcs =
+      List.mapi
+        (fun i arg ->
+          call_conv ~caller:false state
+            (width_of_operand (Reg arg))
+            (reg_class_of_operand (Reg arg))
+            i)
+        args
+    in
+    let dests =
+      List.map
+        (fun arg ->
+          Target.reg
+            (State.assign_vreg state (reg_class_of_operand (Reg arg)) (Reg arg)))
+        args
+    in
+    (srcs, fun tail -> Target.pcopy ~dests ~srcs @> tail)
 end
 
 include Isa.Codegen (Target) (Arm.Cfg) (Select)

@@ -19,3 +19,4 @@ _build/
 /isprime_float.pas
 /string.pas
 /game.pas
+/valuestruct.pas
