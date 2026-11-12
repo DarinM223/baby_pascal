@@ -64,7 +64,9 @@ module NextUseDistances = struct
             });
         changed =
           (fun ~before ~after ->
-            not (IntMap.equal Int.equal before.distances after.distances));
+            (not (IntMap.equal Int.equal before.distances after.distances))
+            || Array.length before.distances_per_instruction
+               <> Array.length after.distances_per_instruction);
         skip_block = Fun.const false;
         get = IntHashtbl.find store;
         set = IntHashtbl.replace store;
@@ -103,6 +105,9 @@ module NextUseDistances = struct
         let (_, tail), _ = G.focus uid graph in
         count_instructions tail
       in
+      Logs.debug (fun m ->
+          m "Block num instructions: %s\n"
+            ([%show: int array] block_num_instructions));
       let fact = fact () in
       let handle_instruction i a =
         let l = block_lengths.(a.block_pos) in
@@ -132,6 +137,8 @@ module NextUseDistances = struct
         let distances_per_instruction =
           Array.make num_instructions IntMap.empty
         in
+        Format.printf "Distances per instruction length %d\n"
+          (Array.length distances_per_instruction);
         distances_per_instruction.(num_instructions - 1) <- distances;
         { fact with block_pos; distances_per_instruction; distances }
       in
@@ -164,7 +171,11 @@ module NextUseDistances = struct
               (Format.pp_print_list ~pp_sep:Utils.pp_sep
                  (IntMap.pp Format.pp_print_int))
               (Array.to_list (fact.get uid).distances_per_instruction); *)
-            (fact.get uid).distances_per_instruction.(instr_num));
+            try (fact.get uid).distances_per_instruction.(instr_num)
+            with Invalid_argument _ ->
+              failwith
+              @@ Format.asprintf "index %d out of bounds %d" instr_num
+                   (Array.length (fact.get uid).distances_per_instruction));
       }
   end
 end
