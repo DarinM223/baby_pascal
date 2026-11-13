@@ -234,10 +234,10 @@ module Select = struct
          | Float -> instr "ucomisd" ~defs:[] ~uses:[ src2 ])
     @> setters (k (List.map (fun (_, _, dest) -> dest) args))
 
-  let pcopies dests args rest =
+  let pcopies clobber dests args rest =
     if List.length dests > 0 then
       Target.with_clobber_regs
-        (Regs.caller_save
+        (clobber
         |> List.map (fun r -> Target.Physical r)
         |> Target.RegSet.of_list)
         (Target.pcopy ~dests ~srcs:args)
@@ -561,7 +561,9 @@ module Select = struct
           end
         | [] ->
           let build tail =
-            k (pcopies int_dests int_args (pcopies float_dests float_args tail))
+            k
+              (pcopies Regs.caller_save int_dests int_args
+                 (pcopies Regs.float_regs float_dests float_args tail))
           in
           (int_dests, float_dests, build)
       in
@@ -830,7 +832,9 @@ module Select = struct
         end
       | [] ->
         let k tail =
-          k (pcopies int_dests int_args (pcopies float_dests float_args tail))
+          k
+            (pcopies [] int_dests int_args
+               (pcopies [] float_dests float_args tail))
         in
         (int_args @ float_args, k)
     in

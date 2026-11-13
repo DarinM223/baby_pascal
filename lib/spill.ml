@@ -137,8 +137,6 @@ module NextUseDistances = struct
         let distances_per_instruction =
           Array.make num_instructions IntMap.empty
         in
-        Format.printf "Distances per instruction length %d\n"
-          (Array.length distances_per_instruction);
         distances_per_instruction.(num_instructions - 1) <- distances;
         { fact with block_pos; distances_per_instruction; distances }
       in

@@ -632,14 +632,43 @@ module Writer = struct
       end
     | Label (_, l, _) -> Format.fprintf fmt "%s" (snd l)
     | op -> Target.pp_operand' pp_reg fmt op
-  let pp_instr state fmt i =
-    let pp_operands =
-      Format.pp_print_list ~pp_sep:Utils.pp_sep (pp_operand state)
-    in
-    Format.fprintf fmt "%s %a" i.Target.instr pp_operands
-      (List.filter
-         (fun op -> not (Target.is_tombstone op))
-         (CCList.drop i.hidden_defs i.defs @ CCList.drop i.hidden_uses i.uses))
+  let rec pp_instr ((stack_offset, frame_pointer) as state) fmt i =
+    (* Lower adr reg, [sp, off] to add reg, sp, off
+       Needs to be here because only at the end is the full stack offset
+       calculated for frame pointer relative offsets *)
+    match i with
+    | {
+     Target.instr = "adr";
+     uses = [ StackSlot { relative_to_base = true; offset } ];
+     _;
+    } ->
+      begin match frame_pointer with
+      | Some reg ->
+        pp_instr state fmt
+          { i with instr = "add"; uses = [ Reg reg; Imm offset ] }
+      | None ->
+        pp_instr state fmt
+          {
+            i with
+            instr = "add";
+            uses = [ Reg (Physical Regs.sp); Imm (offset + stack_offset) ];
+          }
+      end
+    | {
+     Target.instr = "adr";
+     uses = [ StackSlot { relative_to_base = false; offset } ];
+     _;
+    } ->
+      pp_instr state fmt
+        { i with instr = "add"; uses = [ Reg (Physical Regs.sp); Imm offset ] }
+    | _ ->
+      let pp_operands =
+        Format.pp_print_list ~pp_sep:Utils.pp_sep (pp_operand state)
+      in
+      Format.fprintf fmt "%s %a" i.Target.instr pp_operands
+        (List.filter
+           (fun op -> not (Target.is_tombstone op))
+           (CCList.drop i.hidden_defs i.defs @ CCList.drop i.hidden_uses i.uses))
   let pp_label fmt (_, l) = Format.fprintf fmt "%s" l
   type first = Cfg.first =
     | Entry
