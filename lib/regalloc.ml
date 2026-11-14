@@ -1119,7 +1119,10 @@ struct
                     let reg, pref, head =
                       get_register state G.entry_uid r head
                     in
-                    r'.reg <- state.regs.(reg);
+                    let lowered =
+                      Target.Reg.(lower_to_width (width r)) state.regs.(reg)
+                    in
+                    r'.reg <- lowered;
                     state.reg_current_var.(reg) <- Some r';
                     state.reg_current_pref.(reg) <- pref;
                     CCBV.set state.occupied reg;

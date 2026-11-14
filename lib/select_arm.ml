@@ -674,23 +674,146 @@ module Select = struct
       failwith "Select_Arm: GetElementPtr should have already been lowered"
 
   let entry state args =
-    let srcs =
-      List.mapi
-        (fun i arg ->
-          call_conv ~caller:false state
-            (width_of_operand (Reg arg))
-            (reg_class_of_operand (Reg arg))
-            i)
-        args
+    let open Target in
+    let rec build_args ~int_dests ~int_args ~float_dests ~float_args
+        ~int_param_idx ~float_param_idx k = function
+      | (((Ast.TRecord fields as typ), _) as arg) :: rest ->
+        let width = width_of_operand (Reg arg) in
+        let handle_memory () =
+          (* Pass the pointer of the caller's stack slot into a new register *)
+          let src = call_conv ~caller:false state width Int int_param_idx in
+          let dest = Target.reg (State.assign_vreg state Int (Reg arg)) in
+          build_args ~int_dests:(dest :: int_dests) ~int_args:(src :: int_args)
+            ~float_dests ~float_args ~int_param_idx:(int_param_idx + 1)
+            ~float_param_idx k rest
+        in
+        let handle_regs ~int_dests ~int_args ~float_dests ~float_args
+            ~int_param_idx ~float_param_idx regs offsets =
+          (* Allocate a new stack slot, and copy the integer registers into the offsets *)
+          let typ_size = Ast.sizeof typ in
+          let slot = state.new_stack_slot typ_size in
+          let slot_ptr = State.assign_vreg state Int (Reg arg) in
+          let k tail =
+            let rec go = function
+              | (offset, op) :: rest ->
+                G.Tail
+                  ( G.Instruction
+                      (Target.mov
+                         ~dest:
+                           (MemAddr
+                              {
+                                base = slot_ptr;
+                                index = slot_ptr;
+                                scale = 0;
+                                displacement = offset;
+                                preindexed = false;
+                              })
+                         ~src:op),
+                    go rest )
+              | [] -> k tail
+            in
+            instr "adr" ~defs:[ Reg slot_ptr ] ~uses:[ slot ]
+            @> go (List.combine offsets regs)
+          in
+          build_args ~int_dests ~int_args ~float_dests ~float_args
+            ~int_param_idx ~float_param_idx k rest
+        in
+        begin match is_homogeneous_aggregate fields with
+        | None ->
+          let typ_size = Ast.sizeof typ in
+          if typ_size > 16 then handle_memory ()
+          else
+            let chunks = (typ_size / 8) + if typ_size mod 8 = 0 then 0 else 1 in
+            let offsets = List.init chunks (fun i -> i * 8) in
+            let rec build_regs ~int_dests ~int_args ~int_param_idx acc =
+              function
+              | 0 ->
+                let regs = List.rev acc in
+                (* Use caller:false so that new stack slots aren't created,
+                   and we can check if we ran out of registers by seeing if
+                   the result has any stack slots *)
+                if
+                  List.exists
+                    (function
+                      | StackSlot _ -> true
+                      | _ -> false)
+                    regs
+                then handle_memory ()
+                else
+                  handle_regs ~int_dests ~int_args ~float_dests ~float_args
+                    ~int_param_idx ~float_param_idx regs offsets
+              | n ->
+                let arg =
+                  call_conv ~caller:false state width Int int_param_idx
+                in
+                let dest = Reg (state.fresh_vreg Int width) in
+                build_regs ~int_dests:(dest :: int_dests)
+                  ~int_args:(arg :: int_args) ~int_param_idx:(int_param_idx + 1)
+                  (dest :: acc) (n - 1)
+            in
+            build_regs ~int_dests ~int_args ~int_param_idx [] chunks
+        | Some (typ, offsets) ->
+          let width = width_of_typ typ in
+          (* get registers for homogenous aggregate
+                 if some are stack slots then handle memory *)
+          let rec build_regs ~float_dests ~float_args ~float_param_idx acc =
+            function
+            | 0 ->
+              let regs = List.rev acc in
+              (* Use caller:false so that new stack slots aren't created,
+                 and we can check if we ran out of registers by seeing if
+                 the result has any stack slots *)
+              if
+                List.exists
+                  (function
+                    | StackSlot _ -> true
+                    | _ -> false)
+                  regs
+              then handle_memory ()
+              else
+                handle_regs ~int_dests ~int_args ~float_dests ~float_args
+                  ~int_param_idx ~float_param_idx regs offsets
+            | n ->
+              let arg =
+                Target.subst_reg_operand (Target.Reg.lower_to_width width)
+                @@ call_conv ~caller:false state width Float int_param_idx
+              in
+              let dest = Reg (state.fresh_vreg Float width) in
+              build_regs ~float_dests:(dest :: float_dests)
+                ~float_args:(arg :: float_args)
+                ~float_param_idx:(float_param_idx + 1) (dest :: acc) (n - 1)
+          in
+          build_regs ~float_dests ~float_args ~float_param_idx []
+            (List.length offsets)
+        end
+      | arg :: rest ->
+        let width = width_of_operand (Reg arg) in
+        let clz = reg_class_of_operand (Reg arg) in
+        begin match clz with
+        | Int ->
+          let src = call_conv ~caller:false state width clz int_param_idx in
+          let dest = Target.reg (State.assign_vreg state clz (Reg arg)) in
+          build_args ~int_dests:(dest :: int_dests) ~int_args:(src :: int_args)
+            ~float_dests ~float_args ~int_param_idx:(int_param_idx + 1)
+            ~float_param_idx k rest
+        | Float ->
+          let src = call_conv ~caller:false state width clz float_param_idx in
+          let dest = Target.reg (State.assign_vreg state clz (Reg arg)) in
+          build_args ~int_dests ~int_args ~float_dests:(dest :: float_dests)
+            ~float_args:(src :: float_args) ~int_param_idx
+            ~float_param_idx:(float_param_idx + 1) k rest
+        end
+      | [] ->
+        let k tail =
+          pcopies [] int_dests int_args
+            (pcopies [] float_dests float_args (k tail))
+        in
+        (int_args @ float_args, k)
     in
-    let dests =
-      List.map
-        (fun arg ->
-          Target.reg
-            (State.assign_vreg state (reg_class_of_operand (Reg arg)) (Reg arg)))
-        args
-    in
-    (srcs, fun tail -> Target.pcopy ~dests ~srcs @> tail)
+    build_args ~int_dests:[] ~int_args:[] ~float_dests:[] ~float_args:[]
+      ~int_param_idx:0 ~float_param_idx:0
+      (fun tail -> tail)
+      args
 end
 
 include Isa.Codegen (Target) (Arm.Cfg) (Select)

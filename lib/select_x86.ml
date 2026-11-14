@@ -749,14 +749,15 @@ module Select = struct
             ~float_dests ~float_args ~int_param_idx:(int_param_idx + 1)
             ~float_param_idx k rest
         in
-        let handle_regs int_param_idx float_param_idx regs =
+        let handle_regs ~int_dests ~int_args ~float_dests ~float_args
+            ~int_param_idx ~float_param_idx regs =
           (* Allocate a new stack slot, and copy the integer registers into the offsets *)
           let typ_size = Ast.sizeof typ in
           let slot = state.new_stack_slot typ_size in
           let slot_ptr = State.assign_vreg state Int (Reg arg) in
           let k tail =
             let rec go offset = function
-              | Reg (Virtual { reg_constr = UsePhysical phys; _ }) :: regs ->
+              | op :: regs ->
                 G.Tail
                   ( G.Instruction
                       (Target.mov
@@ -768,12 +769,8 @@ module Select = struct
                                 scale = 0;
                                 displacement = offset;
                               })
-                         ~src:(Reg (Physical phys))),
+                         ~src:op),
                     go (offset + 8) regs )
-              | op :: _ ->
-                failwith
-                @@ Format.asprintf "handle_regs: invalid classify operand %a"
-                     Target.pp_operand op
               | [] -> k tail
             in
             instr "leaq" ~defs:[ Reg slot_ptr ] ~uses:[ slot ] @> go 0 regs
@@ -784,33 +781,44 @@ module Select = struct
         begin match classify_struct fields with
         | Registers chunks ->
           let chunks = Array.to_list chunks in
-          let rec build_regs int_param_idx float_param_idx acc = function
+          let rec build_regs ~int_dests ~int_args ~float_dests ~float_args
+              ~int_param_idx ~float_param_idx acc = function
             | INTEGER :: rest ->
-              let r = call_conv ~caller:false state width Int int_param_idx in
-              build_regs (int_param_idx + 1) float_param_idx (r :: acc) rest
+              let arg = call_conv ~caller:false state width Int int_param_idx in
+              let dest = Reg (state.fresh_vreg Int width) in
+              build_regs ~int_dests:(dest :: int_dests)
+                ~int_args:(arg :: int_args) ~float_dests ~float_args
+                ~int_param_idx:(int_param_idx + 1) ~float_param_idx
+                (dest :: acc) rest
             | SSE :: rest ->
-              let r =
+              let arg =
                 call_conv ~caller:false state width Float float_param_idx
               in
-              build_regs int_param_idx (float_param_idx + 1) (r :: acc) rest
+              let dest = Reg (state.fresh_vreg Float width) in
+              build_regs ~int_dests ~int_args ~float_dests:(dest :: float_dests)
+                ~float_args:(arg :: float_args) ~int_param_idx
+                ~float_param_idx:(float_param_idx + 1) (dest :: acc) rest
             | NO_CLASS :: rest ->
-              build_regs int_param_idx float_param_idx acc rest
-            | [] -> (int_param_idx, float_param_idx, List.rev acc)
+              build_regs ~int_dests ~int_args ~float_dests ~float_args
+                ~int_param_idx ~float_param_idx acc rest
+            | [] ->
+              let regs = List.rev acc in
+              (* Use caller:false so that new stack slots aren't created,
+                 and we can check if we ran out of registers by seeing if
+                 the result has any stack slots *)
+              if
+                List.exists
+                  (function
+                    | StackSlot _ -> true
+                    | _ -> false)
+                  regs
+              then handle_memory ()
+              else
+                handle_regs ~int_dests ~int_args ~float_dests ~float_args
+                  ~int_param_idx ~float_param_idx regs
           in
-          let int_param_idx', float_param_idx', regs =
-            build_regs int_param_idx float_param_idx [] chunks
-          in
-          (* Use caller:false so that new stack slots aren't created,
-             and we can check if we ran out of registers by seeing if
-             the result has any stack slots *)
-          if
-            List.exists
-              (function
-                | StackSlot _ -> true
-                | _ -> false)
-              regs
-          then handle_memory ()
-          else handle_regs int_param_idx' float_param_idx' regs
+          build_regs ~int_dests ~int_args ~float_dests ~float_args
+            ~int_param_idx ~float_param_idx [] chunks
         | Memory -> handle_memory ()
         end
       | arg :: rest ->
@@ -832,9 +840,8 @@ module Select = struct
         end
       | [] ->
         let k tail =
-          k
-            (pcopies [] int_dests int_args
-               (pcopies [] float_dests float_args tail))
+          pcopies [] int_dests int_args
+            (pcopies [] float_dests float_args (k tail))
         in
         (int_args @ float_args, k)
     in
