@@ -77,8 +77,9 @@ AARCH=1 ./test.sh
 - [x] Add string literals to language
 - [x] Add floats to language
 - [x] Test spilling and register allocation with multiple register classes
-- [ ] Support multiple register widths
+- [x] Support multiple register widths
 - [x] Add arrays to language
 - [x] Add structs to language
-- [ ] Pass structs by value with System-V calling convention
+- [x] Pass structs by value with System-V and AAPCS64 calling convention
+- [ ] Return structs by value with System-V and AAPCS64 calling convention
 - [ ] Autovectorization
