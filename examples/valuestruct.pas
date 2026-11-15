@@ -53,6 +53,23 @@ begin
   printDouble (struct4.b);
 end
 
+procedure printStruct5(struct5 : { a : double, b : double, c : double, d : double });
+begin
+  printDouble (struct5.a);
+  printDouble (struct5.b);
+  printDouble (struct5.c);
+  printDouble (struct5.d);
+end
+
+procedure printStruct6(struct6 : { a : double, b : double, c : double, d : double, e : double });
+begin
+  printDouble (struct6.a);
+  printDouble (struct6.b);
+  printDouble (struct6.c);
+  printDouble (struct6.d);
+  printDouble (struct6.e);
+end
+
 // Result should be: "23.00000012.00000045.00000067.00000034.00000056.000000abcdefghijk7.000000"
 // Tests that modifyStruct* doesn't modify the underlying struct because its passed by value
 // for both register and stack passing.
@@ -91,5 +108,21 @@ begin
   struct4.a[6] := 'k';
   struct4.b := 7.0;
   printStruct4(struct4);
+  // On AARCH64 this is a HFA that gets passed into floating point registers
+  // On X86-64 System V this will be passed into stack.
+  var struct5 : { a : double, b : double, c : double, d : double };
+  struct5.a := 0.0;
+  struct5.b := 1.0;
+  struct5.c := 2.0;
+  struct5.d := 3.0;
+  printStruct5(struct5);
+  // On both X86-64 and AARCH64 this will be passed on stack
+  var struct6 : { a : double, b : double, c : double, d : double, e : double };
+  struct6.a := 0.0;
+  struct6.b := 1.0;
+  struct6.c := 2.0;
+  struct6.d := 3.0;
+  struct6.e := 4.0;
+  printStruct6(struct6);
   printChar('\n');
 end

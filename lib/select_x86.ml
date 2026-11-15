@@ -183,9 +183,9 @@ module Select = struct
         (Target.reuse_op tmp dest :: defs, num_hidden))
   let ( @> ) i t = Cfg.Tail (Instruction i, t)
 
-  let copy_value ~size ~dest ~src ~tmp rest =
+  let copy_value ~size ~dest ~src ~mk_tmp rest =
     let copy width offset rest =
-      let tmp = Target.Reg (Target.Reg.lower_to_width width tmp) in
+      let tmp = Target.Reg (Target.Reg.lower_to_width width (mk_tmp ())) in
       Target.mov ~dest:tmp
         ~src:
           (MemAddr
@@ -463,7 +463,7 @@ module Select = struct
               let typ_size = Ast.sizeof typ in
               let slot = state.new_stack_slot typ_size in
               let slot_ptr = state.fresh_vreg Int 8 in
-              let tmp = state.fresh_vreg Int 8 in
+              let mk_tmp () = state.fresh_vreg Int 8 in
               let arg_reg =
                 match arg' with
                 | Target.Reg reg -> reg
@@ -472,7 +472,7 @@ module Select = struct
               let dest = call_conv ~caller:true state width Int int_param_idx in
               let k tail =
                 instr "leaq" ~defs:[ Reg slot_ptr ] ~uses:[ slot ]
-                @> copy_value ~size:typ_size ~dest:slot_ptr ~src:arg_reg ~tmp
+                @> copy_value ~size:typ_size ~dest:slot_ptr ~src:arg_reg ~mk_tmp
                 @@ k tail
               in
               build_args ~int_dests:(dest :: int_dests)

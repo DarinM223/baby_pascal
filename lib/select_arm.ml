@@ -60,9 +60,48 @@ module Select = struct
   module G = Arm.Cfg
   module State = State
 
-  let rec is_homogeneous_aggregate _fields : (Ast.typ * int list) option =
-    (* todo: implement this *)
-    None
+  let rec is_homogeneous_aggregate (fields : (string * Ast.typ) list) :
+      (Ast.typ * int list) option =
+    let exception Failed in
+    try
+      let rec visit_type float_typ base_offset acc = function
+        | Ast.TInteger | TBoolean | TChar | TVoid | TFunction _ | TPointer _ ->
+          raise Failed
+        | TDouble ->
+          if float_typ = None || float_typ = Some Ast.TDouble then
+            (Some Ast.TDouble, base_offset :: acc)
+          else raise Failed
+        | TRecord fields ->
+          List.fold_left
+            (fun (float_typ, offsets) (field, typ) ->
+              let base_offset =
+                base_offset + Option.get (Ast.offsetof field fields)
+              in
+              visit_type float_typ base_offset offsets typ)
+            (float_typ, acc) fields
+        | TArray (typ, num_elems) ->
+          let typ_size = Ast.sizeof typ in
+          let rec go i (float_typ, acc) =
+            if i >= num_elems then (float_typ, acc)
+            else
+              go (i + 1)
+                (visit_type float_typ (base_offset + (typ_size * i)) acc typ)
+          in
+          go 0 (float_typ, acc)
+      in
+      let typ, offsets =
+        List.fold_left
+          (fun (float_typ, offsets) (field, typ) ->
+            let base_offset = Option.get (Ast.offsetof field fields) in
+            visit_type float_typ base_offset offsets typ)
+          (None, []) fields
+      in
+      let num_offsets = List.length offsets in
+      match typ with
+      | Some typ when num_offsets >= 1 && num_offsets <= 4 ->
+        Some (typ, List.rev offsets)
+      | _ -> None
+    with Failed -> None
 
   let rec reg_class_of_operand : Undag.Target.operand -> Target.reg_class =
     let reg_class_of_type = function
@@ -134,9 +173,9 @@ module Select = struct
         (Target.reuse_op tmp dest :: defs, num_hidden))
   let ( @> ) i t = Cfg.Tail (Instruction i, t)
 
-  let copy_value ~size ~dest ~src ~tmp rest =
+  let copy_value ~size ~dest ~src ~mk_tmp rest =
     let copy width offset rest =
-      let tmp = Target.Reg (Target.Reg.lower_to_width width tmp) in
+      let tmp = Target.Reg (Target.Reg.lower_to_width width (mk_tmp ())) in
       Target.mov ~dest:tmp
         ~src:
           (MemAddr
@@ -356,9 +395,24 @@ module Select = struct
                  and then pass in a pointer to the data using the
                  calling convention (which may also make a stack slot) *)
               let typ_size = Ast.sizeof typ in
-              let slot = state.new_stack_slot typ_size in
+              (* round up size to a multiple of 8 *)
+              let extended_typ_size = (typ_size + 7) land lnot 7 in
+              (* add stack padding to align stack to a multiple of 8 or 16 *)
+              let expected_alignment =
+                let alignment = Ast.alignof typ in
+                if alignment <= 8 then 8
+                else if alignment >= 16 then 16
+                else
+                  failwith
+                  @@ Format.asprintf "Unusual alignment for type %a: %d"
+                       Ast.pp_typ typ alignment
+              in
+              state.stack_offset <-
+                (state.stack_offset + (expected_alignment - 1))
+                land lnot (expected_alignment - 1);
+              let slot = state.new_stack_slot extended_typ_size in
               let slot_ptr = state.fresh_vreg Int 8 in
-              let tmp = state.fresh_vreg Int 8 in
+              let mk_tmp () = state.fresh_vreg Int 8 in
               let arg_reg =
                 match arg' with
                 | Target.Reg reg -> reg
@@ -367,14 +421,14 @@ module Select = struct
               let dest = call_conv ~caller:true state width Int int_param_idx in
               let k tail =
                 instr "adr" ~defs:[ Reg slot_ptr ] ~uses:[ slot ]
-                @> copy_value ~size:typ_size ~dest:slot_ptr ~src:arg_reg ~tmp
+                @> copy_value ~size:typ_size ~dest:slot_ptr ~src:arg_reg ~mk_tmp
                 @@ k tail
               in
               build_args ~int_dests:(dest :: int_dests)
                 ~int_args:(Reg slot_ptr :: int_args) ~float_dests ~float_args
                 ~int_param_idx:(int_param_idx + 1) ~float_param_idx k args
             in
-            let handle_regs int_param_idx float_param_idx regs offsets =
+            let handle_regs ~int_param_idx ~float_param_idx regs offsets =
               (* reg <- offset(arg') where offset starts at 0 and increments by 8 *)
               let arg_reg =
                 match arg' with
@@ -416,13 +470,13 @@ module Select = struct
                 let rec build_regs int_param_idx float_param_idx acc = function
                   | 0 -> (int_param_idx, float_param_idx, List.rev acc)
                   | n ->
-                    let r =
+                    let arg =
                       call_conv ~caller:false state width Int int_param_idx
                     in
-                    build_regs (int_param_idx + 1) float_param_idx (r :: acc)
+                    build_regs (int_param_idx + 1) float_param_idx (arg :: acc)
                       (n - 1)
                 in
-                let int_param_idx', float_param_idx', regs =
+                let int_param_idx, float_param_idx, regs =
                   build_regs int_param_idx float_param_idx [] chunks
                 in
                 (* Use caller:false so that new stack slots aren't created,
@@ -435,7 +489,7 @@ module Select = struct
                       | _ -> false)
                     regs
                 then handle_memory ()
-                else handle_regs int_param_idx' float_param_idx' regs offsets
+                else handle_regs ~int_param_idx ~float_param_idx regs offsets
             | Some (typ, offsets) ->
               let width = width_of_typ typ in
               (* get registers for homogenous aggregate
@@ -443,14 +497,14 @@ module Select = struct
               let rec build_regs int_param_idx float_param_idx acc = function
                 | 0 -> (int_param_idx, float_param_idx, List.rev acc)
                 | n ->
-                  let r =
+                  let arg =
                     Target.subst_reg_operand (Target.Reg.lower_to_width width)
-                    @@ call_conv ~caller:false state width Float int_param_idx
+                    @@ call_conv ~caller:false state width Float float_param_idx
                   in
-                  build_regs int_param_idx (float_param_idx + 1) (r :: acc)
+                  build_regs int_param_idx (float_param_idx + 1) (arg :: acc)
                     (n - 1)
               in
-              let int_param_idx', float_param_idx', regs =
+              let int_param_idx, float_param_idx, regs =
                 build_regs int_param_idx float_param_idx []
                   (List.length offsets)
               in
@@ -464,7 +518,7 @@ module Select = struct
                     | _ -> false)
                   regs
               then handle_memory ()
-              else handle_regs int_param_idx' float_param_idx' regs offsets
+              else handle_regs ~int_param_idx ~float_param_idx regs offsets
             end
           | _ ->
             let clz = reg_class_of_operand arg in
@@ -776,7 +830,7 @@ module Select = struct
             | n ->
               let arg =
                 Target.subst_reg_operand (Target.Reg.lower_to_width width)
-                @@ call_conv ~caller:false state width Float int_param_idx
+                @@ call_conv ~caller:false state width Float float_param_idx
               in
               let dest = Reg (state.fresh_vreg Float width) in
               build_regs ~float_dests:(dest :: float_dests)
