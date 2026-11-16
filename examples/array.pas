@@ -1,4 +1,4 @@
-var printInteger : (integer): void;
+var printInteger : (int64): void;
 var printDouble : (double): void;
 var printChar : (char): void;
 
@@ -20,9 +20,9 @@ begin
     sumnums := sum;
 end
 
-function multi() : integer;
+function multi() : int64;
 begin
-    var matrix : [4][4]integer;
+    var matrix : [4][4]int64;
     matrix[0][0] := 1;
     matrix[0][1] := 2;
     matrix[0][2] := 3;

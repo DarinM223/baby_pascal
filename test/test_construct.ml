@@ -1,14 +1,14 @@
 open Alcotest
 open Baby_pascal
 
-let name' s i = (Ast.TInteger, Normalize.(Name.update_index i (Target.name s)))
-let reg' s i = Normalize.Target.Reg (TInteger, snd (name' s i))
+let name' s i = (Ast.TInteger64, Normalize.(Name.update_index i (Target.name s)))
+let reg' s i = Normalize.Target.Reg (TInteger64, snd (name' s i))
 
 let test_figure_19_2 () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
-    let reg = reg TInteger in
+    let reg = reg TInteger64 in
     unfocus
     @@ branch (1, "label1")
     @@ label (1, "label1")
@@ -65,7 +65,7 @@ let test_figure_19_3 () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
-    let reg = reg TInteger in
+    let reg = reg TInteger64 in
     unfocus
     @@ branch (1, "label1")
     @@ label (1, "label1")
@@ -200,7 +200,7 @@ let test_pruned () =
   let _, ast =
     let venv =
       List.fold_left
-        (fun m v -> Check.M.add v Ast.TInteger m)
+        (fun m v -> Check.M.add v Ast.TInteger64 m)
         Check.M.empty [ "i"; "x"; "y"; "z" ]
     in
     Check.(check_stmt venv M.empty ast)

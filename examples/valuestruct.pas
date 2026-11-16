@@ -1,22 +1,22 @@
-var printInteger : (integer): void;
+var printInteger : (int64): void;
 var printDouble : (double): void;
 var printChar : (char): void;
-var printString : ( *char ): void;
+var printString : (^char): void;
 
-procedure printStruct1(struct1 : { a : integer, b : double });
+procedure printStruct1(struct1 : { a : int64, b : double });
 begin
   printInteger (struct1.a);
   printDouble (struct1.b);
 end
 
-procedure modifyStruct1(struct1 : { a : integer, b : double });
+procedure modifyStruct1(struct1 : { a : int64, b : double });
 begin
   struct1.a := struct1.a + 1;
   struct1.b := struct1.b + 1.0;
   printStruct1(struct1);
 end
 
-procedure printStruct2(struct2 : { a : integer, b : double, c : integer, d : double });
+procedure printStruct2(struct2 : { a : int64, b : double, c : int64, d : double });
 begin
   printInteger (struct2.a);
   printDouble (struct2.b);
@@ -24,7 +24,7 @@ begin
   printDouble (struct2.d);
 end
 
-procedure modifyStruct2(struct2 : { a : integer, b : double, c : integer, d : double });
+procedure modifyStruct2(struct2 : { a : int64, b : double, c : int64, d : double });
 begin
   struct2.a := struct2.a + 1;
   struct2.b := struct2.b + 1.0;
@@ -74,23 +74,23 @@ end
 // Tests that modifyStruct* doesn't modify the underlying struct because its passed by value
 // for both register and stack passing.
 begin
-  // Struct is 16 bytes so should be passed into an integer and a double
+  // Struct is 16 bytes so should be passed into an int64 and a double
   // calling convention register.
-  var struct1 : { a : integer, b : double };
+  var struct1 : { a : int64, b : double };
   struct1.a := 1;
   struct1.b := 2.0;
   modifyStruct1(struct1);
   printStruct1(struct1);
   // Should allocate a new struct on the stack, copy the old struct,
   // and pass a pointer to the new struct.
-  var struct2 : { a : integer, b : double, c : integer, d : double };
+  var struct2 : { a : int64, b : double, c : int64, d : double };
   struct2.a := 3;
   struct2.b := 4.0;
   struct2.c := 5;
   struct2.d := 6.0;
   modifyStruct2(struct2);
   printStruct2(struct2);
-  // Should pass all four into a single integer register.
+  // Should pass all four into a single int64 register.
   var struct3 : { a : char, b : char, c : char, d : char };
   struct3.a := 'a';
   struct3.b := 'b';

@@ -1,6 +1,6 @@
-var printInteger : (integer): void;
+var printInteger : (int64): void;
 
-function fibonacci(n : integer) : integer;
+function fibonacci(n : int64) : int64;
 begin
     if n <= 1 then
         fibonacci := n

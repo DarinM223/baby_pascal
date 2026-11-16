@@ -1,9 +1,9 @@
-%token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN LBRACK RBRACK LBRACE RBRACE COMMA DOT AMPER
+%token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN LBRACK RBRACK LBRACE RBRACE COMMA DOT AMPER EXPONENT ATSIGN
 %token PLUS MINUS TIMES DIV NOT AND OR LT LE GT GE
 %token VAR
 %token TRUE FALSE
 %token FUNCTION PROCEDURE BEGIN END IF THEN ELSE WHILE DO ALLOCA
-%token INTEGER BOOLEAN VOID DOUBLE CHAR
+%token INT64 BOOLEAN VOID DOUBLE CHAR
 %token<string> IDENT
 %token<string> STRING
 %token<int> INT
@@ -42,12 +42,12 @@ typ:
 | LPAREN params = separated_list(COMMA, typ) RPAREN COLON ret = typ {Ast.TFunction (params, Some ret)}
 | LBRACK size = INT RBRACK t = typ {Ast.TArray (t, size)}
 | LBRACE fields = separated_list(COMMA, separated_pair(IDENT, COLON, typ)) RBRACE {Ast.TRecord fields}
-| INTEGER {Ast.TInteger}
+| INT64 {Ast.TInteger64}
 | BOOLEAN {Ast.TBoolean}
 | DOUBLE {Ast.TDouble}
 | VOID {Ast.TVoid}
 | CHAR {Ast.TChar}
-| TIMES t = typ {Ast.TPointer t}
+| EXPONENT t = typ {Ast.TPointer t}
 
 decl:
 | FUNCTION i = IDENT LPAREN params = separated_list(COMMA, separated_pair(IDENT, COLON, typ))
@@ -76,7 +76,7 @@ lvalue:
 | id = IDENT {Ast.Var id}
 | e1 = lvalue LBRACK e2 = expr RBRACK {Ast.ArrayIndex (e1, e2)}
 | e1 = lvalue DOT field = IDENT {Ast.RecordField (e1, field)}
-| TIMES e = lvalue {Ast.Deref e}
+| e = lvalue EXPONENT {Ast.Deref e}
 
 rvalue:
 | ALLOCA t = typ i = INT {`Alloca (t, i)}
@@ -84,8 +84,8 @@ rvalue:
 
 expr:
 | LPAREN e = expr RPAREN {e}
-| AMPER e = expr {Ast.Addrof e}
-| TIMES e = expr {Ast.Deref e}
+| ATSIGN e = expr {Ast.Addrof e}
+| e = expr EXPONENT {Ast.Deref e}
 | LBRACK init = expr SEMI size = INT RBRACK {Ast.Array (init, size)}
 | lhs = expr LBRACK rhs = expr RBRACK {Ast.ArrayIndex (lhs, rhs)}
 | lhs = expr DOT rhs = IDENT {Ast.RecordField (lhs, rhs)}

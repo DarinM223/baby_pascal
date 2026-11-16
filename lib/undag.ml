@@ -129,7 +129,7 @@ end
 
 let rec lower_getelementptr (module F : Normalize.Fresh) = function
   | Target.GetElementPtr (dest, typ, src, idxs) ->
-    let new_tmp () = Target.Reg (F.fresh Ast.TInteger) in
+    let new_tmp () = Target.Reg (F.fresh Ast.TInteger64) in
     let rec go offset tmp = function
       | Ast.TPointer typ, (_, Target.Const idx) :: idxs ->
         go (offset + (idx * Ast.sizeof typ)) tmp (typ, idxs)

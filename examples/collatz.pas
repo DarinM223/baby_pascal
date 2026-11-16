@@ -1,6 +1,6 @@
-var printInteger : (integer): void;
+var printInteger : (int64): void;
 
-function collatz_steps(n : integer) : integer;
+function collatz_steps(n : int64) : int64;
 begin
   steps := 0;
   while n > 1 do

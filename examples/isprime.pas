@@ -1,7 +1,7 @@
-var printInteger : (integer): void;
+var printInteger : (int64): void;
 var printChar : (char): void;
 
-function is_prime(n : integer) : integer;
+function is_prime(n : int64) : int64;
 begin
   if n <= 1 then
     is_prime := 0

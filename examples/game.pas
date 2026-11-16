@@ -1,13 +1,13 @@
 var printChar : (char): void;
-var printString : (*char): void;
-var InitWindow : (integer, integer, *char): void;
+var printString : (^char): void;
+var InitWindow : (int64, int64, ^char): void;
 var CloseWindow : (): void;
-var SetTargetFPS : (integer): void;
+var SetTargetFPS : (int64): void;
 var WindowShouldClose : (): boolean;
 var BeginDrawing : (): void;
 var EndDrawing : (): void;
 var ClearBackground : ({r: char, g: char, b: char, a: char}): void;
-var DrawText : ( *char, integer, integer, integer, { r: char, g: char, b: char, a: char }): void;
+var DrawText : (^char, int64, int64, int64, { r: char, g: char, b: char, a: char }): void;
 
 begin
   var RAYWHITE : { r: char, g: char, b: char, a: char };
@@ -23,13 +23,13 @@ begin
 
   width := 800;
   height := 450;
-  InitWindow(width, height, &"raylib window");
+  InitWindow(width, height, @"raylib window");
   SetTargetFPS(60);
   while not WindowShouldClose() do
   begin
     BeginDrawing();
       ClearBackground(RAYWHITE);
-      DrawText(&"Congrats! You created your first window!", 190, 200, 20, LIGHTGRAY);
+      DrawText(@"Congrats! You created your first window!", 190, 200, 20, LIGHTGRAY);
     EndDrawing();
   end;
   CloseWindow();

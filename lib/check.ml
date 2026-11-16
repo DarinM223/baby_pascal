@@ -2,7 +2,7 @@ open Ast
 module M = Map.Make (String)
 
 let rec check_expr ?(inside_selector = false) venv fenv = function
-  | Int i -> (TInteger, Typed.Int i)
+  | Int i -> (TInteger64, Typed.Int i)
   | Bool b -> (TBoolean, Bool b)
   | Double d -> (TDouble, Double d)
   | Char c -> (TChar, Char c)
@@ -23,11 +23,11 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     let ((r_typ, _) as r_expr) = check_expr venv fenv r in
     begin match bop with
     | Add | Sub | Mul | Div ->
-      if l_typ <> TInteger && l_typ <> TDouble then
+      if l_typ <> TInteger64 && l_typ <> TDouble then
         failwith
           (Format.asprintf
              "Left expression is different, expected %a or %a got %a" pp_typ
-             TInteger pp_typ TDouble pp_typ l_typ);
+             TInteger64 pp_typ TDouble pp_typ l_typ);
       if r_typ <> l_typ then
         failwith
           (Format.asprintf "Right expression is different, expected %a got %a"
@@ -44,11 +44,11 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
              pp_typ TBoolean pp_typ r_typ);
       (TBoolean, Bop (bop, l_expr, r_expr))
     | Eq | Neq | Lt | Le | Gt | Ge ->
-      if l_typ <> TInteger && l_typ <> TDouble && l_typ <> TChar then
+      if l_typ <> TInteger64 && l_typ <> TDouble && l_typ <> TChar then
         failwith
           (Format.asprintf
              "Left expression is different, expected %a or %a got %a" pp_typ
-             TInteger pp_typ TDouble pp_typ l_typ);
+             TInteger64 pp_typ TDouble pp_typ l_typ);
       if r_typ <> l_typ then
         failwith
           (Format.asprintf "Right expression is different, expected %a got %a"
@@ -77,10 +77,10 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
       else Typed.Deref (fst expr, ArrayIndex (expr, index))
     in
     begin match (expr, index) with
-    | (TArray (array_typ, array_size), _), (TInteger, Int i) ->
+    | (TArray (array_typ, array_size), _), (TInteger64, Int i) ->
       if i >= 0 && i < array_size then (array_typ, result)
       else failwith (Format.sprintf "array index out of bounds: %d" i)
-    | (TArray (array_typ, _), _), (TInteger, _) -> (array_typ, result)
+    | (TArray (array_typ, _), _), (TInteger64, _) -> (array_typ, result)
     | _ ->
       failwith
         (Format.asprintf "invalid types for array index: %a and %a" pp_typ
@@ -118,9 +118,9 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     let var = check_expr venv fenv var in
     begin match fst var with
     | TArray (typ, _size) ->
-      (TPointer typ, ArrayIndex (var, (TInteger, Typed.Int 0)))
+      (TPointer typ, ArrayIndex (var, (TInteger64, Typed.Int 0)))
     | TRecord _ as typ ->
-      (TPointer typ, ArrayIndex (var, (TInteger, Typed.Int 0)))
+      (TPointer typ, ArrayIndex (var, (TInteger64, Typed.Int 0)))
     | typ -> (TPointer typ, Addrof var)
     end
   | Addrof expr ->

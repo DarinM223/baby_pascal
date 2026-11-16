@@ -65,7 +65,8 @@ module Select = struct
     let exception Failed in
     try
       let rec visit_type float_typ base_offset acc = function
-        | Ast.TInteger | TBoolean | TChar | TVoid | TFunction _ | TPointer _ ->
+        | Ast.TInteger64 | TBoolean | TChar | TVoid | TFunction _ | TPointer _
+          ->
           raise Failed
         | TDouble ->
           if float_typ = None || float_typ = Some Ast.TDouble then
@@ -875,7 +876,7 @@ include Isa.Codegen (Target) (Arm.Cfg) (Select)
 let%expect_test "Fibonacci code generation" =
   let cfg = Examples.fibonacci in
   let _, cfg =
-    codegen_test_helper ~args:[ (TInteger, "v") ] (State.init ()) cfg
+    codegen_test_helper ~args:[ (TInteger64, "v") ] (State.init ()) cfg
   in
   Format.printf "%a" Arm.Printer.pp_graph cfg;
   [%expect

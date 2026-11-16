@@ -33,17 +33,17 @@ end
   let expected =
     {
       Ast.globals =
-        [ { id = "hello"; typ = Ast.TInteger; value = Ast.External } ];
+        [ { id = "hello"; typ = Ast.TInteger64; value = Ast.External } ];
       decls =
         [
           Ast.Procedure
             ( "foo",
-              [ ("a", Ast.TInteger) ],
+              [ ("a", Ast.TInteger64) ],
               Ast.Group [ Ast.Call ("print", [ Ast.Var "a" ]) ] );
           Ast.Function
             ( "add",
-              [ ("a", Ast.TInteger); ("b", Ast.TInteger) ],
-              Ast.TInteger,
+              [ ("a", Ast.TInteger64); ("b", Ast.TInteger64) ],
+              Ast.TInteger64,
               Ast.Group
                 [
                   Ast.Assign

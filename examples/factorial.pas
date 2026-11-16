@@ -1,6 +1,6 @@
-var printInteger : (integer): void;
+var printInteger : (int64): void;
 
-function factorial(n : integer) : integer;
+function factorial(n : int64) : int64;
 begin
   // Edge cases
   factorial := 0;

@@ -1,12 +1,12 @@
-var printInteger : (integer): void;
+var printInteger : (int64): void;
 
-function sumfields() : integer;
+function sumfields() : int64;
 begin
-    var struct1 : { age : integer, address : { street : integer, house_number : integer } };
+    var struct1 : { age : int64, address : { street : int64, house_number : int64 } };
     struct1.age := 20;
     struct1.address.street := 50;
     struct1.address.house_number := 30;
-    var struct2 : { a : boolean, b : integer, c : boolean };
+    var struct2 : { a : boolean, b : int64, c : boolean };
     struct2.a := true;
     struct2.b := 50;
     struct2.c := true;

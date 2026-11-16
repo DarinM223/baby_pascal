@@ -29,6 +29,8 @@ rule token = parse
 | ']' {RBRACK}
 | '{' {LBRACE}
 | '}' {RBRACE}
+| '^' {EXPONENT}
+| '@' {ATSIGN}
 | '&' {AMPER}
 | ":=" {ASSIGN}
 | '=' {EQUALS}
@@ -44,7 +46,7 @@ rule token = parse
 | '/' {DIV}
 | "alloca" {ALLOCA}
 | "var" {VAR}
-| "integer" {INTEGER}
+| "int64" {INT64}
 | "boolean" {BOOLEAN}
 | "double" {DOUBLE}
 | "char" {CHAR}

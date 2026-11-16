@@ -1,8 +1,8 @@
-var printInteger : (integer): void;
+var printInteger : (int64): void;
 var printDouble : (double): void;
 var printChar : (char): void;
 
-function hello(a: integer, b: integer, c: integer, d: integer, e: integer, f: integer, g: integer, h: integer) : integer;
+function hello(a: int64, b: int64, c: int64, d: int64, e: int64, f: int64, g: int64, h: int64) : int64;
 begin
   hello := a + b + c + d + e + f + (h - g);
 end
@@ -12,26 +12,26 @@ begin
   doublehello := a + b + c + d + e + f + (h - g);
 end
 
-function world(a: integer) : integer;
+function world(a: int64) : int64;
 begin
   sum := 0;
   while a > 0 do
   begin
-    v := alloca integer 8;
-    *v := a;
-    sum := sum + *v;
+    v := alloca int64 8;
+    v^ := a;
+    sum := sum + v^;
     a := a - 1;
   end;
   world := sum;
 end
 
-function blah() : integer;
+function blah() : int64;
 begin
-  a := alloca integer 8;
-  b := alloca integer 8;
-  *a := 3;
-  *b := 4;
-  c := *a + *b;
+  a := alloca int64 8;
+  b := alloca int64 8;
+  a^ := 3;
+  b^ := 4;
+  c := a^ + b^;
   blah := c;
 end
 

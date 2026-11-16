@@ -185,7 +185,7 @@ module Target = struct
     Label (clz, label, args)
   let destruct_label = function
     | Label (Float, l, args) -> Some (Ast.TDouble, l, args)
-    | Label (Int, l, args) -> Some (Ast.TInteger, l, args)
+    | Label (Int, l, args) -> Some (Ast.TInteger64, l, args)
     | _ -> None
   let rec fold_reg_operand (f : 'a -> reg -> 'a * reg) (acc : 'a) = function
     | Reg r ->

@@ -1,17 +1,17 @@
-var printInteger : (integer): void;
+var printInteger : (int64): void;
 var printChar : (char): void;
 
-function bar(x : integer, y : integer) : integer;
+function bar(x : int64, y : int64) : int64;
 begin
   bar := x + y;
 end
 
-function foo(x : integer, y : integer) : integer;
+function foo(x : int64, y : int64) : int64;
 begin
   foo := bar(y, x);
 end
 
-function hello(x : integer, y : integer, z : integer) : integer;
+function hello(x : int64, y : int64, z : int64) : int64;
 begin
   a := world(y, z, x);
   b := world(z, x, x);
@@ -19,7 +19,7 @@ begin
   hello := a + b + c;
 end
 
-function world(x : integer, y : integer, z : integer) : integer;
+function world(x : int64, y : int64, z : int64) : int64;
 begin
   a := foo(x, z);
   b := foo(y, x);

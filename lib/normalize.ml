@@ -196,7 +196,7 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
              let ptr = Target.Reg (fresh (TPointer elem_typ)) in
              Cfg.instruction
                (Target.GetElementPtr
-                  (ptr, fst exp, array, [ (TInteger, Target.Const i) ]))
+                  (ptr, fst exp, array, [ (TInteger64, Target.Const i) ]))
              @@ Cfg.instruction (Target.Store (ptr, init_expr))
              @@ f zgraph)
           (CCList.range 0 (size - 1))
@@ -249,7 +249,7 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
         fun zgraph ->
           Cfg.instruction
             (Target.GetElementPtr
-               (tmp, TRecord fields, record, [ (TInteger, Const index) ]))
+               (tmp, TRecord fields, record, [ (TInteger64, Const index) ]))
           @@ rest @@ zgraph
       | None ->
         failwith

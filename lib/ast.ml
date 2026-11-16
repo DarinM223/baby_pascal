@@ -1,5 +1,5 @@
 type typ =
-  | TInteger
+  | TInteger64
   | TBoolean
   | TChar
   | TDouble
@@ -11,7 +11,7 @@ type typ =
 [@@deriving eq]
 
 let rec pp_typ fmt = function
-  | TInteger -> Format.fprintf fmt "integer"
+  | TInteger64 -> Format.fprintf fmt "int64"
   | TBoolean -> Format.fprintf fmt "boolean"
   | TDouble -> Format.fprintf fmt "double"
   | TChar -> Format.fprintf fmt "char"
@@ -143,7 +143,7 @@ type 'a program = {
 [@@deriving show, eq]
 
 let rec alignof = function
-  | TInteger -> 8
+  | TInteger64 -> 8
   | TBoolean -> 1
   | TChar -> 1
   | TDouble -> 8
@@ -155,7 +155,7 @@ let rec alignof = function
   | TArray (typ, _size) -> alignof typ
 
 let rec sizeof = function
-  | TInteger -> 8
+  | TInteger64 -> 8
   | TBoolean -> 1
   | TChar -> 1
   | TDouble -> 8

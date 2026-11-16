@@ -20,7 +20,7 @@ let test_example_1 () =
   let expected =
     let open Normalize.Target in
     let open Normalize.Cfg in
-    let reg = reg TInteger in
+    let reg = reg TInteger64 in
     unfocus
     @@ instruction
          (bop Ast.Mul ~src1:(Const 2) ~src2:(Const 3) ~dest:(reg "tmp0"))
@@ -64,8 +64,8 @@ let test_example_1 () =
 let test_map_first_last () =
   let open Normalize.Target in
   let open Normalize.Cfg in
-  let reg = reg TInteger in
-  let name s = (Ast.TInteger, name s) in
+  let reg = reg TInteger64 in
+  let name s = (Ast.TInteger64, name s) in
   let cfg =
     unfocus
     @@ label (1, "")

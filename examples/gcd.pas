@@ -1,6 +1,6 @@
-var printInteger : (integer): void;
+var printInteger : (int64): void;
 
-function gcd(a : integer, b : integer) : integer;
+function gcd(a : int64, b : int64) : int64;
 begin
   while b > 0 do
   begin

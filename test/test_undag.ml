@@ -5,7 +5,7 @@ let test_example_1 () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
-    let reg = reg TInteger in
+    let reg = reg TInteger64 in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -13,7 +13,7 @@ let test_example_1 () =
     @@ instruction (bop Mul ~dest:(reg "d") ~src1:(reg "c") ~src2:(reg "c"))
     @@ instruction
          (call ~dest:(reg "e")
-            (Label (TFunction ([], Some TInteger), (100, "f"), []))
+            (Label (TFunction ([], Some TInteger64), (100, "f"), []))
             [])
     @@ focus_entry empty
   in
@@ -23,7 +23,7 @@ let test_example_1 () =
   let expected =
     let open Undag.Target in
     let open Undag.Cfg in
-    let reg = reg TInteger in
+    let reg = reg TInteger64 in
     unfocus
     @@ instruction
          (bop Add ~dest:(reg "c")
@@ -32,7 +32,7 @@ let test_example_1 () =
     @@ instruction (bop Mul ~dest:(reg "d") ~src1:(reg "c") ~src2:(reg "c"))
     @@ instruction
          (call ~dest:(reg "e")
-            (Label (TFunction ([], Some TInteger), (100, "f"), []))
+            (Label (TFunction ([], Some TInteger64), (100, "f"), []))
             [])
     @@ focus_entry empty
   in
@@ -44,7 +44,7 @@ let test_use_in_jump () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
-    let reg = reg TInteger in
+    let reg = reg TInteger64 in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -59,7 +59,7 @@ let test_use_in_jump () =
   let expected =
     let open Undag.Target in
     let open Undag.Cfg in
-    let reg = reg TInteger in
+    let reg = reg TInteger64 in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ branch
@@ -82,7 +82,7 @@ let test_example_1_treeify () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
-    let reg = reg TInteger in
+    let reg = reg TInteger64 in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -90,7 +90,7 @@ let test_example_1_treeify () =
     @@ instruction (bop Mul ~dest:(reg "d") ~src1:(reg "c") ~src2:(reg "c"))
     @@ instruction
          (call ~dest:(reg "e")
-            (Label (TFunction ([], Some TInteger), (100, "f"), []))
+            (Label (TFunction ([], Some TInteger64), (100, "f"), []))
             [])
     @@ focus_entry empty
   in
@@ -98,7 +98,7 @@ let test_example_1_treeify () =
   let expected =
     let open Undag.Target in
     let open Undag.Cfg in
-    let reg = reg TInteger in
+    let reg = reg TInteger64 in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -120,7 +120,7 @@ let test_example_1_treeify () =
                     ~src2:(Instr (assign ~src:(Const 2) ~dest:(reg "b"))))))
     @@ instruction
          (call ~dest:(reg "e")
-            (Label (TFunction ([], Some TInteger), (100, "f"), []))
+            (Label (TFunction ([], Some TInteger64), (100, "f"), []))
             [])
     @@ focus_entry empty
   in
@@ -131,7 +131,7 @@ let test_graph_treeify () =
   let cfg =
     let open Normalize.Target in
     let open Normalize.Cfg in
-    let reg = reg TInteger in
+    let reg = reg TInteger64 in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -141,7 +141,7 @@ let test_graph_treeify () =
     @@ instruction (bop Mul ~dest:(reg "d") ~src1:(reg "c") ~src2:(reg "c"))
     @@ instruction
          (call ~dest:(reg "e")
-            (Label (TFunction ([], Some TInteger), (100, "f"), []))
+            (Label (TFunction ([], Some TInteger64), (100, "f"), []))
             [])
     @@ focus_entry empty
   in
@@ -149,7 +149,7 @@ let test_graph_treeify () =
   let expected =
     let open Undag.Target in
     let open Undag.Cfg in
-    let reg = reg TInteger in
+    let reg = reg TInteger64 in
     unfocus
     @@ instruction (assign ~src:(Const 1) ~dest:(reg "a"))
     @@ instruction (assign ~src:(Const 2) ~dest:(reg "b"))
@@ -173,7 +173,7 @@ let test_graph_treeify () =
                     ~src2:(Instr (assign ~src:(Const 2) ~dest:(reg "b"))))))
     @@ instruction
          (call ~dest:(reg "e")
-            (Label (TFunction ([], Some TInteger), (100, "f"), []))
+            (Label (TFunction ([], Some TInteger64), (100, "f"), []))
             [])
     @@ focus_entry empty
   in

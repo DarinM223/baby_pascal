@@ -87,7 +87,7 @@ module Select = struct
         classes.(i) <- merge_classes (classes.(i), clz)
       in
       let rec visit_type offset = function
-        | Ast.TInteger | TBoolean | TChar -> merge_with offset INTEGER
+        | Ast.TInteger64 | TBoolean | TChar -> merge_with offset INTEGER
         | TDouble -> merge_with offset SSE
         | TVoid -> failwith "Void type not supported inside structure"
         | TFunction (_, _) ->
@@ -856,7 +856,7 @@ include Isa.Codegen (Target) (X86.Cfg) (Select)
 let%expect_test "Fibonacci code generation" =
   let cfg = Examples.fibonacci in
   let _, cfg =
-    codegen_test_helper ~args:[ (TInteger, "v") ] (State.init ()) cfg
+    codegen_test_helper ~args:[ (TInteger64, "v") ] (State.init ()) cfg
   in
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
