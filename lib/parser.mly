@@ -1,4 +1,4 @@
-%token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN LBRACK RBRACK LBRACE RBRACE COMMA DOT AMPER EXPONENT ATSIGN
+%token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN LBRACK RBRACK LBRACE RBRACE COMMA DOT AMPER EXPONENT ATSIGN RECORD
 %token PLUS MINUS TIMES DIV NOT AND OR LT LE GT GE
 %token VAR
 %token TRUE FALSE
@@ -41,7 +41,7 @@ global:
 typ:
 | LPAREN params = separated_list(COMMA, typ) RPAREN COLON ret = typ {Ast.TFunction (params, Some ret)}
 | LBRACK size = INT RBRACK t = typ {Ast.TArray (t, size)}
-| LBRACE fields = separated_list(COMMA, separated_pair(IDENT, COLON, typ)) RBRACE {Ast.TRecord fields}
+| RECORD fields = list(terminated(separated_pair(IDENT, COLON, typ), SEMI)) END {Ast.TRecord fields}
 | INT64 {Ast.TInteger64}
 | BOOLEAN {Ast.TBoolean}
 | DOUBLE {Ast.TDouble}

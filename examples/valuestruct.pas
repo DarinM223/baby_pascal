@@ -3,20 +3,20 @@ var printDouble : (double): void;
 var printChar : (char): void;
 var printString : (^char): void;
 
-procedure printStruct1(struct1 : { a : int64, b : double });
+procedure printStruct1(struct1 : record a : int64; b : double; end);
 begin
   printInteger (struct1.a);
   printDouble (struct1.b);
 end
 
-procedure modifyStruct1(struct1 : { a : int64, b : double });
+procedure modifyStruct1(struct1 : record a : int64; b : double; end);
 begin
   struct1.a := struct1.a + 1;
   struct1.b := struct1.b + 1.0;
   printStruct1(struct1);
 end
 
-procedure printStruct2(struct2 : { a : int64, b : double, c : int64, d : double });
+procedure printStruct2(struct2 : record a : int64; b : double; c : int64; d : double; end);
 begin
   printInteger (struct2.a);
   printDouble (struct2.b);
@@ -24,7 +24,7 @@ begin
   printDouble (struct2.d);
 end
 
-procedure modifyStruct2(struct2 : { a : int64, b : double, c : int64, d : double });
+procedure modifyStruct2(struct2 : record a : int64; b : double; c : int64; d : double; end);
 begin
   struct2.a := struct2.a + 1;
   struct2.b := struct2.b + 1.0;
@@ -33,7 +33,7 @@ begin
   printStruct2(struct2);
 end
 
-procedure printStruct3(struct3 : { a : char, b : char, c : char, d : char });
+procedure printStruct3(struct3 : record a : char; b : char; c : char; d : char; end);
 begin
   printChar (struct3.a);
   printChar (struct3.b);
@@ -41,7 +41,7 @@ begin
   printChar (struct3.d);
 end
 
-procedure printStruct4(struct4 : { a : [7]char, b : double });
+procedure printStruct4(struct4 : record a : [7]char; b : double; end);
 begin
   printChar (struct4.a[0]);
   printChar (struct4.a[1]);
@@ -53,7 +53,7 @@ begin
   printDouble (struct4.b);
 end
 
-procedure printStruct5(struct5 : { a : double, b : double, c : double, d : double });
+procedure printStruct5(struct5 : record a : double; b : double; c : double; d : double; end);
 begin
   printDouble (struct5.a);
   printDouble (struct5.b);
@@ -61,7 +61,7 @@ begin
   printDouble (struct5.d);
 end
 
-procedure printStruct6(struct6 : { a : double, b : double, c : double, d : double, e : double });
+procedure printStruct6(struct6 : record a : double; b : double; c : double; d : double; e : double; end);
 begin
   printDouble (struct6.a);
   printDouble (struct6.b);
@@ -76,14 +76,14 @@ end
 begin
   // Struct is 16 bytes so should be passed into an int64 and a double
   // calling convention register.
-  var struct1 : { a : int64, b : double };
+  var struct1 : record a : int64; b : double; end;
   struct1.a := 1;
   struct1.b := 2.0;
   modifyStruct1(struct1);
   printStruct1(struct1);
   // Should allocate a new struct on the stack, copy the old struct,
   // and pass a pointer to the new struct.
-  var struct2 : { a : int64, b : double, c : int64, d : double };
+  var struct2 : record a: int64; b: double; c: int64; d: double; end;
   struct2.a := 3;
   struct2.b := 4.0;
   struct2.c := 5;
@@ -91,14 +91,14 @@ begin
   modifyStruct2(struct2);
   printStruct2(struct2);
   // Should pass all four into a single int64 register.
-  var struct3 : { a : char, b : char, c : char, d : char };
+  var struct3 : record a : char; b : char; c : char; d : char; end;
   struct3.a := 'a';
   struct3.b := 'b';
   struct3.c := 'c';
   struct3.d := 'd';
   printStruct3(struct3);
   // Passes arrays in struct by value, accounts for padding.
-  var struct4 : { a : [7]char, b : double };
+  var struct4 : record a : [7]char; b : double; end;
   struct4.a[0] := 'e';
   struct4.a[1] := 'f';
   struct4.a[2] := 'g';
@@ -110,14 +110,14 @@ begin
   printStruct4(struct4);
   // On AARCH64 this is a HFA that gets passed into floating point registers
   // On X86-64 System V this will be passed into stack.
-  var struct5 : { a : double, b : double, c : double, d : double };
+  var struct5 : record a : double; b : double; c : double; d : double; end;
   struct5.a := 0.0;
   struct5.b := 1.0;
   struct5.c := 2.0;
   struct5.d := 3.0;
   printStruct5(struct5);
   // On both X86-64 and AARCH64 this will be passed on stack
-  var struct6 : { a : double, b : double, c : double, d : double, e : double };
+  var struct6 : record a : double; b : double; c : double; d : double; e : double; end;
   struct6.a := 0.0;
   struct6.b := 1.0;
   struct6.c := 2.0;

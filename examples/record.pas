@@ -2,15 +2,21 @@ var printInteger : (int64): void;
 
 function sumfields() : int64;
 begin
-    var struct1 : { age : int64, address : { street : int64, house_number : int64 } };
+    var struct1 : record
+      age : int64;
+      address : record
+        street : int64;
+        house_number : int64;
+        end;
+    end;
     struct1.age := 20;
     struct1.address.street := 50;
     struct1.address.house_number := 30;
-    var struct2 : { a : boolean, b : int64, c : boolean };
+    var struct2 : record a: boolean; b: int64; c: boolean; end;
     struct2.a := true;
     struct2.b := 50;
     struct2.c := true;
-    var struct3 : { a : double, b : double, c : double };
+    var struct3 : record a: double; b: double; c: double; end;
     struct3.a := 1.0;
     struct3.b := 2.0;
     struct3.c := 3.0;
