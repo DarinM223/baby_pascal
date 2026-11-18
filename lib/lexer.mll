@@ -44,6 +44,7 @@ rule token = parse
 | '-' {MINUS}
 | '*' {TIMES}
 | '/' {DIV}
+| "type" {TYPE}
 | "record" {RECORD}
 | "alloca" {ALLOCA}
 | "var" {VAR}

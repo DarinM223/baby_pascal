@@ -196,3 +196,34 @@ let offsetof field fields =
     | [] -> None
   in
   go 0 fields
+
+(* Used by parser.mly for resolving aliases *)
+module SymbolTable = struct
+  type 'a t = {
+    tbl : (string, 'a) Hashtbl.t;
+    mutable scopes : string list list;
+  }
+
+  let create size =
+    { tbl = Hashtbl.create size; scopes = [ [] ] (* Start with global scope *) }
+
+  let enter_scope st = st.scopes <- [] :: st.scopes
+
+  let add st name value =
+    match st.scopes with
+    | current :: rest ->
+      Hashtbl.add st.tbl name value;
+      st.scopes <- (name :: current) :: rest
+    | [] -> failwith "No active scope"
+
+  let exit_scope st =
+    match st.scopes with
+    | current :: rest ->
+      List.iter (Hashtbl.remove st.tbl) current;
+      st.scopes <- rest
+    | [] -> failwith "Cannot exit global scope"
+
+  let find st name = Hashtbl.find st.tbl name
+  let find_opt st name = Hashtbl.find_opt st.tbl name
+end
+let alias_table : typ SymbolTable.t = SymbolTable.create 100

@@ -1,6 +1,6 @@
 %token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN LBRACK RBRACK LBRACE RBRACE COMMA DOT AMPER EXPONENT ATSIGN RECORD
 %token PLUS MINUS TIMES DIV NOT AND OR LT LE GT GE
-%token VAR
+%token VAR TYPE
 %token TRUE FALSE
 %token FUNCTION PROCEDURE BEGIN END IF THEN ELSE WHILE DO ALLOCA
 %token INT64 BOOLEAN VOID DOUBLE CHAR
@@ -19,8 +19,11 @@
 %nonassoc NOT
 
 %start <Ast.stmt Ast.program> program
-%type <Ast.global_def> global
+%type <Ast.global_def list> global
+%type <(string * Ast.typ) list> binding
 %type <Ast.typ> typ
+%type <unit> typ_decls
+%type <unit> typ_binding
 %type <Ast.stmt Ast.decl> decl
 %type <Ast.stmt> statement
 %type <Ast.expr> expr
@@ -29,14 +32,25 @@
 %%
 
 program:
-| g = global SEMI p = program {{ p with globals = p.Ast.globals @ [g] }}
+| t = typ_decls p = program {p}
+| g = global p = program {{ p with globals = p.Ast.globals @ g }}
 | d = decl p = program {{ p with decls = p.Ast.decls @ [d] }}
-| main = statement p = program {{ p with main }}
+| BEGIN main = list(terminated(statement, SEMI)) END p = program {{ p with main = Ast.Group main }}
 | EOF {{ Ast.globals = []; decls = []; main = Ast.Group [] }}
 
+typ_decls:
+| TYPE r = nonempty_list(terminated(typ_binding, SEMI)) {()}
+
+typ_binding:
+| id = IDENT EQUALS ty = typ {Ast.(SymbolTable.add alias_table id ty)}
+
 global:
-| VAR r = separated_pair(IDENT, COLON, typ)
-  {let id, typ = r in { id; typ; value = Ast.External }}
+| VAR r = nonempty_list(terminated(binding, SEMI))
+  {List.concat_map (List.map (fun (id, typ) -> { Ast.id; typ; value = Ast.External })) r}
+
+binding:
+| r = separated_pair(separated_nonempty_list(COMMA, IDENT), COLON, typ)
+  {let ids, typ = r in List.map (fun id -> (id, typ)) ids}
 
 typ:
 | LPAREN params = separated_list(COMMA, typ) RPAREN COLON ret = typ {Ast.TFunction (params, Some ret)}
@@ -48,6 +62,12 @@ typ:
 | VOID {Ast.TVoid}
 | CHAR {Ast.TChar}
 | EXPONENT t = typ {Ast.TPointer t}
+| id = IDENT
+  {
+  match Ast.(SymbolTable.find_opt alias_table id) with
+  | Some typ -> typ
+  | None -> raise @@ Utils.Parser_error (Format.asprintf "unknown type alias %s" id)
+  }
 
 decl:
 | FUNCTION i = IDENT LPAREN params = separated_list(COMMA, separated_pair(IDENT, COLON, typ))
@@ -59,7 +79,8 @@ decl:
 
 statement:
 | BEGIN stmts = list(terminated(statement, SEMI)) END {Ast.Group stmts}
-| VAR r = separated_pair(IDENT, COLON, typ) {let (id, typ) = r in Ast.Declare (id, typ)}
+| VAR r = separated_pair(separated_nonempty_list(COMMA, IDENT), COLON, typ)
+  {let (ids, typ) = r in Ast.Group (List.map (fun id -> Ast.Declare (id, typ)) ids)}
 | IF e = expr THEN thn = statement {Ast.If (e, thn, Group [])}
 | IF e = expr THEN thn = statement ELSE els = statement {Ast.If (e, thn, els)}
 | WHILE e = expr DO body = statement {Ast.While (e, body)}

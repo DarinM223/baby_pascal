@@ -1,3 +1,11 @@
+type
+  TColor = record
+    r: char;
+    g: char;
+    b: char;
+    a: char;
+  end;
+
 var printChar : (char): void;
 var printString : (^char): void;
 var InitWindow : (int64, int64, ^char): void;
@@ -6,16 +14,15 @@ var SetTargetFPS : (int64): void;
 var WindowShouldClose : (): boolean;
 var BeginDrawing : (): void;
 var EndDrawing : (): void;
-var ClearBackground : ({r: char, g: char, b: char, a: char}): void;
-var DrawText : (^char, int64, int64, int64, { r: char, g: char, b: char, a: char }): void;
+var ClearBackground : (TColor): void;
+var DrawText : (^char, int64, int64, int64, TColor): void;
 
 begin
-  var RAYWHITE : { r: char, g: char, b: char, a: char };
+  var RAYWHITE, LIGHTGRAY : TColor;
   RAYWHITE.r := '\xF5';
   RAYWHITE.g := '\xF5';
   RAYWHITE.b := '\xF5';
   RAYWHITE.a := '\xFF';
-  var LIGHTGRAY : { r: char, g: char, b: char, a: char };
   LIGHTGRAY.r := '\xC8';
   LIGHTGRAY.g := '\xC8';
   LIGHTGRAY.b := '\xC8';
