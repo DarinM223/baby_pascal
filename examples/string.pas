@@ -3,11 +3,11 @@ var printString : (^char): void;
 
 begin
     printString(@"hello\n");
-    s1 := "world\n";
+    var s1 : [6]char = "world\n";
     printString(@s1);
-    s2 := "xylophone";
-    c1 := s1[0];
-    c2 := s2[0];
+    var s2 : [9]char = "xylophone";
+    var c1 : char = s1[0];
+    var c2 : char = s2[0];
     if c1 < c2 then begin
         printChar(c1);
         printString(@" is less than ");

@@ -2,11 +2,11 @@ var printInteger : (int64): void;
 
 function collatz_steps(n : int64) : int64;
 begin
-  steps := 0;
+  var steps : int64 = 0;
   while n > 1 do
   begin
     // Check if n is even using simulated modulo 2
-    temp := n;
+    var temp : int64 = n;
     while temp >= 2 do
     begin
       temp := temp - 2;

@@ -18,7 +18,8 @@ var ClearBackground : (TColor): void;
 var DrawText : (^char, int64, int64, int64, TColor): void;
 
 begin
-  var RAYWHITE, LIGHTGRAY : TColor;
+  var RAYWHITE : TColor;
+  var LIGHTGRAY : TColor;
   RAYWHITE.r := '\xF5';
   RAYWHITE.g := '\xF5';
   RAYWHITE.b := '\xF5';
@@ -28,8 +29,8 @@ begin
   LIGHTGRAY.b := '\xC8';
   LIGHTGRAY.a := '\xFF';
 
-  width := 800;
-  height := 450;
+  var width : int64 = 800;
+  var height : int64 = 450;
   InitWindow(width, height, @"raylib window");
   SetTargetFPS(60);
   while not WindowShouldClose() do

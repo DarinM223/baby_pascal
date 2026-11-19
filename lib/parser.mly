@@ -3,7 +3,7 @@
 %token VAR TYPE
 %token TRUE FALSE
 %token FUNCTION PROCEDURE BEGIN END IF THEN ELSE WHILE DO ALLOCA
-%token INT64 BOOLEAN VOID DOUBLE CHAR
+%token INT64 INT32 INT16 BOOLEAN VOID DOUBLE CHAR
 %token<string> IDENT
 %token<string> STRING
 %token<int> INT
@@ -32,14 +32,14 @@
 %%
 
 program:
-| t = typ_decls p = program {p}
+| typ_decls p = program {p}
 | g = global p = program {{ p with globals = p.Ast.globals @ g }}
 | d = decl p = program {{ p with decls = p.Ast.decls @ [d] }}
 | BEGIN main = list(terminated(statement, SEMI)) END p = program {{ p with main = Ast.Group main }}
 | EOF {{ Ast.globals = []; decls = []; main = Ast.Group [] }}
 
 typ_decls:
-| TYPE r = nonempty_list(terminated(typ_binding, SEMI)) {()}
+| TYPE nonempty_list(terminated(typ_binding, SEMI)) {()}
 
 typ_binding:
 | id = IDENT EQUALS ty = typ {Ast.(SymbolTable.add alias_table id ty)}
@@ -57,6 +57,8 @@ typ:
 | LBRACK size = INT RBRACK t = typ {Ast.TArray (t, size)}
 | RECORD fields = list(terminated(separated_pair(IDENT, COLON, typ), SEMI)) END {Ast.TRecord fields}
 | INT64 {Ast.TInteger64}
+| INT32 {Ast.TInteger32}
+| INT16 {Ast.TInteger16}
 | BOOLEAN {Ast.TBoolean}
 | DOUBLE {Ast.TDouble}
 | VOID {Ast.TVoid}
@@ -79,8 +81,13 @@ decl:
 
 statement:
 | BEGIN stmts = list(terminated(statement, SEMI)) END {Ast.Group stmts}
-| VAR r = separated_pair(separated_nonempty_list(COMMA, IDENT), COLON, typ)
-  {let (ids, typ) = r in Ast.Group (List.map (fun id -> Ast.Declare (id, typ)) ids)}
+| VAR r = separated_pair(IDENT, COLON, typ) e = option(EQUALS e = expr {e})
+  {
+  let id, typ = r in
+  match e with
+  | Some e -> Ast.Group [Ast.Declare (id, typ); Ast.Assign (Var id, e)]
+  | None -> Ast.Declare (id, typ)
+  }
 | IF e = expr THEN thn = statement {Ast.If (e, thn, Group [])}
 | IF e = expr THEN thn = statement ELSE els = statement {Ast.If (e, thn, els)}
 | WHILE e = expr DO body = statement {Ast.While (e, body)}

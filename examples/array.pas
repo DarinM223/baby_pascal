@@ -4,14 +4,14 @@ var printChar : (char): void;
 
 function sumnums() : double;
 begin
-    array := [0.0; 5];
+    var array : [5]double = [0.0; 5];
     array[0] := 1.0;
     array[1] := 2.0;
     array[2] := 3.0;
     array[3] := 4.0;
     array[4] := 5.0;
-    sum := 0.0;
-    i := 0;
+    var sum : double = 0.0;
+    var i : int64 = 0;
     while i < 5 do
     begin
       sum := sum + array[i];
@@ -39,11 +39,11 @@ begin
     matrix[3][1] := 14;
     matrix[3][2] := 15;
     matrix[3][3] := 16;
-    sum := 0;
-    x := 0;
+    var sum : int64 = 0;
+    var x : int64 = 0;
     while x < 4 do
     begin
-        y := 0;
+        var y : int64 = 0;
         while y < 4 do
         begin
             sum := sum + matrix[x][y];
@@ -55,11 +55,11 @@ begin
 end
 
 begin
-    result := sumnums();
+    var result : double = sumnums();
     // Should print "15.000000"
     printDouble(result);
     printChar('\n');
-    result2 := multi();
+    var result2 : int64 = multi();
     // Should print "136"
     printInteger(result2);
     printChar('\n');

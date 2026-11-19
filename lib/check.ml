@@ -1,8 +1,33 @@
 open Ast
-module M = Map.Make (String)
+module M = CCMap.Make (String)
+
+let widen_integer_types = function
+  | TInteger64, (TInteger32 | TInteger16)
+  | (TInteger32 | TInteger16), TInteger64 ->
+    Some TInteger64
+  | TInteger32, TInteger16 | TInteger16, TInteger32 -> Some TInteger32
+  | TInteger16, TInteger16 -> Some TInteger16
+  | _ -> None
+
+let typ_of_integer i =
+  if i <= 32767 && i >= -32768 then TInteger16
+  else if i <= Int32.to_int Int32.max_int && i >= Int32.to_int Int32.min_int
+  then TInteger32
+  else TInteger64
+
+let args_equal xs1 xs2 =
+  List.length xs1 = List.length xs2
+  && List.for_all
+       (fun (arg1, arg2) ->
+         match widen_integer_types (arg1, arg2) with
+         | Some _ -> true
+         | None ->
+           (* todo: handle float widening here as well *)
+           arg1 = arg2)
+       (List.combine xs1 xs2)
 
 let rec check_expr ?(inside_selector = false) venv fenv = function
-  | Int i -> (TInteger64, Typed.Int i)
+  | Int i -> (typ_of_integer i, Typed.Int i)
   | Bool b -> (TBoolean, Bool b)
   | Double d -> (TDouble, Double d)
   | Char c -> (TChar, Char c)
@@ -23,16 +48,23 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     let ((r_typ, _) as r_expr) = check_expr venv fenv r in
     begin match bop with
     | Add | Sub | Mul | Div ->
-      if l_typ <> TInteger64 && l_typ <> TDouble then
-        failwith
-          (Format.asprintf
-             "Left expression is different, expected %a or %a got %a" pp_typ
-             TInteger64 pp_typ TDouble pp_typ l_typ);
-      if r_typ <> l_typ then
-        failwith
-          (Format.asprintf "Right expression is different, expected %a got %a"
-             pp_typ l_typ pp_typ r_typ);
-      (l_typ, Bop (bop, l_expr, r_expr))
+      begin match widen_integer_types (l_typ, r_typ) with
+      | Some typ' -> (typ', Bop (bop, l_expr, r_expr))
+      | None ->
+        if
+          l_typ <> TInteger64 && l_typ <> TInteger32 && l_typ <> TInteger16
+          && l_typ <> TDouble
+        then
+          failwith
+            (Format.asprintf
+               "Left expression is different, expected %a or %a got %a" pp_typ
+               TInteger64 pp_typ TDouble pp_typ l_typ);
+        if r_typ <> l_typ then
+          failwith
+            (Format.asprintf "Right expression is different, expected %a got %a"
+               pp_typ l_typ pp_typ r_typ);
+        (l_typ, Bop (bop, l_expr, r_expr))
+      end
     | And | Or ->
       if l_typ <> TBoolean then
         failwith
@@ -44,25 +76,29 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
              pp_typ TBoolean pp_typ r_typ);
       (TBoolean, Bop (bop, l_expr, r_expr))
     | Eq | Neq | Lt | Le | Gt | Ge ->
-      if l_typ <> TInteger64 && l_typ <> TDouble && l_typ <> TChar then
+      if
+        l_typ <> TInteger64 && l_typ <> TInteger32 && l_typ <> TInteger16
+        && l_typ <> TDouble && l_typ <> TChar
+      then
         failwith
           (Format.asprintf
              "Left expression is different, expected %a or %a got %a" pp_typ
              TInteger64 pp_typ TDouble pp_typ l_typ);
-      if r_typ <> l_typ then
+      if Option.is_some (widen_integer_types (l_typ, r_typ)) || r_typ = l_typ
+      then (TBoolean, Bop (bop, l_expr, r_expr))
+      else
         failwith
           (Format.asprintf "Right expression is different, expected %a got %a"
-             pp_typ l_typ pp_typ r_typ);
-      (TBoolean, Bop (bop, l_expr, r_expr))
+             pp_typ l_typ pp_typ r_typ)
     end
   | Call (f, xs) ->
     let xs = List.map (check_expr venv fenv) xs in
     begin match M.find f fenv with
-    | xs', Some ret when List.map fst xs = xs' -> (ret, Call (f, xs))
+    | xs', Some ret when args_equal (List.map fst xs) xs' -> (ret, Call (f, xs))
     | _ -> failwith "Different args"
     | exception Not_found ->
       begin match M.find f venv with
-      | TFunction (xs', Some ret) when List.map fst xs = xs' ->
+      | TFunction (xs', Some ret) when args_equal (List.map fst xs) xs' ->
         (ret, Call (f, xs))
       | typ -> failwith @@ Format.asprintf "Different type %a" pp_typ typ
       | exception Not_found ->
@@ -73,14 +109,16 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     let expr = check_expr ~inside_selector:true venv fenv expr in
     let index = check_expr venv fenv index in
     let result =
-      if inside_selector then Typed.ArrayIndex (expr, index)
-      else Typed.Deref (fst expr, ArrayIndex (expr, index))
+      if inside_selector then Typed.ArrayIndex (expr, (TInteger64, snd index))
+      else Typed.Deref (fst expr, ArrayIndex (expr, (TInteger64, snd index)))
     in
     begin match (expr, index) with
-    | (TArray (array_typ, array_size), _), (TInteger64, Int i) ->
+    | ( (TArray (array_typ, array_size), _),
+        ((TInteger64 | TInteger32 | TInteger16), Int i) ) ->
       if i >= 0 && i < array_size then (array_typ, result)
       else failwith (Format.sprintf "array index out of bounds: %d" i)
-    | (TArray (array_typ, _), _), (TInteger64, _) -> (array_typ, result)
+    | (TArray (array_typ, _), _), ((TInteger64 | TInteger32 | TInteger16), _) ->
+      (array_typ, result)
     | _ ->
       failwith
         (Format.asprintf "invalid types for array index: %a and %a" pp_typ
@@ -127,19 +165,36 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     failwith
     @@ Format.asprintf "Cannot get address of expression %a" Ast.pp_expr expr
 
+let assign_types ltyp rtyp k =
+  begin match widen_integer_types (ltyp, rtyp) with
+  | Some typ' when ltyp <> typ' ->
+    failwith
+    @@ Format.asprintf "Error widening type %a to type %a" Ast.pp_typ rtyp
+         Ast.pp_typ ltyp
+  | Some _ -> k ()
+  | None ->
+    (* todo: add float widening here as well *)
+    if ltyp <> rtyp then
+      failwith
+        (Format.asprintf "Right expression is different, expected %a got %a"
+           pp_typ ltyp pp_typ rtyp);
+    k ()
+  end
+
 let rec check_stmt venv fenv = function
   | Declare (x, typ) -> (M.add x typ venv, Typed.Declare (x, typ))
   | Assign (Var x, e) ->
     let e = check_expr venv fenv e in
-    (M.add x (fst e) venv, Typed.Assign ((fst e, Var x), e))
+    begin match M.find_opt x venv with
+    | Some x_typ ->
+      assign_types x_typ (fst e) (fun () ->
+          (M.add x x_typ venv, Typed.Assign ((x_typ, Var x), e)))
+    | None -> failwith @@ Format.asprintf "Undeclared variable %s" x
+    end
   | Assign (x, e) ->
     let x = check_expr venv fenv x in
     let e = check_expr venv fenv e in
-    if fst x <> fst e then
-      failwith
-        (Format.asprintf "Right expression is different, expected %a" pp_typ
-           (TPointer (fst e)));
-    (venv, Assign (x, e))
+    assign_types (fst x) (fst e) (fun () -> (venv, Typed.Assign (x, e)))
   | Group stmts ->
     let venv, stmts =
       List.fold_left_map (fun venv stmt -> check_stmt venv fenv stmt) venv stmts
@@ -163,7 +218,8 @@ let rec check_stmt venv fenv = function
     | _ -> failwith "Different args"
     | exception Not_found ->
       begin match M.find f venv with
-      | TFunction (xs', (Some TVoid | None)) when List.map fst xs = xs' ->
+      | TFunction (xs', (Some TVoid | None))
+        when args_equal (List.map fst xs) xs' ->
         (venv, Call (f, xs))
       | typ -> failwith @@ Format.asprintf "Different type %a" pp_typ typ
       | exception Not_found ->
@@ -186,7 +242,7 @@ let check_decl venv fenv decl =
       (f, add_args args venv, None, body, fun body -> Procedure (f, args, body))
     | Function (f, args, typ, body) ->
       ( f,
-        add_args args venv,
+        M.add f typ (add_args args venv),
         Some typ,
         body,
         fun body -> Function (f, args, typ, body) )

@@ -87,7 +87,8 @@ module Select = struct
         classes.(i) <- merge_classes (classes.(i), clz)
       in
       let rec visit_type offset = function
-        | Ast.TInteger64 | TBoolean | TChar -> merge_with offset INTEGER
+        | Ast.TInteger64 | TInteger32 | TInteger16 | TBoolean | TChar ->
+          merge_with offset INTEGER
         | TDouble -> merge_with offset SSE
         | TVoid -> failwith "Void type not supported inside structure"
         | TFunction (_, _) ->

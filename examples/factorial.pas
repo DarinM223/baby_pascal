@@ -9,7 +9,7 @@ begin
 
   if n > 0 then
   begin
-    accumulator := 1;
+    var accumulator : int64 = 1;
     while n > 1 do
     begin
       accumulator := accumulator * n;

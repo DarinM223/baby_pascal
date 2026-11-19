@@ -295,7 +295,11 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
   and go_stmt (next : Cfg.label Lazy.t) : Ast.Typed.stmt -> Cfg.nodes = function
     | Ast.Typed.Declare (x, typ) ->
       let x = Target.reg typ x in
-      Cfg.instruction (Target.Alloca (x, Ast.sizeof typ))
+      begin match typ with
+      | TRecord _ | TArray _ ->
+        Cfg.instruction (Target.Alloca (x, Ast.sizeof typ))
+      | _ -> Fun.id
+      end
     | Ast.Typed.Assign ((_, Deref ptr), value) ->
       let* ptr = go_expr ptr in
       let* value = go_expr value in

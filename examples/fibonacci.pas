@@ -9,7 +9,7 @@ begin
 end
 
 begin
-    result := fibonacci(9);
+    var result: int64 = fibonacci(9);
     // Should print "34"
     printInteger(result);
 end

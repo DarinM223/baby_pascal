@@ -1,5 +1,7 @@
 type typ =
   | TInteger64
+  | TInteger32
+  | TInteger16
   | TBoolean
   | TChar
   | TDouble
@@ -12,6 +14,8 @@ type typ =
 
 let rec pp_typ fmt = function
   | TInteger64 -> Format.fprintf fmt "int64"
+  | TInteger32 -> Format.fprintf fmt "int32"
+  | TInteger16 -> Format.fprintf fmt "int16"
   | TBoolean -> Format.fprintf fmt "boolean"
   | TDouble -> Format.fprintf fmt "double"
   | TChar -> Format.fprintf fmt "char"
@@ -24,7 +28,7 @@ let rec pp_typ fmt = function
     Format.fprintf fmt "(%a) -> %a"
       (Format.pp_print_list ~pp_sep:Utils.pp_sep pp_typ)
       args pp_ret ret
-  | TPointer ptr -> Format.fprintf fmt "*%a" pp_typ ptr
+  | TPointer ptr -> Format.fprintf fmt "^%a" pp_typ ptr
   | TRecord fields ->
     let pp_field fmt (name, typ) =
       Format.fprintf fmt "%s: %a" name pp_typ typ
@@ -144,6 +148,8 @@ type 'a program = {
 
 let rec alignof = function
   | TInteger64 -> 8
+  | TInteger32 -> 4
+  | TInteger16 -> 2
   | TBoolean -> 1
   | TChar -> 1
   | TDouble -> 8
@@ -156,6 +162,8 @@ let rec alignof = function
 
 let rec sizeof = function
   | TInteger64 -> 8
+  | TInteger32 -> 4
+  | TInteger16 -> 2
   | TBoolean -> 1
   | TChar -> 1
   | TDouble -> 8

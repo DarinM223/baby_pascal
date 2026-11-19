@@ -49,6 +49,8 @@ rule token = parse
 | "alloca" {ALLOCA}
 | "var" {VAR}
 | "int64" {INT64}
+| "int32" {INT32}
+| "int16" {INT16}
 | "boolean" {BOOLEAN}
 | "double" {DOUBLE}
 | "char" {CHAR}

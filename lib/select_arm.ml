@@ -65,8 +65,8 @@ module Select = struct
     let exception Failed in
     try
       let rec visit_type float_typ base_offset acc = function
-        | Ast.TInteger64 | TBoolean | TChar | TVoid | TFunction _ | TPointer _
-          ->
+        | Ast.TInteger64 | TInteger32 | TInteger16 | TBoolean | TChar | TVoid
+        | TFunction _ | TPointer _ ->
           raise Failed
         | TDouble ->
           if float_typ = None || float_typ = Some Ast.TDouble then
