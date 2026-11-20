@@ -52,6 +52,7 @@ rule token = parse
 | "int32" {INT32}
 | "int16" {INT16}
 | "boolean" {BOOLEAN}
+| "single" {SINGLE}
 | "double" {DOUBLE}
 | "char" {CHAR}
 | "true" {TRUE}

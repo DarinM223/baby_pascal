@@ -75,8 +75,7 @@ module Select = struct
     | INTEGER, _ | _, INTEGER -> INTEGER
     | _ -> SSE
 
-  (* Only supports unpacked structs and maximum float or integer size is 8 bytes.
-     32 bit floats are not supported yet. *)
+  (* Only supports unpacked structs and maximum float or integer size is 8 bytes.  *)
   let classify_struct fields =
     let rec classify_chunks size fields =
       let classes =
@@ -89,7 +88,7 @@ module Select = struct
       let rec visit_type offset = function
         | Ast.TInteger64 | TInteger32 | TInteger16 | TBoolean | TChar ->
           merge_with offset INTEGER
-        | TDouble -> merge_with offset SSE
+        | TSingle | TDouble -> merge_with offset SSE
         | TVoid -> failwith "Void type not supported inside structure"
         | TFunction (_, _) ->
           failwith "Function type stored by value in structure"

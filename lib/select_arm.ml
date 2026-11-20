@@ -72,6 +72,10 @@ module Select = struct
           if float_typ = None || float_typ = Some Ast.TDouble then
             (Some Ast.TDouble, base_offset :: acc)
           else raise Failed
+        | TSingle ->
+          if float_typ = None || float_typ = Some Ast.TSingle then
+            (Some Ast.TSingle, base_offset :: acc)
+          else raise Failed
         | TRecord fields ->
           List.fold_left
             (fun (float_typ, offsets) (field, typ) ->

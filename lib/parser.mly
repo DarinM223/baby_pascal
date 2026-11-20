@@ -3,7 +3,7 @@
 %token VAR TYPE
 %token TRUE FALSE
 %token FUNCTION PROCEDURE BEGIN END IF THEN ELSE WHILE DO ALLOCA
-%token INT64 INT32 INT16 BOOLEAN VOID DOUBLE CHAR
+%token INT64 INT32 INT16 BOOLEAN VOID SINGLE DOUBLE CHAR
 %token<string> IDENT
 %token<string> STRING
 %token<int> INT
@@ -60,6 +60,7 @@ typ:
 | INT32 {Ast.TInteger32}
 | INT16 {Ast.TInteger16}
 | BOOLEAN {Ast.TBoolean}
+| SINGLE {Ast.TSingle}
 | DOUBLE {Ast.TDouble}
 | VOID {Ast.TVoid}
 | CHAR {Ast.TChar}

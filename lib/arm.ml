@@ -179,7 +179,7 @@ module Target = struct
   let label typ label args =
     let clz =
       match typ with
-      | Ast.TDouble -> Float
+      | Ast.TDouble | TSingle -> Float
       | _ -> Int
     in
     Label (clz, label, args)

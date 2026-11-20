@@ -4,6 +4,7 @@ type typ =
   | TInteger16
   | TBoolean
   | TChar
+  | TSingle
   | TDouble
   | TVoid
   | TFunction of typ list * typ option
@@ -17,6 +18,7 @@ let rec pp_typ fmt = function
   | TInteger32 -> Format.fprintf fmt "int32"
   | TInteger16 -> Format.fprintf fmt "int16"
   | TBoolean -> Format.fprintf fmt "boolean"
+  | TSingle -> Format.fprintf fmt "single"
   | TDouble -> Format.fprintf fmt "double"
   | TChar -> Format.fprintf fmt "char"
   | TVoid -> Format.fprintf fmt "void"
@@ -152,6 +154,7 @@ let rec alignof = function
   | TInteger16 -> 2
   | TBoolean -> 1
   | TChar -> 1
+  | TSingle -> 4
   | TDouble -> 8
   | TVoid -> 0
   | TFunction (_, _) -> failwith "Cannot get alignof function yet"
@@ -166,6 +169,7 @@ let rec sizeof = function
   | TInteger16 -> 2
   | TBoolean -> 1
   | TChar -> 1
+  | TSingle -> 4
   | TDouble -> 8
   | TVoid -> 0
   | TFunction (_, _) -> failwith "Cannot get sizeof function yet"

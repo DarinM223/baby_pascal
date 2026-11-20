@@ -1,13 +1,103 @@
 open Ast
 module M = CCMap.Make (String)
 
-let widen_integer_types = function
+let rec widen_integer_types ?(initialization = false) =
+  let ( let* ) = Option.bind in
+  function
   | TInteger64, (TInteger32 | TInteger16)
   | (TInteger32 | TInteger16), TInteger64 ->
     Some TInteger64
   | TInteger32, TInteger16 | TInteger16, TInteger32 -> Some TInteger32
   | TInteger16, TInteger16 -> Some TInteger16
+  | TArray (typ1, size1), TArray (typ2, size2)
+    when initialization && size1 = size2 ->
+    let* typ = widen_integer_types ~initialization (typ1, typ2) in
+    Some (TArray (typ, size1))
+  | TRecord fields1, TRecord fields2
+    when initialization && List.length fields1 = List.length fields2 ->
+    let* fields =
+      CCList.all_some
+        (List.map
+           (fun ((s1, ty1), (s2, ty2)) ->
+             if s1 = s2 then
+               let* ty = widen_integer_types ~initialization (ty1, ty2) in
+               Some (s1, ty)
+             else None)
+           (List.combine fields1 fields2))
+    in
+    Some (TRecord fields)
   | _ -> None
+
+let rec widen_float_types ?(initialization = false) =
+  let ( let* ) = Option.bind in
+  function
+  | TDouble, TSingle | TSingle, TDouble -> Some TDouble
+  | TSingle, TSingle -> Some TSingle
+  | TArray (typ1, size1), TArray (typ2, size2)
+    when initialization && size1 = size2 ->
+    let* typ = widen_float_types ~initialization (typ1, typ2) in
+    Some (TArray (typ, size1))
+  | TRecord fields1, TRecord fields2
+    when initialization && List.length fields1 = List.length fields2 ->
+    let* fields =
+      CCList.all_some
+        (List.map
+           (fun ((s1, ty1), (s2, ty2)) ->
+             if s1 = s2 then
+               let* ty = widen_float_types ~initialization (ty1, ty2) in
+               Some (s1, ty)
+             else None)
+           (List.combine fields1 fields2))
+    in
+    Some (TRecord fields)
+  | _ -> None
+
+let rec widen_expression widened_typ (exp : Typed.expr) =
+  match (widened_typ, snd exp) with
+  | _, Int _ | _, Double _ | _, Var _ -> (widened_typ, snd exp)
+  | _, Bool _ | _, Char _ | _, String _ -> exp
+  | TArray (typ, _), Array (init, size) ->
+    (widened_typ, Array (widen_expression typ init, size))
+  | _, Array _ ->
+    failwith
+    @@ Format.asprintf "Type %a doesn't match array %a" pp_typ widened_typ
+         Typed.pp_expr exp
+  | _, Uop (uop, e) -> (widened_typ, Uop (uop, widen_expression widened_typ e))
+  | _, Bop (bop, e1, e2) ->
+    ( widened_typ,
+      Bop (bop, widen_expression widened_typ e1, widen_expression widened_typ e2)
+    )
+  | TPointer typ, Addrof e -> (widened_typ, Addrof (widen_expression typ e))
+  | _, Addrof _ ->
+    failwith
+    @@ Format.asprintf "Type %a doesn't match address of %a" pp_typ widened_typ
+         Typed.pp_expr exp
+  | _, Deref e ->
+    (widened_typ, Deref (widen_expression (TPointer widened_typ) e))
+  | _, ArrayIndex (arr, idx) ->
+    let array_typ =
+      match fst arr with
+      | TArray (_, size) -> TArray (widened_typ, size)
+      | typ ->
+        failwith
+        @@ Format.asprintf "widen_expression: invalid array typ: %a" pp_typ typ
+    in
+    (widened_typ, ArrayIndex (widen_expression array_typ arr, idx))
+  | _, RecordField (record, field) ->
+    let record_typ =
+      match fst record with
+      | TRecord fields ->
+        TRecord
+          (List.map
+             (fun (field', typ) ->
+               (field', if field = field' then widened_typ else typ))
+             fields)
+      | typ ->
+        failwith
+        @@ Format.asprintf "widen_expression: invalid record typ: %a" pp_typ typ
+    in
+    (widened_typ, RecordField (widen_expression record_typ record, field))
+  | _, Call (_, _) -> (widened_typ, snd exp)
 
 let typ_of_integer i =
   if i <= 32767 && i >= -32768 then TInteger16
@@ -15,21 +105,28 @@ let typ_of_integer i =
   then TInteger32
   else TInteger64
 
+let is_exact_c_float x =
+  let f32_bits = Int32.bits_of_float x in
+  let round_tripped = Int32.float_of_bits f32_bits in
+  Float.equal x round_tripped || (Float.is_nan x && Float.is_nan round_tripped)
+
+let typ_of_double d = if is_exact_c_float d then Ast.TSingle else TDouble
+
 let args_equal xs1 xs2 =
   List.length xs1 = List.length xs2
   && List.for_all
        (fun (arg1, arg2) ->
-         match widen_integer_types (arg1, arg2) with
-         | Some _ -> true
-         | None ->
-           (* todo: handle float widening here as well *)
-           arg1 = arg2)
+         match
+           (widen_integer_types (arg1, arg2), widen_float_types (arg1, arg2))
+         with
+         | None, None -> arg1 = arg2
+         | _ -> true)
        (List.combine xs1 xs2)
 
 let rec check_expr ?(inside_selector = false) venv fenv = function
   | Int i -> (typ_of_integer i, Typed.Int i)
   | Bool b -> (TBoolean, Bool b)
-  | Double d -> (TDouble, Double d)
+  | Double d -> (typ_of_double d, Double d)
   | Char c -> (TChar, Char c)
   | String s -> (TArray (TChar, String.length s), String s)
   | Var v ->
@@ -48,12 +145,15 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     let ((r_typ, _) as r_expr) = check_expr venv fenv r in
     begin match bop with
     | Add | Sub | Mul | Div ->
-      begin match widen_integer_types (l_typ, r_typ) with
-      | Some typ' -> (typ', Bop (bop, l_expr, r_expr))
-      | None ->
+      begin match
+        (widen_integer_types (l_typ, r_typ), widen_float_types (l_typ, r_typ))
+      with
+      | Some typ', _ | _, Some typ' ->
+        widen_expression typ' (typ', Bop (bop, l_expr, r_expr))
+      | None, None ->
         if
           l_typ <> TInteger64 && l_typ <> TInteger32 && l_typ <> TInteger16
-          && l_typ <> TDouble
+          && l_typ <> TSingle && l_typ <> TDouble
         then
           failwith
             (Format.asprintf
@@ -78,13 +178,16 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     | Eq | Neq | Lt | Le | Gt | Ge ->
       if
         l_typ <> TInteger64 && l_typ <> TInteger32 && l_typ <> TInteger16
-        && l_typ <> TDouble && l_typ <> TChar
+        && l_typ <> TSingle && l_typ <> TDouble && l_typ <> TChar
       then
         failwith
           (Format.asprintf
              "Left expression is different, expected %a or %a got %a" pp_typ
              TInteger64 pp_typ TDouble pp_typ l_typ);
-      if Option.is_some (widen_integer_types (l_typ, r_typ)) || r_typ = l_typ
+      if
+        Option.is_some (widen_integer_types (l_typ, r_typ))
+        || Option.is_some (widen_float_types (l_typ, r_typ))
+        || r_typ = l_typ
       then (TBoolean, Bop (bop, l_expr, r_expr))
       else
         failwith
@@ -166,20 +269,22 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     @@ Format.asprintf "Cannot get address of expression %a" Ast.pp_expr expr
 
 let assign_types ltyp rtyp k =
-  begin match widen_integer_types (ltyp, rtyp) with
+  match
+    CCOption.or_
+      (widen_integer_types ~initialization:true (ltyp, rtyp))
+      ~else_:(widen_float_types ~initialization:true (ltyp, rtyp))
+  with
   | Some typ' when ltyp <> typ' ->
     failwith
     @@ Format.asprintf "Error widening type %a to type %a" Ast.pp_typ rtyp
          Ast.pp_typ ltyp
   | Some _ -> k ()
   | None ->
-    (* todo: add float widening here as well *)
     if ltyp <> rtyp then
       failwith
         (Format.asprintf "Right expression is different, expected %a got %a"
            pp_typ ltyp pp_typ rtyp);
     k ()
-  end
 
 let rec check_stmt venv fenv = function
   | Declare (x, typ) -> (M.add x typ venv, Typed.Declare (x, typ))
@@ -188,13 +293,15 @@ let rec check_stmt venv fenv = function
     begin match M.find_opt x venv with
     | Some x_typ ->
       assign_types x_typ (fst e) (fun () ->
-          (M.add x x_typ venv, Typed.Assign ((x_typ, Var x), e)))
+          ( M.add x x_typ venv,
+            Typed.Assign ((x_typ, Var x), widen_expression x_typ e) ))
     | None -> failwith @@ Format.asprintf "Undeclared variable %s" x
     end
   | Assign (x, e) ->
     let x = check_expr venv fenv x in
     let e = check_expr venv fenv e in
-    assign_types (fst x) (fst e) (fun () -> (venv, Typed.Assign (x, e)))
+    assign_types (fst x) (fst e) (fun () ->
+        (venv, Typed.Assign (x, widen_expression (fst x) e)))
   | Group stmts ->
     let venv, stmts =
       List.fold_left_map (fun venv stmt -> check_stmt venv fenv stmt) venv stmts
