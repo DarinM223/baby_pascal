@@ -14,11 +14,10 @@ end
 
 function world(a: int64) : int64;
 begin
-  var sum : int64 = 0;
+  var sum : int64 := 0;
   while a > 0 do
   begin
-    var v : ^int64;
-    v := alloca int64 8;
+    var v : ^int64 := alloca 8;
     v^ := a;
     sum := sum + v^;
     a := a - 1;
@@ -28,13 +27,11 @@ end
 
 function blah() : int64;
 begin
-  var a : ^int64;
-  var b : ^int64;
-  a := alloca int64 8;
-  b := alloca int64 8;
+  var a : ^int64 := alloca 8;
+  var b : ^int64 := alloca 8;
   a^ := 3;
   b^ := 4;
-  var c : int64 = a^ + b^;
+  var c : int64 := a^ + b^;
   blah := c;
 end
 

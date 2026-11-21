@@ -175,7 +175,7 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
       k (Target.Label (TDouble, (-1, id), []))
     | String s ->
       (* emit global string constant, and return label to it *)
-      let typ = Ast.TArray (TChar, String.length s) in
+      let typ = Ast.TArray (TChar, 0, String.length s) in
       let id = Name.label (snd (fresh typ)) in
       globals := { id; typ; value = Initialized (ConstString s) } :: !globals;
       k (Target.Label (typ, (-1, id), []))
@@ -223,15 +223,22 @@ let normalize (module Fresh : Fresh) (globals : Ast.global_def list)
       let rest = k tmp in
       fun zgraph -> Cfg.instruction (Target.Load (tmp, e)) @@ rest @@ zgraph
     | Addrof _ -> failwith "Addrof normalization not implemented yet"
-    | ArrayIndex (((array_typ, _) as array), ((index_typ, _) as index)) ->
+    | ArrayIndex
+        ( (((Ast.TArray (_, min_bound, _) as array_typ), _) as array),
+          ((index_typ, _) as index) ) ->
       let* array = go_expr array in
       let* index = go_expr index in
-      let tmp = Target.Reg (fresh (TPointer array_typ)) in
-      let rest = k tmp in
+      let tmp1 = Target.Reg (fresh index_typ) in
+      let tmp2 = Target.Reg (fresh (TPointer array_typ)) in
+      let rest = k tmp2 in
       fun zgraph ->
         Cfg.instruction
-          (Target.GetElementPtr (tmp, array_typ, array, [ (index_typ, index) ]))
+          (Target.bop Ast.Sub ~dest:tmp1 ~src1:index ~src2:(Const min_bound))
+        @@ Cfg.instruction
+             (Target.GetElementPtr
+                (tmp2, array_typ, array, [ (index_typ, tmp1) ]))
         @@ rest @@ zgraph
+    | ArrayIndex _ -> failwith "Unknown type for array index"
     | RecordField (((TRecord fields, _) as record), field) ->
       let index_of field =
         let rec go idx = function

@@ -9,7 +9,7 @@ begin
 
   if n > 0.0 then
   begin
-    var accumulator : double = 1.0;
+    var accumulator : double := 1.0;
     while n > 1.0 do
     begin
       accumulator := accumulator * n;

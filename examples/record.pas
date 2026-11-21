@@ -28,7 +28,7 @@ begin
 end
 
 begin
-    var result : int64 = sumfields();
+    var result : int64 := sumfields();
     // Should print "150"
     printInteger(result);
 end

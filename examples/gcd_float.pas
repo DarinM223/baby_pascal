@@ -11,7 +11,7 @@ begin
     end;
 
     // Swap a and b
-    var temp : double = a;
+    var temp : double := a;
     a := b;
     b := temp;
   end;

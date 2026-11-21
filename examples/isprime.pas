@@ -7,13 +7,13 @@ begin
     is_prime := 0
   else
   begin
-    var divisor : int64 = 2;
-    var prime_flag : int64 = 1; // 1 means true, 0 means false
+    var divisor : int64 := 2;
+    var prime_flag : int64 := 1; // 1 means true, 0 means false
 
     while divisor * divisor <= n do
     begin
       // Simulated modulo operation using a while loop
-      var temp : int64 = n;
+      var temp : int64 := n;
       while temp >= divisor do
       begin
         temp := temp - divisor;

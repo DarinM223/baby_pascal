@@ -133,10 +133,10 @@ let rec lower_getelementptr (module F : Normalize.Fresh) = function
     let rec go offset tmp = function
       | Ast.TPointer typ, (_, Target.Const idx) :: idxs ->
         go (offset + (idx * Ast.sizeof typ)) tmp (typ, idxs)
-      | Ast.TArray (typ, size), (_, Target.Const idx) :: idxs
-        when idx >= 0 && idx < size ->
+      | Ast.TArray (typ, min_bound, max_bound), (_, Target.Const idx) :: idxs
+        when idx >= 0 && idx < max_bound - min_bound ->
         go (offset + (idx * Ast.sizeof typ)) tmp (typ, idxs)
-      | (Ast.TPointer typ | Ast.TArray (typ, _)), (_, idx) :: idxs ->
+      | (Ast.TPointer typ | Ast.TArray (typ, _, _)), (_, idx) :: idxs ->
         let sizeof = Ast.sizeof typ in
         (* offset += idx * sizeof(typ) *)
         let idx =

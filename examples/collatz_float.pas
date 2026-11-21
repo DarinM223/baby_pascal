@@ -2,11 +2,11 @@ var printDouble : (double): void;
 
 function collatz_steps(n : double) : double;
 begin
-  var steps : double = 0.0;
+  var steps : double := 0.0;
   while n > 1.0 do
   begin
     // Check if n is even using simulated modulo 2
-    var temp : double = n;
+    var temp : double := n;
     while temp >= 2.0 do
     begin
       temp := temp - 2.0;

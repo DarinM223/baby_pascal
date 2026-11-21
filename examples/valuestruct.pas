@@ -41,7 +41,7 @@ begin
   printChar (struct3.d);
 end
 
-procedure printStruct4(struct4 : record a : [7]char; b : double; end);
+procedure printStruct4(struct4 : record a : array[0..7] of char; b : double; end);
 begin
   printChar (struct4.a[0]);
   printChar (struct4.a[1]);
@@ -98,7 +98,7 @@ begin
   struct3.d := 'd';
   printStruct3(struct3);
   // Passes arrays in struct by value, accounts for padding.
-  var struct4 : record a : [7]char; b : double; end;
+  var struct4 : record a : array[0..7] of char; b : double; end;
   struct4.a[0] := 'e';
   struct4.a[1] := 'f';
   struct4.a[2] := 'g';

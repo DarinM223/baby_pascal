@@ -9,10 +9,10 @@ let rec widen_integer_types ?(initialization = false) =
     Some TInteger64
   | TInteger32, TInteger16 | TInteger16, TInteger32 -> Some TInteger32
   | TInteger16, TInteger16 -> Some TInteger16
-  | TArray (typ1, size1), TArray (typ2, size2)
-    when initialization && size1 = size2 ->
+  | TArray (typ1, min_bound1, max_bound1), TArray (typ2, min_bound2, max_bound2)
+    when initialization && min_bound1 = min_bound2 && max_bound1 = max_bound2 ->
     let* typ = widen_integer_types ~initialization (typ1, typ2) in
-    Some (TArray (typ, size1))
+    Some (TArray (typ, min_bound1, max_bound1))
   | TRecord fields1, TRecord fields2
     when initialization && List.length fields1 = List.length fields2 ->
     let* fields =
@@ -33,10 +33,10 @@ let rec widen_float_types ?(initialization = false) =
   function
   | TDouble, TSingle | TSingle, TDouble -> Some TDouble
   | TSingle, TSingle -> Some TSingle
-  | TArray (typ1, size1), TArray (typ2, size2)
-    when initialization && size1 = size2 ->
+  | TArray (typ1, min_bound1, max_bound1), TArray (typ2, min_bound2, max_bound2)
+    when initialization && min_bound1 = min_bound2 && max_bound1 = max_bound2 ->
     let* typ = widen_float_types ~initialization (typ1, typ2) in
-    Some (TArray (typ, size1))
+    Some (TArray (typ, min_bound1, max_bound1))
   | TRecord fields1, TRecord fields2
     when initialization && List.length fields1 = List.length fields2 ->
     let* fields =
@@ -56,7 +56,7 @@ let rec widen_expression widened_typ (exp : Typed.expr) =
   match (widened_typ, snd exp) with
   | _, Int _ | _, Double _ | _, Var _ -> (widened_typ, snd exp)
   | _, Bool _ | _, Char _ | _, String _ -> exp
-  | TArray (typ, _), Array (init, size) ->
+  | TArray (typ, _, _), Array (init, size) ->
     (widened_typ, Array (widen_expression typ init, size))
   | _, Array _ ->
     failwith
@@ -77,7 +77,8 @@ let rec widen_expression widened_typ (exp : Typed.expr) =
   | _, ArrayIndex (arr, idx) ->
     let array_typ =
       match fst arr with
-      | TArray (_, size) -> TArray (widened_typ, size)
+      | TArray (_, min_bound, max_bound) ->
+        TArray (widened_typ, min_bound, max_bound)
       | typ ->
         failwith
         @@ Format.asprintf "widen_expression: invalid array typ: %a" pp_typ typ
@@ -128,7 +129,7 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
   | Bool b -> (TBoolean, Bool b)
   | Double d -> (typ_of_double d, Double d)
   | Char c -> (TChar, Char c)
-  | String s -> (TArray (TChar, String.length s), String s)
+  | String s -> (TArray (TChar, 0, String.length s), String s)
   | Var v ->
     begin try (M.find v venv, Var v)
     with Not_found ->
@@ -136,7 +137,7 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
     end
   | Array (init_expr, size) ->
     let init_expr = check_expr venv fenv init_expr in
-    (TArray (fst init_expr, size), Array (init_expr, size))
+    (TArray (fst init_expr, 0, size), Array (init_expr, size))
   | Uop (uop, e) ->
     let ((typ, _) as e) = check_expr venv fenv e in
     (typ, Uop (uop, e))
@@ -216,11 +217,12 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
       else Typed.Deref (fst expr, ArrayIndex (expr, (TInteger64, snd index)))
     in
     begin match (expr, index) with
-    | ( (TArray (array_typ, array_size), _),
+    | ( (TArray (array_typ, min_bound, max_bound), _),
         ((TInteger64 | TInteger32 | TInteger16), Int i) ) ->
-      if i >= 0 && i < array_size then (array_typ, result)
+      if i >= min_bound && i < max_bound then (array_typ, result)
       else failwith (Format.sprintf "array index out of bounds: %d" i)
-    | (TArray (array_typ, _), _), ((TInteger64 | TInteger32 | TInteger16), _) ->
+    | (TArray (array_typ, _, _), _), ((TInteger64 | TInteger32 | TInteger16), _)
+      ->
       (array_typ, result)
     | _ ->
       failwith
@@ -258,7 +260,7 @@ let rec check_expr ?(inside_selector = false) venv fenv = function
   | Addrof (Var _ as var) ->
     let var = check_expr venv fenv var in
     begin match fst var with
-    | TArray (typ, _size) ->
+    | TArray (typ, _min_bound, _max_bound) ->
       (TPointer typ, ArrayIndex (var, (TInteger64, Typed.Int 0)))
     | TRecord _ as typ ->
       (TPointer typ, ArrayIndex (var, (TInteger64, Typed.Int 0)))

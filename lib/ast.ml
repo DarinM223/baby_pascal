@@ -10,7 +10,7 @@ type typ =
   | TFunction of typ list * typ option
   | TPointer of typ
   | TRecord of (string * typ) list
-  | TArray of typ * int
+  | TArray of typ * int * int
 [@@deriving eq]
 
 let rec pp_typ fmt = function
@@ -38,7 +38,8 @@ let rec pp_typ fmt = function
     Format.fprintf fmt "{%a}"
       (Format.pp_print_list ~pp_sep:Utils.pp_sep pp_field)
       fields
-  | TArray (typ, size) -> Format.fprintf fmt "[%d]%a" size pp_typ typ
+  | TArray (typ, min_bound, max_bound) ->
+    Format.fprintf fmt "array[%d..%d] of %a" min_bound max_bound pp_typ typ
 
 type uop = Not [@@deriving eq]
 let pp_uop fmt = function
@@ -161,7 +162,7 @@ let rec alignof = function
   | TPointer _ -> 8
   | TRecord fields ->
     List.fold_left (fun acc (_, typ) -> max acc (alignof typ)) 0 fields
-  | TArray (typ, _size) -> alignof typ
+  | TArray (typ, _min, _max) -> alignof typ
 
 let rec sizeof = function
   | TInteger64 -> 8
@@ -192,7 +193,7 @@ let rec sizeof = function
         if remainder = 0 then offset else offset + max_align - remainder
     in
     go 0 0 fields
-  | TArray (typ, size) -> sizeof typ * size
+  | TArray (typ, min_bound, max_bound) -> sizeof typ * (max_bound - min_bound)
 
 let offsetof field fields =
   let rec go offset = function

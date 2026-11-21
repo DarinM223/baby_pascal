@@ -84,10 +84,10 @@ module Select = struct
               in
               visit_type float_typ base_offset offsets typ)
             (float_typ, acc) fields
-        | TArray (typ, num_elems) ->
+        | TArray (typ, min_bound, max_bound) ->
           let typ_size = Ast.sizeof typ in
           let rec go i (float_typ, acc) =
-            if i >= num_elems then (float_typ, acc)
+            if i >= max_bound - min_bound then (float_typ, acc)
             else
               go (i + 1)
                 (visit_type float_typ (base_offset + (typ_size * i)) acc typ)

@@ -13,6 +13,8 @@ let newline = '\r' | '\n' | "\r\n"
 let id = ['a'-'z' 'A'-'Z' '_'] ['a'-'z' 'A'-'Z' '0'-'9' '_']*
 let oct = ['0'-'7']
 let hex = ['0'-'9' 'a'-'f' 'A'-'F']
+let digits = ['0'-'9']+
+let exponent = ['e' 'E'] ['+' '-']? digits
 
 rule token = parse
 | white { token lexbuf }
@@ -21,7 +23,6 @@ rule token = parse
 | '\'' { read_char lexbuf }
 | "//" { comment lexbuf }
 | ':' {COLON}
-| '.' {DOT}
 | ',' {COMMA}
 | '(' {LPAREN}
 | ')' {RPAREN}
@@ -44,7 +45,9 @@ rule token = parse
 | '-' {MINUS}
 | '*' {TIMES}
 | '/' {DIV}
+| "of" {OF}
 | "type" {TYPE}
+| "array" {ARRAY}
 | "record" {RECORD}
 | "alloca" {ALLOCA}
 | "var" {VAR}
@@ -72,8 +75,11 @@ rule token = parse
 | "or" {OR}
 | "0x" hex+ as i { INT (int_of_string i) }
 | "0X" hex+ as i { INT (int_of_string i) }
-| ['0'-'9']+ as i { INT (int_of_string i) }
-| ['0'-'9']+ ("." ['0'-'9']*)? (['e' 'E'] ['+' '-']? ['0'-'9']+)? as f {FLOAT (float_of_string f)}
+| digits '.' digits exponent? as f { FLOAT (float_of_string f) }
+| digits exponent as f { FLOAT (float_of_string f) }
+| digits as i { INT (int_of_string i) }
+| ".." {DOTDOT}
+| '.' {DOT}
 | id as i {IDENT i}
 | _ as c { print_char c; token lexbuf }
 | eof { EOF }

@@ -9,7 +9,7 @@ begin
 end
 
 begin
-    var result : double = fibonacci(9.0);
+    var result : double := fibonacci(9.0);
     // Should print "34.000000"
     printDouble(result);
 end

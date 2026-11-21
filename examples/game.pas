@@ -29,8 +29,8 @@ begin
   LIGHTGRAY.b := '\xC8';
   LIGHTGRAY.a := '\xFF';
 
-  var width : int64 = 800;
-  var height : int64 = 450;
+  var width : int64 := 800;
+  var height : int64 := 450;
   InitWindow(width, height, @"raylib window");
   SetTargetFPS(60);
   while not WindowShouldClose() do

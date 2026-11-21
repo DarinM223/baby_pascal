@@ -11,7 +11,7 @@ begin
     end;
 
     // Swap a and b
-    var temp : int64 = a;
+    var temp : int64 := a;
     a := b;
     b := temp;
   end;

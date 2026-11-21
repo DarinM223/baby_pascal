@@ -94,9 +94,9 @@ module Select = struct
           failwith "Function type stored by value in structure"
         | TPointer _ -> merge_with offset INTEGER
         | TRecord fields -> go offset fields fields
-        | TArray (typ, num_elems) ->
+        | TArray (typ, min_bound, max_bound) ->
           let typ_size = Ast.sizeof typ in
-          for i = 0 to num_elems - 1 do
+          for i = 0 to max_bound - min_bound - 1 do
             visit_type (offset + (typ_size * i)) typ
           done
       and go base_offset fields = function

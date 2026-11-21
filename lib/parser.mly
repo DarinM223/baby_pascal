@@ -1,9 +1,9 @@
-%token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN LBRACK RBRACK LBRACE RBRACE COMMA DOT AMPER EXPONENT ATSIGN RECORD
+%token SEMI COLON EQUALS NEQUALS ASSIGN LPAREN RPAREN LBRACK RBRACK LBRACE RBRACE COMMA DOT DOTDOT AMPER EXPONENT ATSIGN RECORD
 %token PLUS MINUS TIMES DIV NOT AND OR LT LE GT GE
 %token VAR TYPE
 %token TRUE FALSE
-%token FUNCTION PROCEDURE BEGIN END IF THEN ELSE WHILE DO ALLOCA
-%token INT64 INT32 INT16 BOOLEAN VOID SINGLE DOUBLE CHAR
+%token FUNCTION PROCEDURE BEGIN END IF THEN ELSE WHILE DO ALLOCA OF
+%token INT64 INT32 INT16 BOOLEAN VOID SINGLE DOUBLE CHAR ARRAY
 %token<string> IDENT
 %token<string> STRING
 %token<int> INT
@@ -21,6 +21,7 @@
 %start <Ast.stmt Ast.program> program
 %type <Ast.global_def list> global
 %type <(string * Ast.typ) list> binding
+%type <int * int> array_range
 %type <Ast.typ> typ
 %type <unit> typ_decls
 %type <unit> typ_binding
@@ -52,9 +53,20 @@ binding:
 | r = separated_pair(separated_nonempty_list(COMMA, IDENT), COLON, typ)
   {let ids, typ = r in List.map (fun id -> (id, typ)) ids}
 
+array_range:
+| min_bound = INT DOTDOT max_bound = INT {(min_bound, max_bound)}
+
 typ:
 | LPAREN params = separated_list(COMMA, typ) RPAREN COLON ret = typ {Ast.TFunction (params, Some ret)}
-| LBRACK size = INT RBRACK t = typ {Ast.TArray (t, size)}
+| ARRAY LBRACK bounds = separated_nonempty_list(COMMA, array_range) RBRACK OF t = typ
+  {
+  let rec go = function
+    | [(min_bound, max_bound)] -> Ast.TArray (t, min_bound, max_bound)
+    | (min_bound, max_bound) :: rest -> Ast.TArray (go rest, min_bound, max_bound)
+    | [] -> failwith "Nonempty list expected"
+  in
+  go bounds
+  }
 | RECORD fields = list(terminated(separated_pair(IDENT, COLON, typ), SEMI)) END {Ast.TRecord fields}
 | INT64 {Ast.TInteger64}
 | INT32 {Ast.TInteger32}
@@ -82,33 +94,36 @@ decl:
 
 statement:
 | BEGIN stmts = list(terminated(statement, SEMI)) END {Ast.Group stmts}
-| VAR r = separated_pair(IDENT, COLON, typ) e = option(EQUALS e = expr {e})
+| VAR r = separated_pair(IDENT, COLON, typ) rv = option(ASSIGN rv = rvalue {rv})
   {
   let id, typ = r in
-  match e with
-  | Some e -> Ast.Group [Ast.Declare (id, typ); Ast.Assign (Var id, e)]
-  | None -> Ast.Declare (id, typ)
+  match rv, typ with
+  | Some (`Alloca i), Ast.TPointer typ -> Ast.Alloca (id, typ, i)
+  | Some (`Alloca _), typ -> failwith @@ Format.asprintf "Non-pointer type for alloca: %a" Ast.pp_typ typ
+  | Some (`Exp e), _ -> Ast.Group [Ast.Declare (id, typ); Ast.Assign (Var id, e)]
+  | None, _ -> Ast.Declare (id, typ)
   }
 | IF e = expr THEN thn = statement {Ast.If (e, thn, Group [])}
 | IF e = expr THEN thn = statement ELSE els = statement {Ast.If (e, thn, els)}
 | WHILE e = expr DO body = statement {Ast.While (e, body)}
-| e1 = lvalue ASSIGN rv = rvalue
-  {
-  match e1, rv with
-  | Ast.Var v, `Alloca (t, i) -> Ast.Alloca (v, t, i)
-  | _, `Exp e2 -> Ast.Assign (e1, e2)
-  | _ -> raise (Utils.Parser_error "invalid assignment statement")
-  }
+| e1 = lvalue ASSIGN e2 = expr {Ast.Assign (e1, e2)}
 | f = IDENT LPAREN exprs = separated_list(COMMA, expr) RPAREN {Ast.Call (f, exprs)}
 
 lvalue:
 | id = IDENT {Ast.Var id}
-| e1 = lvalue LBRACK e2 = expr RBRACK {Ast.ArrayIndex (e1, e2)}
+| e1 = lvalue LBRACK l = separated_nonempty_list(COMMA, expr) RBRACK
+  {
+  let rec go e = function
+    | idx :: rest -> go (Ast.ArrayIndex (e, idx)) rest
+    | [] -> e
+  in
+  go e1 l
+  }
 | e1 = lvalue DOT field = IDENT {Ast.RecordField (e1, field)}
 | e = lvalue EXPONENT {Ast.Deref e}
 
 rvalue:
-| ALLOCA t = typ i = INT {`Alloca (t, i)}
+| ALLOCA i = INT {`Alloca i}
 | e = expr {`Exp e}
 
 expr:
@@ -116,7 +131,14 @@ expr:
 | ATSIGN e = expr {Ast.Addrof e}
 | e = expr EXPONENT {Ast.Deref e}
 | LBRACK init = expr SEMI size = INT RBRACK {Ast.Array (init, size)}
-| lhs = expr LBRACK rhs = expr RBRACK {Ast.ArrayIndex (lhs, rhs)}
+| lhs = expr LBRACK l = separated_nonempty_list(COMMA, expr) RBRACK
+  {
+  let rec go e = function
+    | idx :: rest -> go (Ast.ArrayIndex (e, idx)) rest
+    | [] -> e
+  in
+  go lhs l
+  }
 | lhs = expr DOT rhs = IDENT {Ast.RecordField (lhs, rhs)}
 | NOT e = expr {Ast.Uop (Not, e)}
 | lhs = expr EQUALS rhs = expr {Ast.Bop (Eq, lhs, rhs)}
