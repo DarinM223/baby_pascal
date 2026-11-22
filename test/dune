@@ -2,6 +2,7 @@
  (names
   test_ast
   test_parse
+  test_check
   test_normalize
   test_dominator
   test_construct

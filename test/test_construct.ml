@@ -116,6 +116,9 @@ let test_figure_19_4 () =
   let ast =
     Ast.Group
       [
+        Declare ("i", TInteger64);
+        Declare ("j", TInteger64);
+        Declare ("k", TInteger64);
         Assign (Var "i", Int 1);
         Assign (Var "j", Int 1);
         Assign (Var "k", Int 0);
@@ -133,6 +136,7 @@ let test_figure_19_4 () =
                     Assign (Var "j", Var "k");
                     Assign (Var "k", Bop (Add, Var "k", Int 2));
                   ] ) );
+        Declare ("result", TInteger64);
         Assign (Var "result", Var "j");
       ]
   in
@@ -186,6 +190,7 @@ let test_pruned () =
   let ast =
     Ast.Group
       [
+        Declare ("i", TInteger64);
         If
           ( Bop (Lt, Var "i", Int 2),
             Assign (Var "y", Int 1),
@@ -194,6 +199,7 @@ let test_pruned () =
           ( Bop (Lt, Var "i", Int 2),
             Assign (Var "z", Int 1),
             Assign (Var "z", Var "x") );
+        Declare ("result", TInteger64);
         Assign (Var "result", Var "z");
       ]
   in

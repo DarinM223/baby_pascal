@@ -4,7 +4,7 @@ module M = CCMap.Make (String)
 let rec widen_integer_types ?(initialization = false) =
   let ( let* ) = Option.bind in
   function
-  | TInteger64, (TInteger32 | TInteger16)
+  | TInteger64, (TInteger64 | TInteger32 | TInteger16)
   | (TInteger32 | TInteger16), TInteger64 ->
     Some TInteger64
   | TInteger32, TInteger16 | TInteger16, TInteger32 -> Some TInteger32
@@ -31,7 +31,7 @@ let rec widen_integer_types ?(initialization = false) =
 let rec widen_float_types ?(initialization = false) =
   let ( let* ) = Option.bind in
   function
-  | TDouble, TSingle | TSingle, TDouble -> Some TDouble
+  | TDouble, TDouble | TDouble, TSingle | TSingle, TDouble -> Some TDouble
   | TSingle, TSingle -> Some TSingle
   | TArray (typ1, min_bound1, max_bound1), TArray (typ2, min_bound2, max_bound2)
     when initialization && min_bound1 = min_bound2 && max_bound1 = max_bound2 ->

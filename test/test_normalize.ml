@@ -5,13 +5,16 @@ let test_example_1 () =
   let expr =
     Ast.Group
       [
+        Declare ("a", TInteger64);
         Assign (Var "a", Bop (Add, Int 1, Bop (Mul, Int 2, Int 3)));
         If
           ( Bop (And, Bop (Eq, Var "a", Int 1), Bop (Lt, Var "a", Int 5)),
             While
               ( Bop (And, Bop (Eq, Var "a", Int 1), Bop (Lt, Var "a", Int 5)),
                 Assign (Var "a", Bop (Add, Var "a", Int 1)) ),
-            Assign (Var "result", Int 60) );
+            Group
+              [ Declare ("result", TInteger64); Assign (Var "result", Int 60) ]
+          );
       ]
   in
   let _, expr = Check.(check_stmt M.empty M.empty expr) in

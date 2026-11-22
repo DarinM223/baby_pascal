@@ -3,16 +3,16 @@ open Baby_pascal
 let test_example_1 () =
   let program =
     {|
-var hello : integer;
+var hello : int64;
 
 // adds two numbers
-function add(a : integer, b : integer) : integer;
+function add(a : int64, b : int64) : int64;
 begin
     add := a + b;
 end
 
-// prints an integer
-procedure foo(a : integer);
+// prints an int64
+procedure foo(a : int64);
 begin
     print(a);
 end
