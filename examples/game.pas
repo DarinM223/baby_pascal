@@ -6,6 +6,13 @@ type
     a: char;
   end;
 
+  TTexture = record
+    id: int32;
+    width: int32;
+    height: int32;
+    format: int32;
+  end;
+
 var printChar : (char): void;
 var printString : (^char): void;
 var InitWindow : (int64, int64, ^char): void;

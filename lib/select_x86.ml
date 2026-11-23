@@ -113,9 +113,22 @@ module Select = struct
     if typ_size > 16 then Memory
     else Registers (classify_chunks typ_size fields)
 
+  let rec typ_of_operand : Undag.Target.operand -> Ast.typ = function
+    | Undag.Target.Reg (typ, _) -> typ
+    | Label (typ, _, _) -> typ
+    | Instr instr ->
+      Option.get @@ fst
+      @@ Undag.Target.fold_defs
+           (fun acc op ->
+             match acc with
+             | Some typ -> (Some typ, op)
+             | None -> (Some (typ_of_operand op), op))
+           None instr
+    | Const _ -> Ast.TInteger64
+
   let rec reg_class_of_operand : Undag.Target.operand -> Target.reg_class =
     let reg_class_of_type = function
-      | Ast.TDouble -> Target.Float
+      | Ast.TDouble | TSingle -> Target.Float
       | _ -> Target.Int
     in
     function
@@ -441,6 +454,7 @@ module Select = struct
       end
     | Undag.Target.Call (dest, f, args) ->
       let open Target in
+      let dest_typ = typ_of_operand dest in
       let dest_class = reg_class_of_operand dest in
       let dest_width = width_of_operand dest in
       let dest = assign_vreg dest_class dest in
@@ -568,6 +582,9 @@ module Select = struct
           (int_dests, float_dests, build)
       in
       let* args' = translate_operands args in
+      (* todo: if return value classification is in-memory, reserve rdi as an integer param index
+         and modify initial prelude to allocate struct space and leaq the pointer to it and move
+         it into rdi *)
       let int_dests, float_dests, prelude =
         build_args ~int_dests:[] ~int_args:[] ~float_dests:[] ~float_args:[]
           ~int_param_idx:0 ~float_param_idx:0
@@ -587,24 +604,19 @@ module Select = struct
         in
         ints @ floats
       in
-      let rax =
+      let find_reg phys =
         List.find
           (function
-            | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = Regs.rax
-              ->
+            | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = phys ->
               true
             | _ -> false)
           clobbered
       in
-      let xmm0 =
-        List.find
-          (function
-            | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = Regs.xmm0
-              ->
-              true
-            | _ -> false)
-          clobbered
-      in
+      let rax = find_reg Regs.rax in
+      let rdx = find_reg Regs.rdx in
+      let rdi = find_reg Regs.rdi in
+      let xmm0 = find_reg Regs.xmm0 in
+      let xmm1 = find_reg Regs.xmm1 in
       let call =
         instr "call" ~defs:[] ~uses:[ Label (f_typ, f, []) ]
         |> Target.modify_uses (fun ~uses ~num_hidden ->
@@ -616,9 +628,63 @@ module Select = struct
       let mov_instr rest =
         if dest_width = 0 then rest
         else
-          match dest_class with
-          | Int -> Target.mov ~dest ~src:rax @> rest
-          | Float -> Target.mov ~dest ~src:xmm0 @> rest
+          let dest_typ_size = Ast.sizeof dest_typ in
+          match dest_typ with
+          | TRecord fields ->
+            let int_regs = ref [ rax; rdx ] in
+            let float_regs = ref [ xmm0; xmm1 ] in
+            begin match classify_struct fields with
+            | Registers regs ->
+              let slot = state.new_stack_slot dest_typ_size in
+              let dest_reg =
+                match dest with
+                | Reg reg -> reg
+                | _ -> failwith "Expected destination of call to be a register"
+              in
+              let copy_into_slot ~offset ~reg rest =
+                ( offset + 8,
+                  Target.mov
+                    ~dest:
+                      (MemAddr
+                         {
+                           base = Some dest_reg;
+                           index = dest_reg;
+                           scale = 0;
+                           displacement = offset;
+                         })
+                    ~src:reg
+                  @> rest )
+              in
+              let build (offset, rest) = function
+                | INTEGER ->
+                  let reg =
+                    match !int_regs with
+                    | reg :: regs ->
+                      int_regs := regs;
+                      reg
+                    | [] -> failwith "No more integer regs for class"
+                  in
+                  copy_into_slot ~offset ~reg rest
+                | SSE ->
+                  let reg =
+                    match !float_regs with
+                    | reg :: regs ->
+                      float_regs := regs;
+                      reg
+                    | [] -> failwith "No more float regs for class"
+                  in
+                  copy_into_slot ~offset ~reg rest
+                | NO_CLASS -> (offset, rest)
+              in
+              instr "leaq" ~defs:[ dest ] ~uses:[ slot ]
+              @> snd (Array.fold_left build (0, rest) regs)
+            | Memory -> Target.mov ~dest ~src:rdi @> rest
+            end
+          | _ ->
+            begin match dest_class with
+            | Int -> Target.mov ~dest ~src:rax @> rest
+            | Float -> Target.mov ~dest ~src:xmm0 @> rest
+            end
       in
       prelude @@ call @> mov_instr @@ k dest
     | Undag.Target.Goto (l, args) ->
