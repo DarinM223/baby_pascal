@@ -3,20 +3,40 @@ var printDouble : (double): void;
 var printChar : (char): void;
 var printString : (^char): void;
 
-procedure printStruct1(struct1 : record a : int64; b : double; end);
+type
+  TStruct1 = record
+    a: int64;
+    b: double;
+  end;
+  TStruct2 = record
+    a : int64;
+    b : double;
+    c : int64;
+    d : double;
+  end;
+
+procedure printStruct1(struct1 : TStruct1);
 begin
   printInteger (struct1.a);
   printDouble (struct1.b);
 end
 
-procedure modifyStruct1(struct1 : record a : int64; b : double; end);
+procedure modifyStruct1(struct1 : TStruct1);
 begin
   struct1.a := struct1.a + 1;
   struct1.b := struct1.b + 1.0;
   printStruct1(struct1);
 end
 
-procedure printStruct2(struct2 : record a : int64; b : double; c : int64; d : double; end);
+function makeStruct1(): TStruct1;
+begin
+  var struct1 : TStruct1;
+  struct1.a := 1;
+  struct1.b := 2.0;
+  makeStruct1 := struct1;
+end
+
+procedure printStruct2(struct2 : TStruct2);
 begin
   printInteger (struct2.a);
   printDouble (struct2.b);
@@ -24,13 +44,23 @@ begin
   printDouble (struct2.d);
 end
 
-procedure modifyStruct2(struct2 : record a : int64; b : double; c : int64; d : double; end);
+procedure modifyStruct2(struct2 : TStruct2);
 begin
   struct2.a := struct2.a + 1;
   struct2.b := struct2.b + 1.0;
   struct2.c := struct2.c + 1;
   struct2.d := struct2.d + 1.0;
   printStruct2(struct2);
+end
+
+function makeStruct2(): TStruct2;
+begin
+  var struct2 : TStruct2;
+  struct2.a := 3;
+  struct2.b := 4.0;
+  struct2.c := 5;
+  struct2.d := 6.0;
+  makeStruct2 := struct2;
 end
 
 procedure printStruct3(struct3 : record a : char; b : char; c : char; d : char; end);
@@ -76,9 +106,10 @@ end
 begin
   // Struct is 16 bytes so should be passed into an int64 and a double
   // calling convention register.
-  var struct1 : record a : int64; b : double; end;
+  var struct1 : TStruct1;
   struct1.a := 1;
   struct1.b := 2.0;
+  printStruct1(makeStruct1());
   modifyStruct1(struct1);
   printStruct1(struct1);
   // Should allocate a new struct on the stack, copy the old struct,
@@ -88,6 +119,7 @@ begin
   struct2.b := 4.0;
   struct2.c := 5;
   struct2.d := 6.0;
+  printStruct2(makeStruct2());
   modifyStruct2(struct2);
   printStruct2(struct2);
   // Should pass all four into a single int64 register.

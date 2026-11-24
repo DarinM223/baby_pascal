@@ -156,6 +156,23 @@ module Select = struct
            0 instr
     | Const _ -> 8
 
+  let call_conv_return = function
+    | Target.Int ->
+      begin function
+        | 0 -> Regs.rax
+        | 1 -> Regs.rdi
+        | _ ->
+          failwith
+            "call_conv_return: invalid number of integer return registers"
+      end
+    | Float ->
+      begin function
+        | 0 -> Regs.xmm0
+        | 1 -> Regs.xmm1
+        | _ ->
+          failwith "call_conv_return: invalid number of float return registers"
+      end
+
   let call_conv ~caller { State.fresh_vreg; new_stack_slot; _ } width = function
     | Target.Int ->
       begin function
@@ -432,29 +449,94 @@ module Select = struct
     | Undag.Target.Return ops ->
       let ops_classes = List.map reg_class_of_operand ops in
       let ops_widths = List.map width_of_operand ops in
+      let ops_types = List.map typ_of_operand ops in
       let* ops = translate_operands ops in
-      begin match List.combine (List.combine ops_classes ops_widths) ops with
+      begin match
+        List.combine
+          (List.combine ops_types (List.combine ops_classes ops_widths))
+          ops
+      with
       | [] -> Cfg.Last (Cfg.Return (Target.return ~uses:[]))
-      | [ ((op_class, op_width), op) ] ->
-        begin match op_class with
-        | Int ->
-          let rax =
-            Target.(Reg (constrained Regs.rax (fresh_vreg Int op_width)))
+      | [ ((op_typ, (op_class, op_width)), op) ] ->
+        begin match op_typ with
+        | Ast.TRecord fields ->
+          let op_reg =
+            match op with
+            | Reg reg -> reg
+            | _ -> failwith "Expected struct return value to be register"
           in
-          Target.pcopy ~dests:[ rax ] ~srcs:[ op ]
-          @> Cfg.Last (Cfg.Return (Target.return ~uses:[ rax ]))
-        | Float ->
-          let xmm0 =
-            Target.(Reg (constrained Regs.xmm0 (fresh_vreg Float op_width)))
-          in
-          Target.pcopy ~dests:[ xmm0 ] ~srcs:[ op ]
-          @> Cfg.Last (Cfg.Return (Target.return ~uses:[ xmm0 ]))
+          begin match classify_struct fields with
+          | Registers regs ->
+            let int_param_idx = ref 0 in
+            let float_param_idx = ref 0 in
+            let rec copy_into_slot ~i ~reg uses =
+              Target.mov ~dest:reg
+                ~src:
+                  (MemAddr
+                     {
+                       base = Some op_reg;
+                       index = op_reg;
+                       scale = 0;
+                       displacement = i * 8;
+                     })
+              @> go (reg :: uses) (i + 1)
+            and go uses i =
+              if i >= Array.length regs then
+                Cfg.Last (Cfg.Return (Target.return ~uses))
+              else
+                match regs.(i) with
+                | INTEGER ->
+                  let reg =
+                    Target.(
+                      Reg
+                        (constrained
+                           (call_conv_return Int !int_param_idx)
+                           (fresh_vreg Int 8)))
+                  in
+                  incr int_param_idx;
+                  copy_into_slot ~i ~reg uses
+                | SSE ->
+                  let reg =
+                    Target.(
+                      Reg
+                        (constrained
+                           (call_conv_return Float !float_param_idx)
+                           (fresh_vreg Float 8)))
+                  in
+                  incr float_param_idx;
+                  copy_into_slot ~i ~reg uses
+                | NO_CLASS -> go uses (i + 1)
+            in
+            go [] 0
+          | Memory ->
+            let rax =
+              Target.(Reg (constrained Regs.rax (fresh_vreg Int op_width)))
+            in
+            Target.pcopy ~dests:[ rax ] ~srcs:[ op ]
+            @> Cfg.Last (Cfg.Return (Target.return ~uses:[ rax ]))
+          end
+        | _ ->
+          begin match op_class with
+          | Int ->
+            let rax =
+              Target.(Reg (constrained Regs.rax (fresh_vreg Int op_width)))
+            in
+            Target.pcopy ~dests:[ rax ] ~srcs:[ op ]
+            @> Cfg.Last (Cfg.Return (Target.return ~uses:[ rax ]))
+          | Float ->
+            let xmm0 =
+              Target.(Reg (constrained Regs.xmm0 (fresh_vreg Float op_width)))
+            in
+            Target.pcopy ~dests:[ xmm0 ] ~srcs:[ op ]
+            @> Cfg.Last (Cfg.Return (Target.return ~uses:[ xmm0 ]))
+          end
         end
       | _ -> failwith "can only return one thing currently"
       end
     | Undag.Target.Call (dest, f, args) ->
       let open Target in
       let dest_typ = typ_of_operand dest in
+      let dest_typ_size = Ast.sizeof dest_typ in
       let dest_class = reg_class_of_operand dest in
       let dest_width = width_of_operand dest in
       let dest = assign_vreg dest_class dest in
@@ -582,14 +664,29 @@ module Select = struct
           (int_dests, float_dests, build)
       in
       let* args' = translate_operands args in
-      (* todo: if return value classification is in-memory, reserve rdi as an integer param index
+      (* if return value classification is in-memory, reserve rdi as an integer param index
          and modify initial prelude to allocate struct space and leaq the pointer to it and move
          it into rdi *)
+      let int_param_idx, int_dests, int_args, prelude =
+        match dest_typ with
+        | Ast.TRecord fields ->
+          begin match classify_struct fields with
+          | Memory ->
+            let rdi = call_conv ~caller:true state 8 Int 0 in
+            let slot = state.new_stack_slot dest_typ_size in
+            let slot_ptr = state.fresh_vreg Int 8 in
+            ( 1,
+              [ rdi ],
+              [ Reg slot_ptr ],
+              fun t -> instr "leaq" ~defs:[ Reg slot_ptr ] ~uses:[ slot ] @> t
+            )
+          | Registers _ -> (0, [], [], fun t -> t)
+          end
+        | _ -> (0, [], [], fun t -> t)
+      in
       let int_dests, float_dests, prelude =
-        build_args ~int_dests:[] ~int_args:[] ~float_dests:[] ~float_args:[]
-          ~int_param_idx:0 ~float_param_idx:0
-          (fun t -> t)
-          (List.combine args args')
+        build_args ~int_dests ~int_args ~float_dests:[] ~float_args:[]
+          ~int_param_idx ~float_param_idx:0 prelude (List.combine args args')
       in
       let clobbered =
         let ints =
@@ -613,10 +710,7 @@ module Select = struct
           clobbered
       in
       let rax = find_reg Regs.rax in
-      let rdx = find_reg Regs.rdx in
-      let rdi = find_reg Regs.rdi in
       let xmm0 = find_reg Regs.xmm0 in
-      let xmm1 = find_reg Regs.xmm1 in
       let call =
         instr "call" ~defs:[] ~uses:[ Label (f_typ, f, []) ]
         |> Target.modify_uses (fun ~uses ~num_hidden ->
@@ -628,11 +722,8 @@ module Select = struct
       let mov_instr rest =
         if dest_width = 0 then rest
         else
-          let dest_typ_size = Ast.sizeof dest_typ in
           match dest_typ with
           | TRecord fields ->
-            let int_regs = ref [ rax; rdx ] in
-            let float_regs = ref [ xmm0; xmm1 ] in
             begin match classify_struct fields with
             | Registers regs ->
               let slot = state.new_stack_slot dest_typ_size in
@@ -655,30 +746,26 @@ module Select = struct
                     ~src:reg
                   @> rest )
               in
+              let int_param_idx = ref 0 in
+              let float_param_idx = ref 0 in
               let build (offset, rest) = function
                 | INTEGER ->
-                  let reg =
-                    match !int_regs with
-                    | reg :: regs ->
-                      int_regs := regs;
-                      reg
-                    | [] -> failwith "No more integer regs for class"
-                  in
+                  let reg = find_reg (call_conv_return Int !int_param_idx) in
+                  incr int_param_idx;
                   copy_into_slot ~offset ~reg rest
                 | SSE ->
                   let reg =
-                    match !float_regs with
-                    | reg :: regs ->
-                      float_regs := regs;
-                      reg
-                    | [] -> failwith "No more float regs for class"
+                    find_reg (call_conv_return Float !float_param_idx)
                   in
+                  incr float_param_idx;
                   copy_into_slot ~offset ~reg rest
                 | NO_CLASS -> (offset, rest)
               in
               instr "leaq" ~defs:[ dest ] ~uses:[ slot ]
               @> snd (Array.fold_left build (0, rest) regs)
-            | Memory -> Target.mov ~dest ~src:rdi @> rest
+            | Memory ->
+              (* the pointer passed in rdi is copied to rax before the function returns *)
+              Target.mov ~dest ~src:rax @> rest
             end
           | _ ->
             begin match dest_class with
