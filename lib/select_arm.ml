@@ -108,6 +108,19 @@ module Select = struct
       | _ -> None
     with Failed -> None
 
+  let rec typ_of_operand : Undag.Target.operand -> Ast.typ = function
+    | Undag.Target.Reg (typ, _) -> typ
+    | Label (typ, _, _) -> typ
+    | Instr instr ->
+      Option.get @@ fst
+      @@ Undag.Target.fold_defs
+           (fun acc op ->
+             match acc with
+             | Some typ -> (Some typ, op)
+             | None -> (Some (typ_of_operand op), op))
+           None instr
+    | Const _ -> Ast.TInteger64
+
   let rec reg_class_of_operand : Undag.Target.operand -> Target.reg_class =
     let reg_class_of_type = function
       | Ast.TDouble -> Target.Float
@@ -380,6 +393,8 @@ module Select = struct
       end
     | Undag.Target.Call (dest, f, args) ->
       let open Target in
+      let dest_typ = typ_of_operand dest in
+      let dest_typ_size = Ast.sizeof dest_typ in
       let dest_class = reg_class_of_operand dest in
       let dest_width = width_of_operand dest in
       let dest = assign_vreg (reg_class_of_operand dest) dest in
@@ -551,11 +566,33 @@ module Select = struct
           (int_dests, float_dests, build)
       in
       let* args' = translate_operands args in
+      (* if return value classification is in-memory,
+         modify initial prelude to allocate struct space and
+         adr the pointer to it and move it into r8 *)
+      let slot, int_dests, int_args, prelude =
+        match dest_typ with
+        | Ast.TRecord fields ->
+          begin match is_homogeneous_aggregate fields with
+          | Some _ -> (None, [], [], fun t -> t)
+          | None ->
+            if dest_typ_size <= 16 then (None, [], [], fun t -> t)
+            else
+              let x8 =
+                Target.Reg (constrained Regs.x8 (fresh_vreg Int dest_width))
+              in
+              let slot = state.new_stack_slot dest_typ_size in
+              let slot_ptr = state.fresh_vreg Int 8 in
+              ( Some slot,
+                [ x8 ],
+                [ Reg slot_ptr ],
+                fun t -> instr "adr" ~defs:[ Reg slot_ptr ] ~uses:[ slot ] @> t
+              )
+          end
+        | _ -> (None, [], [], fun t -> t)
+      in
       let int_dests, float_dests, prelude =
-        build_args ~int_dests:[] ~int_args:[] ~float_dests:[] ~float_args:[]
-          ~int_param_idx:0 ~float_param_idx:0
-          (fun t -> t)
-          (List.combine args args')
+        build_args ~int_dests ~int_args ~float_dests:[] ~float_args:[]
+          ~int_param_idx:0 ~float_param_idx:0 prelude (List.combine args args')
       in
       let clobbered =
         let ints =
@@ -570,24 +607,16 @@ module Select = struct
         in
         ints @ floats
       in
-      let x0 =
+      let find_reg phys =
         List.find
           (function
-            | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = Regs.x0
-              ->
+            | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = phys ->
               true
             | _ -> false)
           clobbered
       in
-      let d0 =
-        List.find
-          (function
-            | Reg (Virtual { reg_constr = UsePhysical r; _ }) when r = Regs.d0
-              ->
-              true
-            | _ -> false)
-          clobbered
-      in
+      let x0 = find_reg Regs.x0 in
+      let d0 = find_reg Regs.d0 in
       let call =
         instr "bl" ~defs:[] ~uses:[ Label (f_typ, f, []) ]
         |> Target.modify_uses (fun ~uses ~num_hidden ->
@@ -599,9 +628,84 @@ module Select = struct
       let mov_instr rest =
         if dest_width = 0 then rest
         else
-          match dest_class with
-          | Int -> Target.mov ~dest ~src:x0 @> rest
-          | Float -> Target.mov ~dest ~src:d0 @> rest
+          match dest_typ with
+          | TRecord fields ->
+            let dest_reg =
+              match dest with
+              | Reg reg -> reg
+              | _ -> failwith "Expected destination of call to be a register"
+            in
+            let copy_into_slot ~offset ~reg rest =
+              ( offset + 8,
+                Target.mov
+                  ~dest:
+                    (MemAddr
+                       {
+                         base = dest_reg;
+                         index = dest_reg;
+                         scale = 0;
+                         displacement = offset;
+                         preindexed = false;
+                       })
+                  ~src:reg
+                @> rest )
+            in
+            let take_reg regs =
+              match !regs with
+              | reg :: rest ->
+                regs := rest;
+                reg
+              | [] -> failwith "take_reg: no more regs"
+            in
+            begin match is_homogeneous_aggregate fields with
+            | Some (typ, offsets) ->
+              (* for each offset, copy into V0, V1, V2, V3 *)
+              let width = width_of_typ typ in
+              let regs =
+                ref
+                  [
+                    find_reg Regs.d0;
+                    find_reg Regs.d1;
+                    find_reg Regs.d2;
+                    find_reg Regs.d3;
+                  ]
+              in
+              let go rest offset =
+                let reg =
+                  Target.subst_reg_operand
+                    (Target.Reg.lower_to_width width)
+                    (take_reg regs)
+                in
+                snd @@ copy_into_slot ~offset ~reg rest
+              in
+              let slot = state.new_stack_slot dest_typ_size in
+              instr "adr" ~defs:[ dest ] ~uses:[ slot ]
+              @> List.fold_left go rest offsets
+            | None ->
+              if dest_typ_size > 16 then
+                (* passed in memory so load the slot address into the destination *)
+                (* use original slot allocated in prelude instead of making a new slot *)
+                instr "adr" ~defs:[ dest ] ~uses:[ Option.get slot ] @> rest
+              else if dest_typ_size > 8 then (* copy X0 and X1 *)
+                let slot = state.new_stack_slot dest_typ_size in
+                instr "adr" ~defs:[ dest ] ~uses:[ slot ]
+                @> snd
+                @@ List.fold_left
+                     (fun (offset, rest) reg ->
+                       copy_into_slot ~offset ~reg rest)
+                     (0, rest)
+                     [ find_reg Regs.x0; find_reg Regs.x1 ]
+              else
+                (* copy X0 *)
+                let slot = state.new_stack_slot dest_typ_size in
+                instr "adr" ~defs:[ dest ] ~uses:[ slot ]
+                @> snd (copy_into_slot ~offset:0 ~reg:x0 rest)
+            end
+          | _ ->
+            begin match dest_class with
+            | Int -> Target.mov ~dest ~src:x0 @> rest
+            | Float -> Target.mov ~dest ~src:d0 @> rest
+            end
       in
       prelude @@ call @> mov_instr @@ k dest
     | Undag.Target.Goto (l, args) ->

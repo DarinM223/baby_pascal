@@ -120,7 +120,7 @@ struct
     | Some (index, _) -> index
     | None ->
       failwith
-        (Format.asprintf "find_reg: couldn't find index for register %a"
+        (Format.asprintf "find_reg_index: couldn't find index for register %a"
            Target.pp_reg reg)
 
   let vreg_id = function
