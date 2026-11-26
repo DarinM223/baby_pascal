@@ -469,7 +469,7 @@ module Select = struct
           | Registers regs ->
             let int_param_idx = ref 0 in
             let float_param_idx = ref 0 in
-            let rec copy_into_slot ~i ~reg uses =
+            let rec copy_into_reg ~i ~reg uses =
               Target.mov ~dest:reg
                 ~src:
                   (MemAddr
@@ -494,7 +494,7 @@ module Select = struct
                            (fresh_vreg Int 8)))
                   in
                   incr int_param_idx;
-                  copy_into_slot ~i ~reg uses
+                  copy_into_reg ~i ~reg uses
                 | SSE ->
                   let reg =
                     Target.(
@@ -504,7 +504,7 @@ module Select = struct
                            (fresh_vreg Float 8)))
                   in
                   incr float_param_idx;
-                  copy_into_slot ~i ~reg uses
+                  copy_into_reg ~i ~reg uses
                 | NO_CLASS -> go uses (i + 1)
             in
             go [] 0

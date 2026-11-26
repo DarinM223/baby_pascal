@@ -375,21 +375,77 @@ module Select = struct
     | Undag.Target.Return ops ->
       let ops_classes = List.map reg_class_of_operand ops in
       let ops_widths = List.map width_of_operand ops in
+      let ops_types = List.map typ_of_operand ops in
       let* ops = translate_operands ops in
-      let handle_op ((op_class, op_width), op) n k =
-        let reg = call_conv ~caller:true state op_width op_class n in
-        Target.pcopy ~dests:[ reg ] ~srcs:[ op ] @> k reg
-      in
-      begin match List.combine (List.combine ops_classes ops_widths) ops with
+      begin match
+        List.combine
+          (List.combine ops_types (List.combine ops_classes ops_widths))
+          ops
+      with
       | [] -> Cfg.Last (Cfg.Return (Target.return ~uses:[]))
-      | [ op ] ->
-        let* r = handle_op op 0 in
-        Cfg.Last (Cfg.Return (Target.return ~uses:[ r ]))
-      | [ op1; op2 ] ->
-        let* r1 = handle_op op1 0 in
-        let* r2 = handle_op op2 1 in
-        Cfg.Last (Cfg.Return (Target.return ~uses:[ r1; r2 ]))
-      | _ -> failwith "can only return two things currently"
+      | [ ((op_typ, (op_class, op_width)), op) ] ->
+        let op_reg =
+          match op with
+          | Reg reg -> reg
+          | _ -> failwith "Expected struct return value to be register"
+        in
+        let copy_into_reg ~offset ~reg =
+          Target.mov ~dest:reg
+            ~src:
+              (MemAddr
+                 {
+                   base = op_reg;
+                   index = op_reg;
+                   scale = 0;
+                   displacement = offset;
+                   preindexed = false;
+                 })
+        in
+        begin match op_typ with
+        | Ast.TRecord fields ->
+          begin match is_homogeneous_aggregate fields with
+          | Some (typ, offsets) ->
+            let width = width_of_typ typ in
+            let float_param_idx = ref 0 in
+            let rec go uses = function
+              | [] -> Cfg.Last (Cfg.Return (Target.return ~uses))
+              | offset :: offsets ->
+                let reg =
+                  call_conv ~caller:false state width Float !float_param_idx
+                in
+                incr float_param_idx;
+                copy_into_reg ~offset ~reg @> go (reg :: uses) offsets
+            in
+            go [] offsets
+          | None ->
+            let op_typ_size = Ast.sizeof op_typ in
+            if op_typ_size > 16 then
+              (* already in memory, return nothing *)
+              Cfg.Last (Cfg.Return (Target.return ~uses:[]))
+            else if op_typ_size > 8 then (* copy memory into X0 and X1 *)
+              let x0 =
+                Target.(Reg (constrained Regs.x0 (fresh_vreg Int op_width)))
+              in
+              let x1 =
+                Target.(Reg (constrained Regs.x1 (fresh_vreg Int op_width)))
+              in
+              copy_into_reg ~offset:0 ~reg:x0
+              @> copy_into_reg ~offset:8 ~reg:x1
+              @> Cfg.Last (Cfg.Return (Target.return ~uses:[ x0; x1 ]))
+            else
+              (* copy memory into X0 *)
+              let x0 =
+                Target.(Reg (constrained Regs.x0 (fresh_vreg Int op_width)))
+              in
+              copy_into_reg ~offset:0 ~reg:x0
+              @> Cfg.Last (Cfg.Return (Target.return ~uses:[ x0 ]))
+          end
+        | _ ->
+          let reg = call_conv ~caller:true state op_width op_class 0 in
+          Target.pcopy ~dests:[ reg ] ~srcs:[ op ]
+          @> Cfg.Last (Cfg.Return (Target.return ~uses:[ reg ]))
+        end
+      | _ -> failwith "can only return one thing currently"
       end
     | Undag.Target.Call (dest, f, args) ->
       let open Target in
@@ -661,20 +717,12 @@ module Select = struct
             | Some (typ, offsets) ->
               (* for each offset, copy into V0, V1, V2, V3 *)
               let width = width_of_typ typ in
-              let regs =
-                ref
-                  [
-                    find_reg Regs.d0;
-                    find_reg Regs.d1;
-                    find_reg Regs.d2;
-                    find_reg Regs.d3;
-                  ]
-              in
+              let regs = ref [ Regs.d0; Regs.d1; Regs.d2; Regs.d3 ] in
               let go rest offset =
                 let reg =
                   Target.subst_reg_operand
                     (Target.Reg.lower_to_width width)
-                    (take_reg regs)
+                    (find_reg (take_reg regs))
                 in
                 snd @@ copy_into_slot ~offset ~reg rest
               in
@@ -686,7 +734,8 @@ module Select = struct
                 (* passed in memory so load the slot address into the destination *)
                 (* use original slot allocated in prelude instead of making a new slot *)
                 instr "adr" ~defs:[ dest ] ~uses:[ Option.get slot ] @> rest
-              else if dest_typ_size > 8 then (* copy X0 and X1 *)
+              else if dest_typ_size > 8 then
+                (* copy X0 and X1 *)
                 let slot = state.new_stack_slot dest_typ_size in
                 instr "adr" ~defs:[ dest ] ~uses:[ slot ]
                 @> snd
