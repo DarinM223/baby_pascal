@@ -28,11 +28,11 @@ begin
   printStruct1(struct1);
 end
 
-function makeStruct1(): TStruct1;
+function makeStruct1(initA: int64, initB: double): TStruct1;
 begin
   var struct1 : TStruct1;
-  struct1.a := 1;
-  struct1.b := 2.0;
+  struct1.a := initA;
+  struct1.b := initB;
   makeStruct1 := struct1;
 end
 
@@ -53,11 +53,11 @@ begin
   printStruct2(struct2);
 end
 
-function makeStruct2(): TStruct2;
+function makeStruct2(initA: int64, initB: double): TStruct2;
 begin
   var struct2 : TStruct2;
-  struct2.a := 3;
-  struct2.b := 4.0;
+  struct2.a := initA;
+  struct2.b := initB;
   struct2.c := 5;
   struct2.d := 6.0;
   makeStruct2 := struct2;
@@ -109,7 +109,7 @@ begin
   var struct1 : TStruct1;
   struct1.a := 1;
   struct1.b := 2.0;
-  printStruct1(makeStruct1());
+  printStruct1(makeStruct1(1, 2.0));
   modifyStruct1(struct1);
   printStruct1(struct1);
   // Should allocate a new struct on the stack, copy the old struct,
@@ -119,7 +119,7 @@ begin
   struct2.b := 4.0;
   struct2.c := 5;
   struct2.d := 6.0;
-  printStruct2(makeStruct2());
+  printStruct2(makeStruct2(3, 4.0));
   modifyStruct2(struct2);
   printStruct2(struct2);
   // Should pass all four into a single int64 register.

@@ -14,6 +14,7 @@ module State = struct
     mutable curr_block : Cfg.uid;
     mutable stack_offset : int;
     mutable frame_pointer : Target.reg option;
+    mutable struct_return_arg_slot : Target.reg option;
   }
 
   let init () =
@@ -44,6 +45,8 @@ module State = struct
         curr_block = Cfg.entry_uid;
         stack_offset = 0;
         frame_pointer = None;
+        (* Not needed for X86-64 because *)
+        struct_return_arg_slot = None;
       }
     in
     r
@@ -509,10 +512,16 @@ module Select = struct
             in
             go [] 0
           | Memory ->
+            (* copy entire struct into the saved param slot *)
+            let return_struct_slot = Option.get state.struct_return_arg_slot in
+            let op_size = Ast.sizeof op_typ in
+            let mk_tmp () = state.fresh_vreg Int 8 in
             let rax =
               Target.(Reg (constrained Regs.rax (fresh_vreg Int op_width)))
             in
-            Target.pcopy ~dests:[ rax ] ~srcs:[ op ]
+            copy_value ~size:op_size ~dest:return_struct_slot ~src:op_reg
+              ~mk_tmp
+            @@ Target.pcopy ~dests:[ rax ] ~srcs:[ Reg return_struct_slot ]
             @> Cfg.Last (Cfg.Return (Target.return ~uses:[ rax ]))
           end
         | _ ->
@@ -888,7 +897,7 @@ module Select = struct
     | Undag.Target.GetElementPtr _ ->
       failwith "Select_X86: GetElementPtr should have already been lowered"
 
-  let entry state args =
+  let entry state args ret =
     let open Target in
     let rec build_args ~int_dests ~int_args ~float_dests ~float_args
         ~int_param_idx ~float_param_idx k = function
@@ -998,8 +1007,23 @@ module Select = struct
         in
         (int_args @ float_args, k)
     in
-    build_args ~int_dests:[] ~int_args:[] ~float_dests:[] ~float_args:[]
-      ~int_param_idx:0 ~float_param_idx:0
+    (* check if struct return value is by memory *)
+    let int_dests, int_args, int_param_idx =
+      match ret with
+      | Ast.TRecord fields ->
+        begin match classify_struct fields with
+        | Memory ->
+          (* move rdi to a new reg and set it in the state struct *)
+          let arg = constrained Regs.rdi (state.fresh_vreg Int 8) in
+          let dest = state.fresh_vreg Int 8 in
+          state.struct_return_arg_slot <- Some dest;
+          ([ Reg dest ], [ Reg arg ], 1)
+        | _ -> ([], [], 0)
+        end
+      | _ -> ([], [], 0)
+    in
+    build_args ~int_dests ~int_args ~float_dests:[] ~float_args:[]
+      ~int_param_idx ~float_param_idx:0
       (fun tail -> tail)
       args
 end
@@ -1071,7 +1095,7 @@ let%expect_test "Nested loops code generation" =
 let%expect_test "CBranch with both labels the same with different arguments" =
   let cfg = Examples.cbranch_same_label in
   let cfg = Undag.undag_graph cfg in
-  let _, cfg = codegen_function ~args:[] (State.init ()) cfg in
+  let _, cfg = codegen_function ~args:[] ~ret:Ast.TVoid (State.init ()) cfg in
   Format.printf "%a" X86.Printer.pp_graph cfg;
   [%expect
     {|

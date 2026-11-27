@@ -97,6 +97,7 @@ module type State = sig
     mutable curr_block : int;
     mutable stack_offset : int;
     mutable frame_pointer : Target.reg option;
+    mutable struct_return_arg_slot : Target.reg option;
   }
   val init : unit -> t
   val assign_vreg : t -> Target.reg_class -> 'a Undag.Target.t -> Target.reg
@@ -119,6 +120,7 @@ module type Select = sig
   val entry :
     State.t ->
     Normalize.Target.reg list ->
+    Ast.typ ->
     State.Target.operand list * (G.tail -> G.tail)
 end
 
@@ -160,9 +162,9 @@ struct
     let tail = go_tail tail in
     (first, tail)
 
-  let codegen_function ?(args = []) (state : Select.State.t)
+  let codegen_function ?(args = []) ~(ret : Ast.typ) (state : Select.State.t)
       (graph : Undag.Cfg.graph) : Target.reg list * Cfg.graph =
-    let srcs, build_tail = Select.entry state args in
+    let srcs, build_tail = Select.entry state args ret in
     let reg_ops =
       List.filter_map (fun op ->
           match Target.destruct_reg op with
@@ -183,7 +185,7 @@ struct
       (reg_ops srcs, Cfg.unfocus ((First Entry, build_tail tail), graph))
     | _ -> (reg_ops srcs, Cfg.unfocus (zblock, graph))
 
-  let codegen_test_helper ?(args = []) state cfg =
+  let codegen_test_helper ?(args = []) ?(ret = Ast.TVoid) state cfg =
     let extra = Normalize.Cfg.precalculate_edges cfg in
     let module Extra = (val extra) in
     let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
@@ -194,5 +196,5 @@ struct
     let cfg = Undag.undag_graph cfg in
     codegen_function
       ~args:(List.map (fun (typ, arg) -> (typ, (arg, 0))) args)
-      state cfg
+      ~ret state cfg
 end

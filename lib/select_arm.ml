@@ -14,6 +14,7 @@ module State = struct
     mutable curr_block : Cfg.uid;
     mutable stack_offset : int;
     mutable frame_pointer : Target.reg option;
+    mutable struct_return_arg_slot : Target.reg option;
   }
 
   let init () =
@@ -44,6 +45,7 @@ module State = struct
         curr_block = Cfg.entry_uid;
         stack_offset = 0;
         frame_pointer = None;
+        struct_return_arg_slot = None;
       }
     in
     r
@@ -885,7 +887,7 @@ module Select = struct
     | Undag.Target.GetElementPtr _ ->
       failwith "Select_Arm: GetElementPtr should have already been lowered"
 
-  let entry state args =
+  let entry state args ret =
     let open Target in
     let rec build_args ~int_dests ~int_args ~float_dests ~float_args
         ~int_param_idx ~float_param_idx k = function
@@ -1033,7 +1035,9 @@ include Isa.Codegen (Target) (Arm.Cfg) (Select)
 let%expect_test "Fibonacci code generation" =
   let cfg = Examples.fibonacci in
   let _, cfg =
-    codegen_test_helper ~args:[ (TInteger64, "v") ] (State.init ()) cfg
+    codegen_test_helper
+      ~args:[ (TInteger64, "v") ]
+      ~ret:TInteger64 (State.init ()) cfg
   in
   Format.printf "%a" Arm.Printer.pp_graph cfg;
   [%expect
@@ -1090,7 +1094,7 @@ let%expect_test "Nested loops code generation" =
 let%expect_test "CBranch with both labels the same with different arguments" =
   let cfg = Examples.cbranch_same_label in
   let cfg = Undag.undag_graph cfg in
-  let _, cfg = codegen_function ~args:[] (State.init ()) cfg in
+  let _, cfg = codegen_function ~args:[] ~ret:Ast.TVoid (State.init ()) cfg in
   Format.printf "%a" Arm.Printer.pp_graph cfg;
   [%expect
     {|

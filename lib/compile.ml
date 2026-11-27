@@ -47,7 +47,7 @@ let compile_shared lower_isa program =
     if changed || changed' || state.changed then round (module Dom) args cfg
     else cfg
   in
-  let lower_cfg f (args : (Ast.typ * string) list) cfg =
+  let lower_cfg f (args : (Ast.typ * string) list) (ret : Ast.typ) cfg =
     let extra = Normalize.Cfg.precalculate_edges cfg in
     let module Extra = (val extra) in
     let module Dom = Dominator.Make (Normalize.Cfg) (Extra) in
@@ -81,16 +81,18 @@ let compile_shared lower_isa program =
     Format.printf "%s's cfg after undag:\n" f;
     Format.printf "===================================\n";
     Format.printf "%a\n" Undag.Writer.pp_graph cfg;
-    lower_isa ~f ~args ~cfg
+    lower_isa ~f ~args ~ret ~cfg
   in
   let lower_decl = function
     | Ast.Function (f, args, ret, body) ->
-      Ast.Function (f, args, ret, lower_cfg f (List.map CCPair.swap args) body)
+      Ast.Function
+        (f, args, ret, lower_cfg f (List.map CCPair.swap args) ret body)
     | Ast.Procedure (f, args, body) ->
-      Ast.Procedure (f, args, lower_cfg f (List.map CCPair.swap args) body)
+      Ast.Procedure
+        (f, args, lower_cfg f (List.map CCPair.swap args) Ast.TVoid body)
   in
   let decls = List.map lower_decl program.decls in
-  let main = lower_cfg "main" [] program.main in
+  let main = lower_cfg "main" [] TVoid program.main in
   { program with decls; main }
 
 let write_global out { Ast.id; typ; value } =
@@ -114,9 +116,9 @@ let write_global out { Ast.id; typ; value } =
 
 module X86 = struct
   let compile program =
-    let lower_isa ~f ~args ~cfg =
+    let lower_isa ~f ~args ~ret ~cfg =
       let state = Select_x86.State.init () in
-      let args, cfg = Select_x86.codegen_function ~args state cfg in
+      let args, cfg = Select_x86.codegen_function ~args ~ret state cfg in
       Format.printf "===================================\n";
       Format.printf "%s's cfg after codegen:\n" f;
       Format.printf "===================================\n";
@@ -210,9 +212,9 @@ end
 
 module Arm = struct
   let compile program =
-    let lower_isa ~f ~args ~cfg =
+    let lower_isa ~f ~args ~ret ~cfg =
       let state = Select_arm.State.init () in
-      let args, cfg = Select_arm.codegen_function ~args state cfg in
+      let args, cfg = Select_arm.codegen_function ~args ~ret state cfg in
       Format.printf "===================================\n";
       Format.printf "%s's cfg after codegen:\n" f;
       Format.printf "===================================\n";
