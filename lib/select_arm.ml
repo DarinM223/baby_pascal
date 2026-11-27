@@ -422,8 +422,11 @@ module Select = struct
           | None ->
             let op_typ_size = Ast.sizeof op_typ in
             if op_typ_size > 16 then
-              (* already in memory, return nothing *)
-              Cfg.Last (Cfg.Return (Target.return ~uses:[]))
+              (* copy entire struct into the saved param slot *)
+              copy_value ~size:(Ast.sizeof op_typ)
+                ~dest:(Option.get state.struct_return_arg_slot) ~src:op_reg
+                ~mk_tmp:(fun () -> state.fresh_vreg Int 8)
+              @@ Cfg.Last (Cfg.Return (Target.return ~uses:[]))
             else if op_typ_size > 8 then (* copy memory into X0 and X1 *)
               let x0 =
                 Target.(Reg (constrained Regs.x0 (fresh_vreg Int op_width)))
@@ -1024,7 +1027,20 @@ module Select = struct
         in
         (int_args @ float_args, k)
     in
-    build_args ~int_dests:[] ~int_args:[] ~float_dests:[] ~float_args:[]
+    (* check if struct return value is by memory *)
+    let int_dests, int_args =
+      match ret with
+      | Ast.TRecord fields
+        when Option.is_none (is_homogeneous_aggregate fields)
+             && Ast.sizeof ret > 16 ->
+        (* move x8 to a new reg and set it in the state struct *)
+        let arg = constrained Regs.x8 (state.fresh_vreg Int 8) in
+        let dest = state.fresh_vreg Int 8 in
+        state.struct_return_arg_slot <- Some dest;
+        ([ Reg dest ], [ Reg arg ])
+      | _ -> ([], [])
+    in
+    build_args ~int_dests ~int_args ~float_dests:[] ~float_args:[]
       ~int_param_idx:0 ~float_param_idx:0
       (fun tail -> tail)
       args
