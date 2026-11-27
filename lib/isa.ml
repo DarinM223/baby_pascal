@@ -116,6 +116,10 @@ module type Select = sig
     State.Target.reg_class ->
     int ->
     G.Target.operand
+  val entry :
+    State.t ->
+    Normalize.Target.reg list ->
+    State.Target.operand list * (G.tail -> G.tail)
 end
 
 module Codegen
@@ -158,30 +162,13 @@ struct
 
   let codegen_function ?(args = []) (state : Select.State.t)
       (graph : Undag.Cfg.graph) : Target.reg list * Cfg.graph =
-    let srcs =
-      List.mapi
-        (fun i arg ->
-          Select.call_conv ~caller:false state
-            (Select.width_of_operand (Reg arg))
-            (Select.reg_class_of_operand (Reg arg))
-            i)
-        args
-    in
+    let srcs, build_tail = Select.entry state args in
     let reg_ops =
       List.filter_map (fun op ->
           match Target.destruct_reg op with
           | Some r -> Some r
           | _ -> None)
     in
-    let dests =
-      List.map
-        (fun arg ->
-          Target.reg
-            Select.(
-              State.assign_vreg state (reg_class_of_operand (Reg arg)) (Reg arg)))
-        args
-    in
-    let pcopy = Cfg.Instruction (Target.pcopy ~dests ~srcs) in
     let blocks = Undag.Cfg.reverse_postorder_dfs graph in
     let graph =
       List.fold_left
@@ -193,7 +180,7 @@ struct
     let zblock, graph = Cfg.focus_entry graph in
     match zblock with
     | First Entry, tail when List.length args > 0 ->
-      (reg_ops srcs, Cfg.unfocus ((First Entry, Tail (pcopy, tail)), graph))
+      (reg_ops srcs, Cfg.unfocus ((First Entry, build_tail tail), graph))
     | _ -> (reg_ops srcs, Cfg.unfocus (zblock, graph))
 
   let codegen_test_helper ?(args = []) state cfg =

@@ -267,7 +267,7 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
             ~no_imms:(fun _ _ -> i @> go_tail tail)
         (* lower moves with two memory operands *)
         | {
-         Target.instr = "mov";
+         Target.instr = "mov" | "fmov";
          defs = [ ((MemAddr _ | StackSlot _) as dest) ];
          uses = [ ((MemAddr _ | StackSlot _) as src) ];
          _;
@@ -276,7 +276,7 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
           Target.mov ~dest:tmp ~src @> Target.mov ~dest ~src:tmp @> go_tail tail
         (* lower move with destination memory operand into store *)
         | {
-         Target.instr = "mov";
+         Target.instr = "mov" | "fmov";
          defs = [ ((MemAddr _ | StackSlot _) as dest) ];
          uses = [ src ];
          _;
@@ -284,14 +284,14 @@ let cleanup (state : Select_arm.State.t) (int_tmp1 : Target.physical_reg)
           store ~dest ~src (go_tail tail)
         (* lower move with source memory operand into load *)
         | {
-         Target.instr = "mov";
+         Target.instr = "mov" | "fmov";
          defs = [ dest ];
          uses = [ ((MemAddr _ | StackSlot _) as src) ];
          _;
         } ->
           load ~dest ~src (go_tail tail)
         (* remove redundant moves *)
-        | { Target.instr = "mov"; defs = [ dest ]; uses = [ src ]; _ }
+        | { Target.instr = "mov" | "fmov"; defs = [ dest ]; uses = [ src ]; _ }
           when Target.(equal_operand (to_colored dest) (to_colored src)) ->
           go_tail tail
         | { Target.instr = "adr"; _ } ->

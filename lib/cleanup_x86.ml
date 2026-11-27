@@ -153,15 +153,8 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
           Target.mov ~dest:tmp ~src @> { i with uses = [ tmp ] } @> go_tail tail
         (* lower moves with two memory operands *)
         | {
-         Target.instr = "movq" | "movb" | "movw" | "movl";
-         defs = [ ((MemAddr _ | StackSlot _ | Label _) as dest) ];
-         uses = [ ((MemAddr _ | StackSlot _ | Label _) as src) ];
-         _;
-        } ->
-          let tmp = Target.Reg (tmp src) in
-          Target.mov ~dest:tmp ~src @> Target.mov ~dest ~src:tmp @> go_tail tail
-        | {
-         Target.instr = "movsd" | "movss" | "movups";
+         Target.instr =
+           "movq" | "movb" | "movw" | "movl" | "movsd" | "movss" | "movups";
          defs = [ ((MemAddr _ | StackSlot _ | Label _) as dest) ];
          uses = [ ((MemAddr _ | StackSlot _ | Label _) as src) ];
          _;
@@ -170,7 +163,8 @@ let cleanup (state : Select_x86.State.t) (tmp_int : Target.physical_reg)
           Target.mov ~dest:tmp ~src @> Target.mov ~dest ~src:tmp @> go_tail tail
         (* remove redundant moves *)
         | {
-         Target.instr = "movq" | "movb" | "movw" | "movl";
+         Target.instr =
+           "movq" | "movb" | "movw" | "movl" | "movsd" | "movss" | "movups";
          defs = [ dest ];
          uses = [ src ];
          _;

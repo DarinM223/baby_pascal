@@ -180,11 +180,19 @@ struct
           (pp_preferences state.regs)
           [| Array.map snd preferences |]);
     Logs.debug (fun m ->
+        let pp_print_pair fmt (reg, var) =
+          match var with
+          | Some var ->
+            Format.fprintf fmt "%a(%d)" Target.pp_reg reg var.Target.id
+          | None -> Format.fprintf fmt "%a" Target.pp_reg reg
+        in
         m "Occupied: %a\n"
           (Format.pp_print_list
              ~pp_sep:(fun fmt _ -> Format.fprintf fmt ", ")
-             Target.pp_reg)
-          (List.map (fun r -> state.regs.(r)) (CCBV.to_list state.occupied)));
+             pp_print_pair)
+          (List.map
+             (fun r -> (state.regs.(r), state.reg_current_var.(r)))
+             (CCBV.to_list state.occupied)));
     Array.sort
       (fun (_, pref1) (_, pref2) -> Float.compare pref1 pref2)
       preferences;
@@ -1119,7 +1127,10 @@ struct
                     let reg, pref, head =
                       get_register state G.entry_uid r head
                     in
-                    r'.reg <- state.regs.(reg);
+                    let lowered =
+                      Target.Reg.(lower_to_width (width r)) state.regs.(reg)
+                    in
+                    r'.reg <- lowered;
                     state.reg_current_var.(reg) <- Some r';
                     state.reg_current_pref.(reg) <- pref;
                     CCBV.set state.occupied reg;

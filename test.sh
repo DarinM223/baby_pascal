@@ -507,3 +507,37 @@ if [ -v AARCH ]; then
     exit 1
   fi
 fi
+
+dune exec compile -- -x86_64 examples/valuestruct.pas &> /dev/null
+if [ $? -ne 0 ]; then
+    echo "valuestruct compilation failed"
+    exit 1
+fi
+./build.sh valuestruct.pas
+./valuestruct.pas > valuestruct.pas.test
+if cmp --silent valuestruct.pas.test examples/valuestruct.pas.expected; then
+  echo "valuestruct test succeeded"
+else
+  echo "valuestruct test failed"
+  echo "Diff:"
+  diff valuestruct.pas.test examples/valuestruct.pas.expected
+  exit 1
+fi
+
+if [ -v AARCH ]; then
+  dune exec compile -- -aarch64 examples/valuestruct.pas &> /dev/null
+  if [ $? -ne 0 ]; then
+      echo "valuestruct compilation failed"
+      exit 1
+  fi
+  ./build-aarch.sh valuestruct.pas
+  ./run-aarch.sh valuestruct.pas > valuestruct.pas.test
+  if cmp --silent valuestruct.pas.test examples/valuestruct.pas.expected; then
+    echo "valuestruct test succeeded"
+  else
+    echo "valuestruct test failed"
+    echo "Diff:"
+    diff valuestruct.pas.test examples/valuestruct.pas.expected
+    exit 1
+  fi
+fi

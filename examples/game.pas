@@ -6,10 +6,21 @@ var SetTargetFPS : (integer): void;
 var WindowShouldClose : (): boolean;
 var BeginDrawing : (): void;
 var EndDrawing : (): void;
-var ClearBackground : (integer): void;
-var DrawText : (*char, integer, integer, integer, integer): void;
+var ClearBackground : ({r: char, g: char, b: char, a: char}): void;
+var DrawText : ( *char, integer, integer, integer, { r: char, g: char, b: char, a: char }): void;
 
 begin
+  var RAYWHITE : { r: char, g: char, b: char, a: char };
+  RAYWHITE.r := '\xF5';
+  RAYWHITE.g := '\xF5';
+  RAYWHITE.b := '\xF5';
+  RAYWHITE.a := '\xFF';
+  var LIGHTGRAY : { r: char, g: char, b: char, a: char };
+  LIGHTGRAY.r := '\xC8';
+  LIGHTGRAY.g := '\xC8';
+  LIGHTGRAY.b := '\xC8';
+  LIGHTGRAY.a := '\xFF';
+
   width := 800;
   height := 450;
   InitWindow(width, height, &"raylib window");
@@ -17,8 +28,8 @@ begin
   while not WindowShouldClose() do
   begin
     BeginDrawing();
-      ClearBackground(0xF5F5F5FF);
-      DrawText(&"Congrats! You created your first window!", 190, 200, 20, 0xC8C8C8FF);
+      ClearBackground(RAYWHITE);
+      DrawText(&"Congrats! You created your first window!", 190, 200, 20, LIGHTGRAY);
     EndDrawing();
   end;
   CloseWindow();
